@@ -19,6 +19,7 @@ const items = $derived(f.layers.map((l) => ({ label: l.name, value: l.n, layer: 
 const hidden = gapChoices.filter((g) => g.id !== 'draw').map((g) => ({ label: g.label.replace(' behind', '').replace('Let Katachi imagine it', 'Imagine').replace('Leave it open', 'Leave open'), value: g.id }));
 const go = () => void goto(resolve('/make/gaps'));
 const selLabel = $derived(`Layer ${f.selected.n}, ${f.selected.name}: ${[f.showSolid ? 'visible area solid' : 'outline only', f.showHidden ? 'hidden area hatched' : ''].filter(Boolean).join(', ')}`);
+const stageOverlays = $derived(f.layers.filter((l) => f.isLayerVisible(l.n)).map((l) => ({ layer: l, overlay: f.overlayForLayer(l.n) })).filter((x) => x.overlay).map((x) => ({ d: x.overlay!.d, tone: x.overlay!.tone, opacity: x.layer.n === f.selected.n ? 0.8 : 0.13 })));
 </script>
 {#snippet inspector()}
   <div class="flex flex-col gap-3">
@@ -55,21 +56,23 @@ const selLabel = $derived(`Layer ${f.selected.n}, ${f.selected.name}: ${[f.showS
       <Button size="sm" style="ghost" icon="i-solar:scissors-linear" label="Split" title={f.canSplit(f.selected.n) ? 'Split into its islands' : 'One piece — splitting by tone needs the real photo masks'} disabled={!f.canSplit(f.selected.n)} onclick={() => f.split(f.selected.n)} />
     </span>
   </div>
-  <Card class="overflow-hidden">
+  <Card class="max-h-[48vh] overflow-auto">
     <List {items} value={f.selected.n} label="Layer stack, back to front" onselect={(v) => f.selectLayer(Number(v))}>
       {#snippet itemContent(proxy)}
         {@const l = proxy.get('layer')}
         <span class="flex items-center gap-3 w-full py-1">
-          <span class="w-8 h-8 shrink-0 rounded-sm bg-paper-mute" aria-hidden="true"><LayeredScene layers={f.layers} mode="layer" selected={l.n} label="" /></span>
+          <span class="w-8 h-8 shrink-0 rounded-sm overflow-hidden bg-paper-mute" aria-hidden="true">{#if app.stageImage && f.overlayForLayer(l.n)}<PhotoStage image={app.stageImage} label="" overlays={[{ d: f.overlayForLayer(l.n)!.d, tone: f.overlayForLayer(l.n)!.tone, opacity: 0.65 }]} />{:else}<LayerSwatch colour={l.colour} size="md" />{/if}</span>
           <span class="flex-1 min-w-0 text-left"><span class="block text-body text-ink truncate">{l.name}</span><span class="lt-md:hidden meta whitespace-nowrap">{l.visiblePct}% shows · {l.hiddenPct}% hidden</span></span>
           <span class="md:hidden w-14 h-1 rounded-full bg-paper-mute overflow-hidden" aria-hidden="true"><span class="block h-full bg-ink-soft" style:width="{Math.min(100, l.visiblePct * 3)}%"></span></span>
           <span class="md:hidden meta w-10 text-right">{l.visiblePct}%</span>
           <span class="lt-md:hidden"><LayerSwatch colour={l.colour} size="sm" /></span>
+          <Button size="sm" style="ghost" icon={f.isLayerVisible(l.n) ? 'i-solar:eye-linear' : 'i-solar:eye-closed-linear'} title={f.isLayerVisible(l.n) ? `Hide ${l.name}` : `Show ${l.name}`} label={f.isLayerVisible(l.n) ? 'Hide' : 'Show'} onclick={(e) => { e.stopPropagation(); f.toggleLayerVisible(l.n); app.save(); }} />
         </span>
       {/snippet}
     </List>
   </Card>
-  <div class="lt-md:hidden aspect-square rounded-lg border border-paper-edge bg-paper p-2"><LayeredScene layers={f.layers} mode="stack" label="Exploded stack, back to front" /></div>
+  <div class="lt-md:hidden flex items-center justify-between"><span class="eyebrow">Exploded stack</span><Button size="sm" style="ghost" label={f.showStack ? 'Hide stack' : 'Show stack'} onclick={() => { f.toggleStack(); app.save(); }} /></div>
+  {#if f.showStack}<div class="lt-md:hidden aspect-square rounded-lg overflow-hidden border border-paper-edge bg-paper">{#if app.stageImage && stageOverlays.length}<PhotoStage image={app.stageImage} label="Exploded stack, back to front" overlays={stageOverlays} stacked />{:else}<span class="block h-full p-2"><LayeredScene layers={f.layers} mode="stack" label="Exploded stack, back to front" /></span>{/if}</div>{/if}
 {/snippet}
 {#snippet actions()}
   <span class="flex-1 grid md:flex-none"><Button target="" href="/canvas" style="outline" size="lg" icon="i-solar:pen-2-linear" label="Edit in work area" /></span>
@@ -78,9 +81,10 @@ const selLabel = $derived(`Layer ${f.selected.n}, ${f.selected.name}: ${[f.showS
 {/snippet}
 <svelte:head><title>Katachi · Layers</title></svelte:head>
 <StepScreen {aside} {actions} note={app.noteFor('layers')}>
+  {#if !f.layers.length}<div class="grid place-items-center h-full min-h-64 text-center gap-2"><p class="font-heading text-head">No layers yet</p><p class="text-ui text-ink-mute">Katachi builds the stack from your photo’s regions. Go back to Segment, then this fills in.</p></div>{/if}
   <figure class="md:hidden relative m-0 h-[214px] rounded-lg overflow-hidden border border-paper-edge bg-paper-soft p-2">
     {#if app.stageImage && f.overlays.length}
-      <PhotoStage image={app.stageImage} label={selLabel} overlays={f.overlays.map((o, i) => ({ d: o.d, tone: o.tone, opacity: i === f.selected.n - 1 ? 0.75 : 0.15 }))} />
+      <PhotoStage image={app.stageImage} label={selLabel} overlays={stageOverlays} />
     {:else}<LayeredScene layers={f.layers} mode="layer" selected={f.selected.n} solid={f.showSolid} hidden={f.showHidden} label={selLabel} />{/if}
     <span class="absolute left-2.5 top-2.5 meta rounded-sm bg-paper px-2 py-0.5 border border-paper-edge">L{f.selected.n} · {f.selected.name}</span>
     <span class="absolute right-2.5 bottom-2.5 flex flex-col items-end gap-1">
@@ -89,7 +93,7 @@ const selLabel = $derived(`Layer ${f.selected.n}, ${f.selected.name}: ${[f.showS
     </span>
   </figure>
   <div class="lt-md:hidden h-full flex flex-col items-center gap-3">
-    <figure class="m-0 flex-1 min-h-0 w-full max-w-[640px] rounded-lg overflow-hidden border border-paper-edge bg-paper-soft">{#if app.stageImage && f.overlays.length}<PhotoStage image={app.stageImage} label={selLabel} overlays={f.overlays.map((o, i) => ({ d: o.d, tone: o.tone, opacity: i === f.selected.n - 1 ? 0.75 : 0.15 }))} />{:else}<span class="block h-full p-4"><LayeredScene layers={f.layers} mode="layer" selected={f.selected.n} solid={f.showSolid} hidden={f.showHidden} label={selLabel} /></span>{/if}</figure>
+    <figure class="m-0 flex-1 min-h-0 w-full max-w-[640px] rounded-lg overflow-hidden border border-paper-edge bg-paper-soft">{#if app.stageImage && stageOverlays.length}<PhotoStage image={app.stageImage} label={selLabel} overlays={stageOverlays} />{:else}<span class="block h-full p-4"><LayeredScene layers={f.layers} mode="layer" selected={f.selected.n} solid={f.showSolid} hidden={f.showHidden} label={selLabel} /></span>{/if}</figure>
     {@render viewToggles()}
   </div>
   <div class="md:hidden mt-3">{@render viewToggles()}</div>

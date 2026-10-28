@@ -33,6 +33,7 @@ export type BurnEvents = z.infer<typeof BurnEventsSchema>;
 
 export const ImageBriefSchema = z.object({
   subject: z.string(), class: z.enum(['layered', 'composite-3d', 'pattern-shape', 'fit-target']),
+  arrangement: z.enum(['stacked', 'multiple-items', 'single-item', 'assembly-3d']),
   likelyMaterial: z.enum(['paper', 'wood', 'acrylic', 'mixed', 'unknown']),
   subjectPrompt: z.string(),
   regions: z.array(z.object({ id: z.string(), label: z.string(), samPrompt: z.string(), likelyBought: z.boolean(), note: z.string() }).strict()),
@@ -42,9 +43,9 @@ export const ImageBriefSchema = z.object({
 }).strict();
 export type ImageBrief = z.infer<typeof ImageBriefSchema>;
 export const ImageBriefJsonSchema = {
-  type: 'object', additionalProperties: false, required: ['subject', 'class', 'likelyMaterial', 'subjectPrompt', 'regions', 'colourGroupsHint', 'reference', 'topDownConfidence', 'notes'],
+  type: 'object', additionalProperties: false, required: ['subject', 'class', 'arrangement', 'likelyMaterial', 'subjectPrompt', 'regions', 'colourGroupsHint', 'reference', 'topDownConfidence', 'notes'],
   properties: {
-    subject: { type: 'string' }, class: { type: 'string', enum: ['layered', 'composite-3d', 'pattern-shape', 'fit-target'] },
+    subject: { type: 'string' }, class: { type: 'string', enum: ['layered', 'composite-3d', 'pattern-shape', 'fit-target'] }, arrangement: { type: 'string', enum: ['stacked', 'multiple-items', 'single-item', 'assembly-3d'] },
     likelyMaterial: { type: 'string', enum: ['paper', 'wood', 'acrylic', 'mixed', 'unknown'] }, subjectPrompt: { type: 'string' },
     regions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'label', 'samPrompt', 'likelyBought', 'note'], properties: { id: { type: 'string' }, label: { type: 'string' }, samPrompt: { type: 'string' }, likelyBought: { type: 'boolean' }, note: { type: 'string' } } } },
     colourGroupsHint: { type: 'integer' },

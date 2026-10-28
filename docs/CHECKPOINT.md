@@ -18,6 +18,12 @@
 - Slice 2 (same day): full SAM bit-decode via @meta-sam/parser (recorded sun
   mask = 40,987 bits) and domain/vector tracing to closed mm paths on Sheets;
   committed and redeployed after gates (232 unit, e2e 47/47).
+- Slice 3 (same day): no placeholder start (empty stack/regions until jobs
+  land), layer-region binding, prominent colour sampled from photo pixels,
+  clipped background removal, hide/show layers, scrollable stack, exploded
+  stack toggle; multiple-items arrangement (bookmarks: 5 SAM instances matched
+  left-to-right, one cut per item, multiple-item assembly). Gates: 245 unit,
+  verify clean, e2e 48/48 incl. new multiple-items spec.
 - Open: SVG/G-code file export from sheetPaths (paths exist, files do not);
   budget caps (R-PL-2) unwired; Wonder batch and voice relay still fixtures;
   Supabase auth/storage is the stretch goal once this is committed.

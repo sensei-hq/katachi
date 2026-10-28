@@ -12,7 +12,14 @@ const joinText: Record<Joinery, string> = {
 };
 
 /** Stacked layers, back → front; joined parts for a 3D object. */
-export function assemblySteps({ kind, layers, set, joinery }: { kind: Kind; layers: Layer[]; set: Pick<LayerSet, 'spacer' | 'mmPerLayer'> & { label: string }; joinery: Joinery }): AssemblyStep[] {
+export function assemblySteps({ kind, layers, set, joinery, multiple = false }: { kind: Kind; layers: Layer[]; set: Pick<LayerSet, 'spacer' | 'mmPerLayer'> & { label: string }; joinery: Joinery; multiple?: boolean }): AssemblyStep[] {
+  if (multiple) {
+    return [
+      { title: 'Cut each item separately', detail: `${layers.length} independent cuts: ${layers.map((l) => l.name).join(', ')}. Each sits on its own sheet outline.` },
+      ...layers.map((l) => ({ layer: l.n, title: `Cut ${l.name}`, detail: `One ${l.material} sheet, outline from its own mask. Weed the inside pieces and lift it off whole.` })),
+      { title: 'Finish and attach', detail: 'Sand the edges, seal if you like, then add the bought parts (tassels, cords, findings) through the top hole.' }
+    ];
+  }
   if (kind === '3d') {
     return [
       { title: 'Dry-fit every part', detail: 'Lay out the floor, front, back, two sides and two roof panels. Check that each joint closes before you glue anything.' },

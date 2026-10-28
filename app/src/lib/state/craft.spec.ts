@@ -25,6 +25,8 @@ describe('the craft journey in AppState (docs/design/07)', () => {
     const { app } = fresh();
     expect(await app.ask('a layered mountain picture', '/workshop')).toBe('/capture');
     app.startFromCapture({ images: ['x'], mode: 'single' });
+    const { layerSets } = await import('../content/layers');
+    app.layers.applyLayers(layerSets.paper.layers.map((l) => ({ ...l, shapes: [...l.shapes] })));
     app.layers.selectLayer(5);
     expect(await app.ask('split the hills in two', '/make/layers')).toBeNull();
     expect(app.layers.notes).toEqual([{ step: 'Layers', layer: 'Layer 5 · Hills', text: 'split the hills in two' }]);
@@ -89,8 +91,10 @@ describe('Burn Watch per cut (like Sheets)', () => {
     expect(calls).toEqual(['/api/watch']);
   });
 
-  it('the work area renames a sheet and changes its material', () => {
+  it('the work area renames a sheet and changes its material', async () => {
     const { app } = fresh();
+    const { layerSets } = await import('../content/layers');
+    app.layers.applyLayers(layerSets.paper.layers.map((l) => ({ ...l, shapes: [...l.shapes] })));
     app.layers.renameLayer(2, '  Moon ');
     app.layers.setLayerMaterial(2, 'Silver cardstock');
     app.layers.renameLayer(2, '   ');

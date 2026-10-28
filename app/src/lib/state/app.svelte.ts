@@ -151,15 +151,23 @@ export class AppState {
     if (!craft || this.project?.example) return;
     for (const job of jobsOnVisit[id] ?? []) {
       if (this.muse.has(craft, job)) continue;
+      // A reopened craft already carries its saved results: never re-run a job over them.
+      const have: Partial<Record<string, boolean>> = {
+        'shape.cutout': this.layers.cutoutChecks.length > 0 || this.layers.subjectPaths.length > 0,
+        'shape.segment': this.layers.regionList.length > 0,
+        'layers.plan': this.layers.stack.length > 0,
+        'sheets.vectorise': this.layers.sheetPaths.length > 0
+      };
+      if (have[job]) continue;
       // each result is written into the flow state; the pages only ever read that state
       const f = this.layers;
       const image = this.project?.image || undefined;
       if (job === 'shape.cutout') void this.muse.cutout(craft, { imageDataUrl: image, subjectPrompt: f.imageBrief?.subjectPrompt }).then((r) => { f.applyCutout(r); if (r.paths?.length) this.flow.conversation.say(`Outline traced on your photo: ${r.paths.length} closed path${r.paths.length > 1 ? 's' : ''} around the ${f.outline.shape}. Next, I’ll split it into regions.`); });
-      else if (job === 'shape.segment') void this.muse.segment(craft, { imageDataUrl: image, briefRegions: f.imageBrief?.regions }).then((r) => { f.applyRegions(r); this.flow.conversation.say(`Split into ${f.regions.length} regions: ${f.regions.slice(0, 6).map((x) => `${x.name} ${x.pct}%`).join(', ')}. ${f.kept.length} kept. Toggle any, or tell me which to drop.`); });
-      else if (job === 'layers.plan') void this.muse.planLayers(craft, f.makeAs, { imageDataUrl: image, description: f.brief || f.subject }).then((r) => { f.applyLayers(r); this.flow.conversation.say(`Planned ${f.layers.length} layers, back to front: ${f.layers.map((l) => l.name).join(' · ')}. Pick one to inspect, or tell me to merge or split it.`); });
+      else if (job === 'shape.segment') void this.muse.segment(craft, { imageDataUrl: image, briefRegions: f.imageBrief?.regions, brief: f.imageBrief }).then((r) => { f.applyRegions(r); this.flow.conversation.say(`Split into ${f.regions.length} regions: ${f.regions.slice(0, 6).map((x) => `${x.name} ${x.pct}%`).join(', ')}. ${f.kept.length} kept. Toggle any, or tell me which to drop.`); });
+      else if (job === 'layers.plan') void this.muse.planLayers(craft, f.makeAs, { imageDataUrl: image, description: f.brief || f.subject, regions: f.regions, brief: f.imageBrief }).then((r) => { f.applyLayers(r); this.flow.conversation.say(`Planned ${f.layers.length} layers, back to front: ${f.layers.map((l) => l.name).join(' · ')}. Pick one to inspect, or tell me to merge or split it.`); });
       else if (job === 'layers.imagineGaps') void this.muse.imagineGaps(craft, image);
       else if (job === 'layers.unfold') void this.muse.unfold(craft).then((r) => f.applyParts(r));
-      else if (job === 'sheets.vectorise') void this.muse.vectorise(craft, f.layers.length, { regions: f.regions, sizeMm: f.outline.sizeMm }).then((r) => { f.applySheets(r.sheetsData); if (r.pathCount) this.flow.conversation.say(`Traced ${r.pathCount} closed paths across ${r.sheetsData.length} sheets (${r.sheetsData.reduce((a, s) => a + s.cutLengthMm, 0).toFixed(0)} mm of cut). Pick a device and send the first sheet.`); });
+      else if (job === 'sheets.vectorise') void this.muse.vectorise(craft, f.layers.length, { regions: f.regions, sizeMm: f.outline.sizeMm, layers: f.layers }).then((r) => { f.applySheets(r.sheetsData); if (r.pathCount) this.flow.conversation.say(`Traced ${r.pathCount} closed paths across ${r.sheetsData.length} sheets (${r.sheetsData.reduce((a, s) => a + s.cutLengthMm, 0).toFixed(0)} mm of cut). Pick a device and send the first sheet.`); });
       else if (job === 'assemble.instructions') void this.muse.writeInstructions(craft, this.assembly).then((r) => { this.instructions = r; });
     }
   }
@@ -184,7 +192,7 @@ export class AppState {
   /** Download .zip: the vectorised sheets (placeholder until sheets.vectorise is wired). */
   exportSheets() {
     if (!this.project) return;
-    void this.muse.vectorise(this.project.id, this.layers.layers.length, { regions: this.layers.regions, sizeMm: this.layers.outline.sizeMm }).then((r) => {
+    void this.muse.vectorise(this.project.id, this.layers.layers.length, { regions: this.layers.regions, sizeMm: this.layers.outline.sizeMm, layers: this.layers.layers }).then((r) => {
       this.layers.applySheets(r.sheetsData);
       this.flow.conversation.say(r.pathCount ? `Traced ${r.pathCount} closed paths across ${r.sheetsData.length} sheets — the .zip export carries those SVG paths per sheet.` : `The .zip will hold ${this.layers.layers.length} sheet files (SVG + device format) once tracing is wired — for now the sheets are previews.`);
     });
@@ -242,7 +250,7 @@ export class AppState {
   }
   /** Assemble · Spark's instructions once written for this craft, else the code-derived draft from its layers or parts. */
   instructions = $state<AssemblyStep[] | null>(null);
-  get assembly(): AssemblyStep[] { return this.instructions ?? assemblySteps({ kind: this.layers.kind, layers: this.layers.layers, set: this.layers.data, joinery: this.layers.joinery }); }
+  get assembly(): AssemblyStep[] { return this.instructions ?? assemblySteps({ kind: this.layers.kind, layers: this.layers.layers, set: this.layers.data, joinery: this.layers.joinery, multiple: this.layers.imageBrief?.arrangement === 'multiple-items' }); }
   /** Katachi's word on a step, from what the models found (falls back to the step's guide copy). */
   noteFor(id: StepId): string {
     const f = this.layers;
@@ -363,7 +371,7 @@ export class AppState {
   /** A chat refinement on a craft step: applied at once when it is a plain command, else noted against the step/layer. */
   refine(text: string, path: string) {
     const step = journeyStepFor(path)?.label ?? 'Craft';
-    const layer = /^\/make\/(layers|gaps)$/.test(path) ? `Layer ${this.layers.selected.n} · ${this.layers.selected.name}` : undefined;
+    const layer = /^\/make\/(layers|gaps)$/.test(path) && this.layers.selected.n > 0 ? `Layer ${this.layers.selected.n} · ${this.layers.selected.name}` : undefined;
     this.flow.conversation.ingestTranscript(text);
     const applied = this.applyChatCommand(text);
     if (applied) { this.save(); this.flow.conversation.say(`Done — ${applied}. Saved with the craft.`); return; }

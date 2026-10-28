@@ -15,7 +15,7 @@ const f = app.layers;
 $effect(() => app.setScreen(app.title, `${copy.gaps.sub} · ${f.layers.length} layers`));
 const ctx = stepContext(app, 'Gap rule', rule);
 const go = () => void goto(resolve('/make/output'));
-const card = $derived(f.gapCards.find((c) => c.n === f.selected.n) ?? f.gapCards[0]);
+const card = $derived(f.gapCards.find((c) => c.n === f.selected.n) ?? f.gapCards[0] ?? { ...f.selected, solid: true });
 </script>
 {#snippet rule()}
   <InputField type="radio" name="rule" label={copy.gaps.rule} options={gapRules} value={gapRules.find((r) => r.id === f.gapRule)} onchange={(r: any) => f.setGapRule(r.id)} />
@@ -31,8 +31,8 @@ const card = $derived(f.gapCards.find((c) => c.n === f.selected.n) ?? f.gapCards
 <svelte:head><title>Katachi · Gaps</title></svelte:head>
 <StepScreen aside={ctx.wide ? undefined : aside} {actions} note={`${f.selected.hiddenPct}% of this layer is hidden behind the layers in front. The photo can’t show what’s there — how should I fill it?`}>
   <figure class="md:hidden relative m-0 h-[230px] rounded-lg overflow-hidden border border-paper-edge bg-paper-soft p-2">
-    {#if app.stageImage && f.overlays[f.selected.n - 1]}
-      <PhotoStage image={app.stageImage} label={`L${f.selected.n} · ${f.selected.name} · ${card.solid ? 'filled solid' : 'left open'}`} overlays={[{ d: f.overlays[f.selected.n - 1].d, tone: f.overlays[f.selected.n - 1].tone, opacity: 0.55, hatch: !card.solid }]} />
+    {#if app.stageImage && f.overlayForLayer(f.selected.n)}
+      <PhotoStage image={app.stageImage} label={`L${f.selected.n} · ${f.selected.name} · ${card.solid ? 'filled solid' : 'left open'}`} overlays={[{ d: f.overlayForLayer(f.selected.n)!.d, tone: f.overlayForLayer(f.selected.n)!.tone, opacity: 0.55, hatch: !card.solid }]} />
     {:else}<LayeredScene layers={f.layers} mode="layer" selected={f.selected.n} label={`L${f.selected.n} · ${f.selected.name} · ${card.solid ? 'filled solid' : 'left open'}`} />{/if}
     <span class="absolute left-2.5 top-2.5 meta rounded-sm bg-paper px-2 py-0.5 border border-paper-edge">L{f.selected.n} · {f.selected.name} · {card.solid ? 'filled solid' : 'left open'}</span>
   </figure>
@@ -44,7 +44,7 @@ const card = $derived(f.gapCards.find((c) => c.n === f.selected.n) ?? f.gapCards
     <div class="grid grid-cols-3 lg:grid-cols-4 gap-4">
       {#each f.gapCards as c (c.n)}
         <div class="rounded-lg border border-paper-edge bg-paper-soft p-3 flex flex-col gap-2.5">
-          <div class="aspect-square rounded-md overflow-hidden">{#if app.stageImage && f.overlays[c.n - 1]}<PhotoStage image={app.stageImage} label={`L${c.n} ${c.name}, ${c.solid ? 'solid' : 'open'}`} overlays={[{ d: f.overlays[c.n - 1].d, tone: f.overlays[c.n - 1].tone, opacity: 0.55, hatch: !c.solid }]} />{:else}<LayeredScene layers={f.layers} mode="layer" selected={c.n} label={`L${c.n} ${c.name}, ${c.solid ? 'solid' : 'open'}`} />{/if}</div>
+          <div class="aspect-square rounded-md overflow-hidden">{#if app.stageImage && f.overlayForLayer(c.n)}<PhotoStage image={app.stageImage} label={`L${c.n} ${c.name}, ${c.solid ? 'solid' : 'open'}`} overlays={[{ d: f.overlayForLayer(c.n)!.d, tone: f.overlayForLayer(c.n)!.tone, opacity: 0.55, hatch: !c.solid }]} />{:else}<LayeredScene layers={f.layers} mode="layer" selected={c.n} label={`L${c.n} ${c.name}, ${c.solid ? 'solid' : 'open'}`} />{/if}</div>
           <div class="flex items-center justify-between gap-2"><span class="text-body"><span class="meta mr-1.5">L{c.n}</span>{c.name}</span>
             <Button size="sm" style={c.solid ? 'default' : 'outline'} variant={c.solid ? 'primary' : 'default'} class="rounded-full font-mono" aria-pressed={c.solid} label={c.solid ? 'solid' : 'open'} aria-label={`L${c.n} ${c.name}: ${c.solid ? 'solid' : 'open'}`} onclick={() => f.toggleSolid(c.n)} /></div>
         </div>

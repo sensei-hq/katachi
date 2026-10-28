@@ -29,7 +29,7 @@ const views = [{ label: copy.cutout.original, value: 'original' }, { label: copy
     <figure class="relative m-0 w-full max-w-[640px] aspect-square md:flex-1 md:max-h-[640px] rounded-lg overflow-hidden border border-paper-edge bg-paper-soft">
       <span class="absolute left-2.5 top-2.5 z-1 meta rounded-sm bg-paper px-2 py-0.5 border border-paper-edge">background removed · {f.outline.shape} outline</span>
       {#if app.stageImage && f.subjectPaths.length}
-        <PhotoStage image={app.stageImage} label={`Your photo with the SAM outline: ${app.title}`} overlays={f.cutoutView === 'cutout' ? [{ d: f.subjectD, tone: 'accent' as const, opacity: 0.35 }] : []} dim={f.cutoutView === 'cutout'} />
+        <PhotoStage image={app.stageImage} label={`Your photo, background removed: ${app.title}`} overlays={f.cutoutView === 'cutout' ? [{ d: f.subjectD, tone: 'accent' as const, opacity: 0.35 }] : []} clipped={f.cutoutView === 'cutout'} />
       {:else if app.stageImage}
         <PhotoStage image={app.stageImage} label={`Your photo: ${app.title}`} />
       {:else}<LayeredScene layers={f.layers} mode={f.cutoutView} />{/if}

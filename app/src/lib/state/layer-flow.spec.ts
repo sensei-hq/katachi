@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { LayerFlowState } from './layer-flow.svelte';
-import { kinds, layerSets, steps } from '../content/layers';
+import { kinds, layerSets, regions as fixtureRegions, steps } from '../content/layers';
+
+// A fresh flow starts empty (no placeholder layers); these tests seed the fixture results explicitly,
+// the way MuseAgents.apply* would after a live call.
+const seeded = () => {
+  const f = new LayerFlowState();
+  f.applyRegions(fixtureRegions.map((r) => ({ ...r })) as never);
+  f.applyLayers(layerSets.paper.layers.map((l) => ({ ...l, shapes: [...l.shapes] })));
+  return f;
+};
 
 describe('LayerFlowState · image → layers (docs/design/01 S1–S9)', () => {
   it('walks seven routes (assemble last); the kind picker routes flat art to the cutout, 3D to six views, reference to changes', () => {
@@ -32,7 +41,7 @@ describe('LayerFlowState · image → layers (docs/design/01 S1–S9)', () => {
   });
 
   it('M05: "next layer" walks the stack and wraps to the back', () => {
-    const f = new LayerFlowState();
+    const f = seeded();
     f.selectLayer(f.layers.length);
     f.nextLayer();
     expect(f.selected.n).toBe(1);
@@ -48,7 +57,7 @@ describe('LayerFlowState · image → layers (docs/design/01 S1–S9)', () => {
   });
 
   it('a snapshot of every choice restores into a fresh flow (projects save and reopen)', () => {
-    const f = new LayerFlowState();
+    const f = seeded();
     f.setKind('3d'); f.setMakeAs('wood'); f.toggleRegion('sun'); f.selectLayer(2); f.setGapRule('leave'); f.toggleSolid(1); f.setDevice('xtool'); f.setJoinery('tabs');
     const g = new LayerFlowState();
     g.restore(JSON.parse(JSON.stringify(f.snapshot())));
@@ -58,7 +67,7 @@ describe('LayerFlowState · image → layers (docs/design/01 S1–S9)', () => {
   });
 
   it('layers: duplicate puts a copy in front of the layer and selects it; numbers follow the stack', () => {
-    const f = new LayerFlowState();
+    const f = seeded();
     const before = f.layers.length;
     f.duplicate(2);
     expect(f.layers).toHaveLength(before + 1);
@@ -68,7 +77,7 @@ describe('LayerFlowState · image → layers (docs/design/01 S1–S9)', () => {
   });
 
   it('layers: merge down joins a layer with the one in front; split (by islands) restores the parts', () => {
-    const f = new LayerFlowState();
+    const f = seeded();
     const [sky, sun] = f.layers;
     expect(f.canMergeDown(f.layers.length)).toBe(false);
     f.mergeDown(1);
@@ -89,7 +98,7 @@ describe('LayerFlowState · image → layers (docs/design/01 S1–S9)', () => {
   });
 
   it('output: one sheet at a time — feed, send, cutting, verify, next; cut again repeats the sheet', () => {
-    const f = new LayerFlowState();
+    const f = seeded();
     const n = f.layers.length;
     expect(f.job).toMatchObject({ sheet: 1, phase: 'feed', progress: 0 });
     expect(f.feedText).toBe(`Feed ${f.layers[0].material}`);
@@ -110,7 +119,7 @@ describe('LayerFlowState · image → layers (docs/design/01 S1–S9)', () => {
   });
 
   it('S4: keeps regions by default except the bought frame; toggling updates the kept share', () => {
-    const f = new LayerFlowState();
+    const f = seeded();
     expect(f.regions.find((r) => r.id === 'frame')?.on).toBe(false);
     const before = f.keptPct;
     f.toggleRegion('sun');
@@ -119,19 +128,19 @@ describe('LayerFlowState · image → layers (docs/design/01 S1–S9)', () => {
     expect(f.kept.map((r) => r.id)).toContain('frame');
   });
 
-  it('S5a: the medium (paper ↔ wood) picks the stack; depth follows the selected layer', () => {
-    const f = new LayerFlowState();
+  it('S5a: the medium picks the material data; the stack itself comes from the plan, depth follows the selected layer', () => {
+    const f = seeded();
     expect(f.layers).toHaveLength(layerSets.paper.layers.length);
     f.selectLayer(3);
     expect(f.selected.n).toBe(3);
     expect(f.depthMm).toBe((3 * layerSets.paper.mmPerLayer).toFixed(1));
     f.setSet('wood');
-    expect(f.layers).toHaveLength(layerSets.wood.layers.length);
     expect(f.data.mmPerLayer).toBe(3);
+    expect(f.layers).toHaveLength(layerSets.paper.layers.length);
   });
 
   it('S6: the gap rule fills structural layers under "smart"; per-layer overrides win; material % follows', () => {
-    const f = new LayerFlowState();
+    const f = seeded();
     f.setGapRule('extend');
     expect(f.gapCards.every((c) => c.solid)).toBe(true);
     const full = f.materialPct;

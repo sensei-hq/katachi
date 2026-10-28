@@ -6,7 +6,7 @@
 export type LayerSetId = 'paper' | 'wood';
 export type LayerShape = 'sky' | 'sun' | 'far' | 'ridge' | 'hills' | 'pines';
 /** One cut layer: one or more shapes (islands) in one colour and material. A merged layer keeps its parts so Split can restore them. */
-export interface Layer { n: number; name: string; shapes: LayerShape[]; colour: string; visiblePct: number; hiddenPct: number; material: string; flag?: string; parts?: Layer[] }
+export interface Layer { n: number; name: string; shapes: LayerShape[]; colour: string; visiblePct: number; hiddenPct: number; material: string; flag?: string; parts?: Layer[]; /** the SAM region this layer was built from (its traced paths + photo colour) */ regionId?: string }
 export interface LayerSet {
   label: string; project: string; headline: string; device: string; spacer: string; mmPerLayer: number;
   /** layers that carry the stack under the "smart" gap rule (doc 01 · S6) */

@@ -16,6 +16,24 @@ async function post(route: string, body: unknown): Promise<any | null> {
   } catch { return null; }
 }
 const sendable = (u?: string) => Boolean(u && (u.startsWith('data:image/') || u.startsWith('http')));
+async function withPhotoColours(imageDataUrl: string | undefined, found: Region[]): Promise<Region[]> {
+  if (!imageDataUrl || typeof document === 'undefined') return found;
+  try {
+    const { dominantColour } = await import('../domain/colour');
+    const img = new Image();
+    await Promise.race([new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error('img')); img.src = imageDataUrl; }), new Promise<void>((_, rej) => setTimeout(() => rej(new Error('colour timeout')), 700))]);
+    const w = 240, h = Math.max(1, Math.round((w * img.naturalHeight) / Math.max(1, img.naturalWidth)));
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d'); if (!ctx) return found;
+    ctx.drawImage(img, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h);
+    return found.map((r) => {
+      const paths = r.paths?.length ? r.paths : r.box ? [[[r.box.x1, r.box.y1], [r.box.x2, r.box.y1], [r.box.x2, r.box.y2], [r.box.x1, r.box.y2]] as [number, number][]] : [];
+      const colour = paths.length ? dominantColour({ data: data.data, w, h }, paths) : null;
+      return colour ? { ...r, colour } : r;
+    });
+  } catch { return found; }
+}
 const traceCost = (j: any): number | undefined => Array.isArray(j?.trace) ? j.trace.reduce((a: number, x: any) => a + (Number(x?.costUsd) || 0), 0) : undefined;
 
 /** One run of a model or agent job for a craft, as the UI shows it. */
@@ -94,39 +112,62 @@ export class MuseAgents {
         const shape: Outline['shape'] = Math.abs(w - h) / Math.max(w, h) < 0.25 ? 'circle' : 'rect';
         const outline: Outline = { shape, sizeMm: 300 };
         const checks: Check[] = [{ status: 'pass', text: `Outline found · SAM 3.1 (${j.source ?? 'fixture'})` }, { status: 'pass', text: `Shape · ${shape}` }];
-        const paths = (j?.masks?.[0]?.paths ?? []) as [number, number][][];
-        return { result: { outline, checks, paths }, summary: `Background removed · ${shape} outline, Ø 300 mm`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
+        const paths = ((j?.masks ?? []) as { paths?: [number, number][][] }[]).flatMap((m) => m.paths ?? []) as [number, number][][];
+        const items = (j?.masks ?? []).length;
+        return { result: { outline, checks, paths }, summary: items > 1 ? `Background removed · ${items} separate items traced` : `Background removed · ${shape} outline, Ø 300 mm`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
       }
       await tick(); return { result: { outline: fallbackOutline, checks: fallbackChecks, paths: [] as [number, number][][] }, summary: `Background removed · ${fallbackOutline.shape} outline, Ø ${fallbackOutline.sizeMm} mm`, source: 'fixture' as const };
     });
   }
-  segment(craftId: string, opts: { imageDataUrl?: string; briefRegions?: ImageBrief['regions'] } = {}) {
+  segment(craftId: string, opts: { imageDataUrl?: string; briefRegions?: ImageBrief['regions']; brief?: ImageBrief | null } = {}) {
     const fallback: Region[] = regions.map((r) => ({ ...r }));
     return this.run('shape.segment', craftId, async () => {
-      const j = sendable(opts.imageDataUrl) && opts.briefRegions?.length ? await post('/api/segment', { imageDataUrl: opts.imageDataUrl, regions: opts.briefRegions }) : null;
-      const live = (j?.regions ?? []) as { id: string; label: string; note?: string; areaPct?: number; keep?: boolean; ones?: number; paths?: [number, number][][] }[];
+      const j = sendable(opts.imageDataUrl) && opts.briefRegions?.length ? await post('/api/segment', { imageDataUrl: opts.imageDataUrl, regions: opts.briefRegions, ...(opts.brief?.arrangement === 'multiple-items' ? { multiple: true, subjectPrompt: opts.brief.subjectPrompt } : {}) }) : null;
+      const live = (j?.regions ?? []) as { id: string; label: string; note?: string; areaPct?: number; keep?: boolean; ones?: number; paths?: [number, number][][]; box?: { x1: number; y1: number; x2: number; y2: number } }[];
       if (live.length) {
         const tones = ['warn', 'accent', 'ok', 'ink', 'muted'] as const;
-        const found = live.map((r, i) => ({ id: r.id as Region['id'], name: r.label, pct: Math.round((r.areaPct ?? 0) * 10) / 10, note: r.note ?? '', tone: tones[i % tones.length], keep: r.keep ?? true, ...(r.ones ? { ones: r.ones } : {}), ...(r.paths?.length ? { paths: r.paths } : {}) })) as Region[];
-        return { result: found, summary: `${found.length} regions found`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
+        let found = live.map((r, i) => ({ id: r.id as Region['id'], name: r.label, pct: Math.round((r.areaPct ?? 0) * 10) / 10, note: r.note ?? '', tone: tones[i % tones.length], keep: r.keep ?? true, ...(r.ones ? { ones: r.ones } : {}), ...(r.paths?.length ? { paths: r.paths } : {}), ...(r.box ? { box: r.box } : {}) })) as Region[];
+        found = await withPhotoColours(opts.imageDataUrl, found);
+        return { result: found, summary: opts.brief?.arrangement === 'multiple-items' ? `${found.length} separate items found` : `${found.length} regions found`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
       }
       await tick(); return { result: fallback, summary: `${fallback.length} regions found`, source: 'fixture' as const };
     });
   }
   // ── Layers
-  planLayers(craftId: string, makeAs: MakeAs, opts: { imageDataUrl?: string; description?: string } = {}) {
+  planLayers(craftId: string, makeAs: MakeAs, opts: { imageDataUrl?: string; description?: string; regions?: Region[]; brief?: ImageBrief | null } = {}) {
     const set = layerSets[makeAs === 'wood' ? 'wood' : 'paper'];
-    const fallback = set.layers.map((l) => ({ ...l, shapes: [...l.shapes] }));
+    const fallback: Layer[] = [];
     return this.run('layers.plan', craftId, async () => {
+      const kept = (opts.regions ?? []).filter((r) => (r as { on?: boolean }).on ?? r.keep);
+      const material = makeAs === 'wood' ? '3 mm birch plywood' : makeAs === 'acrylic' ? '3 mm acrylic' : makeAs === 'paper' ? 'Cardstock' : opts.brief?.likelyMaterial === 'wood' ? '3 mm birch plywood' : opts.brief?.likelyMaterial === 'acrylic' ? '3 mm acrylic' : set.layers[0].material;
+      // Several separate finished objects (bookmarks, earrings…): each item is its own cut, never a stack.
+      if (opts.brief?.arrangement === 'multiple-items' && kept.length) {
+        const total = kept.reduce((a, r) => a + Math.max(1, r.pct), 0) || 1;
+        const layers: Layer[] = kept.map((r, i) => ({ n: i + 1, name: r.name, shapes: ['sky'], colour: r.colour ?? set.layers[i % set.layers.length].colour, visiblePct: Math.round((Math.max(1, r.pct) / total) * 1000) / 10, hiddenPct: 0, material, regionId: r.id }));
+        return { result: layers, summary: `${layers.length} separate items · one cut each`, source: 'live' as const, costUsd: 0 };
+      }
       const j = sendable(opts.imageDataUrl) ? await post('/api/convert', { imageDataUrl: opts.imageDataUrl, description: opts.description ?? 'layered craft from this photo', group: makeAs === 'wood' ? 'laser-cut' : 'cricut-paper' }) : null;
       const pieces = (j?.pieces ?? []) as { name: string; kind: string; note: string }[];
       const layerPieces = pieces.filter((x) => x.kind === 'layer' || j?.conversionClass === 'layered');
       if (layerPieces.length >= 2) {
         const shapes = ['sky', 'sun', 'far', 'ridge', 'hills', 'pines'] as const;
-        const layers: Layer[] = layerPieces.map((piece, i) => { const base = set.layers[i % set.layers.length]; return { n: i + 1, name: piece.name.replace(/^Layer \d+ \((back|mid|front)\)\s*/i, '') || piece.name, shapes: [shapes[i % shapes.length]], colour: base.colour, visiblePct: Math.max(2, Math.round((100 / layerPieces.length) * 10) / 10), hiddenPct: i === layerPieces.length - 1 ? 0 : 40, material: base.material }; });
+        const tokens = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+        const layers: Layer[] = layerPieces.map((piece, i) => {
+          const name = piece.name.replace(/^Layer \d+ \((back|mid|front)\)\s*/i, '') || piece.name;
+          const pt = tokens(name + ' ' + (piece.note ?? ''));
+          const region = kept.map((r) => ({ r, score: tokens(r.name + ' ' + r.note).filter((w) => pt.includes(w)).length })).sort((a, b) => b.score - a.score)[0];
+          const matched = region && region.score > 0 ? region.r : kept[i];
+          const base = set.layers[i % set.layers.length];
+          return { n: i + 1, name, shapes: [shapes[i % shapes.length]], colour: matched?.colour ?? base.colour, visiblePct: matched ? Math.round(matched.pct * 10) / 10 : Math.max(2, Math.round((100 / layerPieces.length) * 10) / 10), hiddenPct: i === layerPieces.length - 1 ? 0 : 40, material: base.material, ...(matched ? { regionId: matched.id } : {}) };
+        });
         return { result: layers, summary: `${layers.length} layers · ${String(j.objective ?? set.label).slice(0, 60)}`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) ?? j?.costUsd };
       }
-      await tick(); return { result: fallback, summary: `${fallback.length} layers · ${set.label.toLowerCase()}`, source: 'fixture' as const };
+      // No convert plan, but we have SAM regions: one layer per kept region, bound to its mask + photo colour.
+      if (kept.length) {
+        const layers: Layer[] = kept.map((r, i) => ({ n: i + 1, name: r.name, shapes: ['sky'], colour: r.colour ?? set.layers[i % set.layers.length].colour, visiblePct: Math.round(r.pct * 10) / 10, hiddenPct: i === kept.length - 1 ? 0 : 40, material, regionId: r.id }));
+        return { result: layers, summary: `${layers.length} layers from the regions in your photo`, source: 'live' as const, costUsd: 0 };
+      }
+      await tick(); return { result: fallback, summary: 'No layers yet — run Segment first', source: 'fixture' as const };
     });
   }
   imagineGaps(craftId: string, imageDataUrl?: string) {
@@ -147,17 +188,21 @@ export class MuseAgents {
   }
   // ── Sheets
   /** Sheets: SAM mask paths (0-1000 image coords from /api/segment) scaled to mm and traced to closed SVG per kept region. */
-  vectorise(craftId: string, sheets: number, opts: { regions?: Region[]; sizeMm?: number } = {}) {
+  vectorise(craftId: string, sheets: number, opts: { regions?: Region[]; sizeMm?: number; layers?: Layer[] } = {}) {
     return this.run('sheets.vectorise', craftId, async () => {
       const { scalePaths, pathsToSvg, cutLength } = await import('../domain/vector');
       const sizeMm = opts.sizeMm ?? 300;
       const mmPerUnit = sizeMm / 1000;
-      const kept = (opts.regions ?? []).filter((r) => r.keep && r.paths?.length);
-      const data = kept.map((r) => {
-        const traced = (r.paths ?? []).map((points) => ({ points, area: 0, closed: true as const }));
+      const byRegion: Record<string, Region> = Object.fromEntries((opts.regions ?? []).map((r) => [String(r.id), r]));
+      const sources = opts.layers?.length
+        ? opts.layers.map((l) => { const r = (l.regionId ? byRegion[String(l.regionId)] : undefined) ?? (opts.regions ?? [])[l.n - 1]; return { name: l.name, region: r }; })
+        : (opts.regions ?? []).filter((r) => r.keep).map((r) => ({ name: r.name, region: r }));
+      const data = sources.filter((s) => s.region).map(({ name, region: r }) => {
+        const paths = r!.paths?.length ? r!.paths : r!.box ? [[[r!.box.x1, r!.box.y1], [r!.box.x2, r!.box.y1], [r!.box.x2, r!.box.y2], [r!.box.x1, r!.box.y2]] as [number, number][]] : [];
+        const traced = paths.map((points) => ({ points, area: 0, closed: true as const }));
         const mm = scalePaths(traced, mmPerUnit);
-        return { name: r.name, svg: pathsToSvg(mm), pathCount: mm.length, cutLengthMm: cutLength(mm), sizeMm };
-      });
+        return { name, svg: pathsToSvg(mm), pathCount: mm.length, cutLengthMm: cutLength(mm), sizeMm };
+      }).filter((s) => s.pathCount > 0);
       const pathCount = data.reduce((a, s) => a + s.pathCount, 0);
       if (pathCount) return { result: { sheets, pathCount, sheetsData: data }, summary: `${data.length} sheets traced · ${pathCount} closed paths · ${data.reduce((a, s) => a + s.cutLengthMm, 0).toFixed(0)} mm of cut`, source: 'live' as const, costUsd: 0 };
       await tick(); return { result: { sheets, pathCount: 0, sheetsData: data }, summary: `${sheets} sheets traced and nested`, source: 'fixture' as const };

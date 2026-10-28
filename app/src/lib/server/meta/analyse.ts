@@ -3,7 +3,7 @@ import { measureScene, type MeasureResult } from '../../domain/measure';
 import { MetaClient } from './client';
 const FIXTURE: SceneAnalysis = { objects: [{ id: 'o1', label: 'hand-drawn M logo', samPrompt: 'logo drawing', role: 'art', bbox: [0, 0, 10, 10], shapeHint: 'freeform' }, { id: 'o2', label: 'mug base', samPrompt: 'bottom rim of the mug', role: 'fit_target', bbox: [0, 0, 10, 10], shapeHint: 'round' }, { id: 'o3', label: 'credit card', samPrompt: 'credit card', role: 'reference', bbox: [0, 0, 10, 10], shapeHint: 'rectangular' }], reference: { objectId: 'o3', kind: 'id1_card' }, camera: { topDownConfidence: 0.92 }, notes: 'demo fixture' };
 export const FIXTURE_BRIEF: ImageBrief = {
-  subject: 'layered paper art in a round hoop', class: 'layered', likelyMaterial: 'paper',
+  subject: 'layered paper art in a round hoop', class: 'layered', arrangement: 'stacked', likelyMaterial: 'paper',
   subjectPrompt: 'layered paper art',
   regions: [
     { id: 'frame', label: 'Frame ring', samPrompt: 'round frame ring', likelyBought: true, note: 'looks bought' },
@@ -14,7 +14,7 @@ export const FIXTURE_BRIEF: ImageBrief = {
   ],
   colourGroupsHint: 6, reference: null, topDownConfidence: 0.9, notes: 'demo fixture'
 };
-const BRIEF_SYSTEM = 'You are Katachi, a workshop buddy who turns a photo into cut layers. Classify the image for a layered/3D craft build. Give each distinct region a short SAM noun phrase. Mark bought hardware (frames, hoops) likelyBought. Never emit coordinates.';
+const BRIEF_SYSTEM = 'You are Katachi, a workshop buddy who turns a photo into cut layers. Classify the image for a layered/3D craft build. Set arrangement: stacked = one piece made of stacked layers; multiple-items = several separate finished objects side by side (bookmarks, earrings, coasters, ornaments) — then regions MUST be one entry per separate object, ordered left to right, each with its own SAM noun phrase; single-item = one flat shape; assembly-3d = parts of one 3D object. Give each distinct region a short SAM noun phrase. Mark bought hardware (frames, hoops, tassels, cords) likelyBought. Never emit coordinates.';
 /** S2 Classify: Spark vision on the real image -> ImageBrief. Fixture brief without a key or on failure. */
 export async function analyseImage(env: Record<string, string | undefined>, imageDataUrl: string | undefined, client?: MetaClient): Promise<{ brief: ImageBrief; source: 'live' | 'fixture'; trace: { model: string; purpose: string; stage: string; latencyMs: number; costUsd: number }[] }> {
   if (env.META_API_KEY && imageDataUrl) {
@@ -22,7 +22,17 @@ export async function analyseImage(env: Record<string, string | undefined>, imag
       const c = client ?? new MetaClient(env.META_API_KEY);
       const r = await c.sparkVision(BRIEF_SYSTEM, 'Analyse this photo for a layered craft build.', imageDataUrl, ImageBriefJsonSchema as unknown as Record<string, unknown>, 'ImageBrief');
       const parsed = ImageBriefSchema.safeParse(r.data);
-      if (parsed.success) return { brief: parsed.data, source: 'live', trace: [{ model: 'muse-spark-1.3', purpose: 'analyze_image', stage: 'S2', latencyMs: r.latencyMs, costUsd: r.costUsd }] };
+      if (parsed.success) {
+        let brief = parsed.data;
+        if (brief.regions.length < 3 && brief.arrangement !== 'multiple-items') {
+          try {
+            const again = await c.sparkVision(BRIEF_SYSTEM, 'List at least 5 distinct cuttable regions of this image, back to front, each one region only.', imageDataUrl, ImageBriefJsonSchema as unknown as Record<string, unknown>, 'ImageBrief');
+            const second = ImageBriefSchema.safeParse(again.data);
+            if (second.success && second.data.regions.length > brief.regions.length) brief = { ...brief, regions: second.data.regions };
+          } catch { /* keep the first brief */ }
+        }
+        return { brief, source: 'live', trace: [{ model: 'muse-spark-1.3', purpose: 'analyze_image', stage: 'S2', latencyMs: r.latencyMs, costUsd: r.costUsd }] };
+      }
       console.error('ImageBrief parse failed, using fixture');
     } catch (e) { console.error('live image analysis failed, using fixture:', e instanceof Error ? e.message : String(e)); }
   }

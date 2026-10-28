@@ -40,6 +40,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       await main(page).getByRole('button', { name: 'Find the objects' }).click();
       await main(page).getByRole('button', { name: /Separate into layers/ }).click();
       await expect(page).toHaveURL(/\/make\/layers$/);
+      await expect(page.getByRole('navigation', { name: 'Layer stack, back to front' }).getByRole('button').first()).toBeVisible({ timeout: 120_000 });
       await expect(main(page)).toContainText('Stacked layers');
 
       // a chat note on a layer is kept with the craft

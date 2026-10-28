@@ -1,12 +1,11 @@
-import { changes, copy, type Layer, devices, gapChoices, kinds, layerSets, regions, views, type DeviceId, type GapChoice, type GapRule, type Joinery, type Kind, type LayerSetId, type MakeAs, type RefineTool, type RegionId, type SegmentView, type ViewId } from '../content/layers';
+import { changes, type Layer, devices, gapChoices, kinds, layerSets, regions, views, type DeviceId, type GapChoice, type GapRule, type Joinery, type Kind, type LayerSetId, type MakeAs, type RefineTool, type RegionId, type SegmentView, type ViewId } from '../content/layers';
 import { pointsToPath } from '../domain/vector';
 
-const fresh = (s: LayerSetId): Layer[] => layerSets[s].layers.map((l) => ({ ...l, shapes: [...l.shapes] }));
 
 /** What the models found, in the shape the live calls return. Pages read these fields only; the fixtures are just
  * the starting values until MuseAgents (lib/state/muse.svelte.ts) writes a result over them. */
 export interface Check { status: 'pass' | 'warn' | 'fail'; text: string }
-export type Region = (typeof regions)[number] & { paths?: [number, number][][]; ones?: number };
+export type Region = (typeof regions)[number] & { paths?: [number, number][][]; ones?: number; box?: { x1: number; y1: number; x2: number; y2: number }; colour?: string };
 export interface SheetPaths { name: string; svg: string; pathCount: number; cutLengthMm: number; sizeMm?: number }
 export interface Part { name: string; size: string; needs: ViewId[]; any?: boolean; missing: string }
 export interface Outline { shape: 'circle' | 'rect' | 'free'; sizeMm: number }
@@ -21,13 +20,13 @@ export const fixtureParts: Part[] = [
 // components only get values. Stages mirror docs/design/01-image-pipeline.md (S1–S9).
 export class LayerFlowState {
   // ── Model results (MuseAgents → apply*): what is in the picture, its outline, regions, parts, the assembly
-  subject = $state('layered paper art in a round hoop');
+  subject = $state('');
   /** the Spark ImageBrief for the captured picture (design/01 S2), kept with the craft */
   imageBrief = $state<import('../domain/schemas').ImageBrief | null>(null);
   applyBrief(brief: import('../domain/schemas').ImageBrief) { this.imageBrief = brief; this.subject = brief.subject; }
   outline = $state<Outline>({ shape: 'circle', sizeMm: 300 });
-  cutoutChecks = $state<Check[]>(copy.cutout.checks.map((c) => ({ ...c })) as Check[]);
-  regionList = $state<Region[]>(regions.map((r) => ({ ...r })));
+  cutoutChecks = $state<Check[]>([]);
+  regionList = $state<Region[]>([]);
   parts = $state<Part[]>(fixtureParts.map((p) => ({ ...p, needs: [...p.needs] })));
   applySubject(subject: string) { this.subject = subject; }
   /** the SAM subject mask, traced to closed paths in 0-1000 image coordinates (Cutout view) */
@@ -41,7 +40,7 @@ export class LayerFlowState {
   get subjectD() { return this.subjectPaths.map(pointsToPath).join(''); }
   sheetFor(n: number) { return this.sheetPaths[n - 1]; }
   applyRegions(list: Region[]) { this.regionList = list; this.keep = Object.fromEntries(list.map((r) => [r.id, r.keep])) as Record<RegionId, boolean>; }
-  applyLayers(layers: Layer[]) { this.stack = layers.map((l, i) => ({ ...l, n: i + 1 })); this.sel = Math.min(this.sel, this.stack.length) || 1; this.overrides = {}; }
+  applyLayers(layers: Layer[]) { this.stack = layers.map((l, i) => ({ ...l, n: i + 1 })); this.sel = Math.min(this.sel, this.stack.length) || 1; this.overrides = {}; this.hiddenLayers = []; }
   applyParts(parts: Part[]) { this.parts = parts; }
   /** traced cut paths per sheet (S7, from the SAM masks via domain/vector), kept with the craft */
   sheetPaths = $state<SheetPaths[]>([]);
@@ -65,7 +64,7 @@ export class LayerFlowState {
   setCutoutView(v: 'original' | 'cutout') { this.cutoutView = v; }
 
   // S4 · which regions become parts
-  keep = $state(Object.fromEntries(regions.map((r) => [r.id, r.keep])) as Record<RegionId, boolean>);
+  keep = $state({} as Record<RegionId, boolean>);
   get regions() { return this.regionList.map((r) => ({ ...r, on: this.keep[r.id] })); }
   get kept() { return this.regions.filter((r) => r.on); }
   get keptPct() { return Math.round(this.kept.reduce((a, r) => a + r.pct, 0)); }
@@ -80,13 +79,30 @@ export class LayerFlowState {
   set = $state<LayerSetId>('paper');
   sel = $state(4);
   /** the editable stack, back → front (starts from the medium's colour groups) */
-  stack = $state<Layer[]>(fresh('paper'));
+  stack = $state<Layer[]>([]);
+  /** layers hidden from the stage by the eye toggle (Sheets still cut them) */
+  hiddenLayers = $state<number[]>([]);
+  toggleLayerVisible(n: number) { this.hiddenLayers = this.hiddenLayers.includes(n) ? this.hiddenLayers.filter((x) => x !== n) : [...this.hiddenLayers, n]; }
+  isLayerVisible(n: number) { return !this.hiddenLayers.includes(n); }
+  /** the blown-up exploded stack preview can be hidden */
+  showStack = $state(true);
+  toggleStack() { this.showStack = !this.showStack; }
+  /** the SAM region a layer was built from (regionId binding, index only as a legacy fallback) */
+  regionForLayer(layer: Layer | undefined) {
+    if (!layer) return undefined;
+    return this.regions.find((r) => r.id === layer.regionId) ?? this.regions[layer.n - 1];
+  }
+  overlayForLayer(n: number) {
+    const layer = this.layers[n - 1]; const region = this.regionForLayer(layer);
+    if (!region?.paths?.length) return undefined;
+    return { id: region.id, name: region.name, tone: region.tone, on: region.on, d: region.paths.map(pointsToPath).join('') };
+  }
   get data() { return layerSets[this.set]; }
   get layers() { return this.stack; }
   get structural() { return this.data.structural; }
-  get selected() { return this.layers[Math.min(this.sel, this.layers.length) - 1]; }
+  get selected(): Layer { return this.layers[Math.min(this.sel, this.layers.length) - 1] ?? { n: 0, name: 'No layers yet', shapes: [], colour: '#888888', visiblePct: 0, hiddenPct: 0, material: '' }; }
   get depthMm() { return (this.selected.n * this.data.mmPerLayer).toFixed(1); }
-  setSet(s: LayerSetId) { this.set = s; this.stack = fresh(s); this.sel = 4; this.overrides = {}; }
+  setSet(s: LayerSetId) { this.set = s; this.overrides = {}; }
   // the stack's own edits: duplicate, merge down, split (by islands; split by tone needs the real masks)
   private replace(from: number, count: number, put: Layer[], select: number) {
     const next = [...this.stack];
@@ -141,7 +157,7 @@ export class LayerFlowState {
       return { ...l, solid: l.n in this.overrides ? this.overrides[l.n] : byRule };
     });
   }
-  get materialPct() { return Math.round(this.gapCards.reduce((a, l) => a + (l.solid ? 100 : l.visiblePct + 4), 0) / this.gapCards.length); }
+  get materialPct() { return this.gapCards.length ? Math.round(this.gapCards.reduce((a, l) => a + (l.solid ? 100 : l.visiblePct + 4), 0) / this.gapCards.length) : 0; }
   setGapRule(r: GapRule) { this.gapRule = r; this.overrides = {}; }
   toggleSolid(n: number) { const card = this.gapCards.find((c) => c.n === n); if (card) this.overrides = { ...this.overrides, [n]: !card.solid }; }
 
@@ -168,7 +184,7 @@ export class LayerFlowState {
 
   // output · cutters take one sheet at a time: feed the sheet's material, send, watch it cut, verify, next
   job = $state<{ sheet: number; phase: 'feed' | 'cutting' | 'verify' | 'done'; progress: number }>({ sheet: 1, phase: 'feed', progress: 0 });
-  get jobLayer() { return this.layers[Math.min(this.job.sheet, this.layers.length) - 1]; }
+  get jobLayer(): Layer { return this.layers[Math.min(this.job.sheet, this.layers.length) - 1] ?? this.selected; }
   get feedText() { return `Feed ${this.jobLayer.material}`; }
   sheetStatus(n: number): 'cut' | 'current' | 'waiting' {
     if (this.job.phase === 'done' || n < this.job.sheet) return 'cut';
@@ -202,7 +218,7 @@ export class LayerFlowState {
   toggleAssembled(i: number) { this.assembled = this.assembled.includes(i) ? this.assembled.filter((x) => x !== i) : [...this.assembled, i]; }
 
   // project save / reopen: every choice above, as plain data
-  private static readonly SAVED = ['subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths', 'subjectPaths'] as const;
+  private static readonly SAVED = ['subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths', 'subjectPaths', 'hiddenLayers', 'showStack'] as const;
   /** a fresh flow's choices (New starts from these) */
   static defaults() { return new LayerFlowState().snapshot(); }
   snapshot(): Record<string, unknown> {

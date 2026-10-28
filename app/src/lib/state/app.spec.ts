@@ -140,6 +140,7 @@ describe('AppState (one per app, shared by every section)', () => {
     a.newProject();
     a.startFromCapture({ fileName: 'lake.jpg', images: ['x'], mode: 'single' });
     a.visit('cutout'); a.visit('segment'); a.visit('layers');
+    a.layers.applyLayers([{ n: 1, name: 'Back', shapes: ['sky'], colour: '#111111', visiblePct: 50, hiddenPct: 50, material: 'Card' }, { n: 2, name: 'Front', shapes: ['sun'], colour: '#222222', visiblePct: 50, hiddenPct: 0, material: 'Card' }]);
     a.layers.selectLayer(2);
     a.save();
     const b = new AppState(store);

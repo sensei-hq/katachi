@@ -49,7 +49,8 @@ describe('model results flow into state, and every call shows in the chat with i
     expect(app.noteFor('cutout')).toContain('a rect, about 420 mm');
     app.layers.applyRegions([{ id: 'sky', name: 'Sky', pct: 60, note: '', tone: 'warn', keep: true }]);
     expect([app.layers.regions.length, app.noteFor('segment')]).toEqual([1, expect.stringContaining('I found 1 regions')]);
-    app.layers.applyLayers(app.layers.layers.slice(0, 3));
+    const { layerSets } = await import('../content/layers');
+    app.layers.applyLayers(layerSets.paper.layers.slice(0, 3).map((l) => ({ ...l, shapes: [...l.shapes] })));
     expect(app.assembly).toHaveLength(5);
   });
 
