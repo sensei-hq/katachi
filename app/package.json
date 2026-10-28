@@ -67,6 +67,7 @@
     "@fontsource/fraunces": "^5.3.0",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
+    "@meta-sam/parser": "^0.1.0",
     "@rokkit/actions": "^1.9.0",
     "@rokkit/app": "^1.9.0",
     "@rokkit/core": "^1.9.0",

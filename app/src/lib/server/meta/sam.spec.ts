@@ -41,3 +41,23 @@ describe('segmentRegions (S4 fan-out)', () => {
     expect([r.source, r.regions[0].keep]).toEqual(['fixture', false]);
   });
 });
+
+describe('decodeSamMasks (full bit decode via @meta-sam/parser)', () => {
+  // Recorded live SAM 3.1 response for "sun" on samples/layered/setting_sun_circle_scene.webp (2026-10-28).
+  const SUN = "<|box;x1=728;y1=329;x2=1053;y2=531;w=1588;h=1588|><|mask;x=0;y=0;data=203,326,!!!!#kAq1j9u_Sx(hp_i:l?dD&f5.i@g`U2Asv7r897@+5GX`Iznq$:CRh7Xt_Dx*ve!C1[P/PsuIyHQc+UT03ZeJxmRmjV$Tc6ZNqm3F_w@UhJ%lOxL0M*4'A91G^reWlWm0rhKZK_?a^rS9X&B2.a$PS^!6J[0Q/-F9g!UCBBBTlxd[Qg:+CSu'ik`VE3a2!3e!!|>";
+  it('decodes every bit: raster size, coverage and a traced path', async () => {
+    const { decodeSamText } = await import('./sam');
+    const found = decodeSamText(SUN);
+    expect(found).toHaveLength(1);
+    expect([found[0].maskW, found[0].maskH, found[0].raster.length]).toEqual([326, 203, 326 * 203]);
+    expect(found[0].ones).toBe(40987);
+    expect(found[0].areaPct).toBeGreaterThan(1);
+    expect(found[0].areaPct).toBeLessThan(3);
+    expect(found[0].paths.length).toBeGreaterThanOrEqual(1);
+    expect(found[0].imgW).toBe(1588);
+  });
+  it('returns nothing for text without masks', async () => {
+    const { decodeSamText } = await import('./sam');
+    expect(decodeSamText('no masks here')).toEqual([]);
+  });
+});

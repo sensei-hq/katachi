@@ -44,3 +44,16 @@ stretch goal only after this closes, within the two-day window.
 Potrace/vectorise (sheets stay preview), Wonder batch live call, voice relay,
 full-resolution originals in storage (640 px thumbnail only, quota eviction),
 Supabase anything.
+
+## Slice 2 — full SAM bit-decode + vectorise (2026-10-28)
+
+- [x] `@meta-sam/parser` decodes every SAM mask bit (`decodeSamText`); recorded
+      live sun mask decodes to exactly 40,987 set bits with a traced path.
+- [x] `domain/vector.ts`: boundary stitching -> collinear/Douglas-Peucker ->
+      Chaikin, potrace knobs (`turdSize`, `tolerance`); npm potrace rejected
+      (Jimp 0.14 breaks Workers; potrace-ts is browser-only and GPL).
+- [x] `/api/segment` returns per-region `ones`, bit-true `areaPct` and traced
+      paths in 0-1000 image coordinates; `sheets.vectorise` scales them to mm
+      per sheet (`LayerFlowState.sheetPaths`, saved with the craft).
+- [x] Evidence: 232 unit, coverage 91.1% lines, build, e2e 47/47 with the
+      sample journey asserting 'closed paths' on Sheets.

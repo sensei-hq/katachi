@@ -21,9 +21,32 @@ export function parseSamMasks(text: string): SamMask[] {
   }
   return out;
 }
+import { decodeMaskToRaster } from '@meta-sam/parser';
+import { traceMask } from '../../domain/vector';
 import { MetaClient } from './client';
+export interface DecodedSamMask { box: SamBox; maskW: number; maskH: number; imgW: number; imgH: number; raster: Uint8Array; ones: number; areaPct: number; paths: [number, number][][] }
+/** Full bit decode of every mask in a SAM text response (official @meta-sam/parser arithmetic codec).
+ * Paths are traced from the raster (domain/vector) and returned in 0-1000 image coordinates. */
+export function decodeSamText(text: string): DecodedSamMask[] {
+  const out: DecodedSamMask[] = [];
+  const re = /<\|box;x1=(\d+);y1=(\d+);x2=(\d+);y2=(\d+);w=(\d+);h=(\d+)\|><\|mask;x=\d+;y=\d+;data=(\d+),(\d+),([^|]*)\|>/g;
+  for (const m of text.matchAll(re)) {
+    const [, bx1, by1, bx2, by2, iw, ih, mh, mw, payload] = m as unknown as [string, ...string[]];
+    const maskW = Number(mw), maskH = Number(mh), imgW = Number(iw), imgH = Number(ih);
+    try {
+      const raster = decodeMaskToRaster({ encoding: 'one_bit', width: maskW, height: maskH, payload } as never);
+      let ones = 0; for (const v of raster) ones += v;
+      const traced = traceMask({ w: maskW, h: maskH, bits: raster }, { turdSize: Math.max(4, maskW * maskH * 0.0002), tolerance: 1.5 });
+      const sx = (Number(bx2) - Number(bx1)) / maskW, sy = (Number(by2) - Number(by1)) / maskH;
+      const paths = traced.paths.map((tp) => tp.points.map(([x, y]) => [Math.round(((Number(bx1) + x * sx) / imgW) * 10000) / 10, Math.round(((Number(by1) + y * sy) / imgH) * 10000) / 10] as [number, number]));
+      const box: SamBox = { x1: Math.round((Number(bx1) / imgW) * 1000), y1: Math.round((Number(by1) / imgH) * 1000), x2: Math.round((Number(bx2) / imgW) * 1000), y2: Math.round((Number(by2) / imgH) * 1000) };
+      out.push({ box, maskW, maskH, imgW, imgH, raster, ones, areaPct: Math.round((ones / (imgW * imgH)) * 1000) / 10, paths });
+    } catch (e) { console.error('SAM mask decode failed:', e instanceof Error ? e.message : String(e)); }
+  }
+  return out;
+}
 export interface SamRegionInput { id: string; label: string; samPrompt: string; likelyBought?: boolean; note?: string }
-export interface SamRegion extends SamRegionInput { box: SamBox | null; mask: { h: number; w: number } | null; areaPct: number; keep: boolean }
+export interface SamRegion extends SamRegionInput { box: SamBox | null; mask: { h: number; w: number } | null; areaPct: number; keep: boolean; ones?: number; paths?: [number, number][][] }
 /** One SAM call per region phrase, in parallel (design/01 S4). Missing masks keep the region with a box estimate. */
 export async function segmentRegions(env: Record<string, string | undefined>, imageDataUrl: string, regions: SamRegionInput[], client?: MetaClient): Promise<{ regions: SamRegion[]; source: 'live' | 'fixture'; costUsd: number }> {
   if (env.META_API_KEY && imageDataUrl && regions.length) {
@@ -31,21 +54,25 @@ export async function segmentRegions(env: Record<string, string | undefined>, im
       const c = client ?? new MetaClient(env.META_API_KEY);
       const found = await Promise.all(regions.map(async (r) => {
         const text = await c.samText(imageDataUrl, r.samPrompt);
-        const mask = parseSamMasks(text)[0];
-        const box = mask?.box ?? parseSamBoxes(text)[0] ?? null;
-        const areaPct = mask?.areaPct ?? (box ? Math.round((((box.x2 - box.x1) * (box.y2 - box.y1)) / 10000) * 10) / 10 : 0);
-        return { ...r, box, mask: mask ? { h: mask.mask.h, w: mask.mask.w } : null, areaPct, keep: !r.likelyBought } satisfies SamRegion;
+        const decoded = decodeSamText(text)[0];
+        if (decoded) return { ...r, box: decoded.box, mask: { h: decoded.maskH, w: decoded.maskW }, areaPct: decoded.areaPct, ones: decoded.ones, paths: decoded.paths, keep: !r.likelyBought } satisfies SamRegion;
+        const box = parseSamBoxes(text)[0] ?? null;
+        const header = parseSamMasks(text)[0]?.mask;
+        const areaPct = box ? Math.round((((box.x2 - box.x1) * (box.y2 - box.y1)) / 10000) * 10) / 10 : 0;
+        return { ...r, box, mask: header ? { h: header.h, w: header.w } : null, areaPct, keep: !r.likelyBought } satisfies SamRegion;
       }));
       if (found.some((r) => r.box)) return { regions: found, source: 'live', costUsd: found.length * 0.0025 };
     } catch (e) { console.error('segment regions live failed:', e instanceof Error ? e.message : String(e)); }
   }
   return { regions: regions.map((r, i) => ({ ...r, box: { x1: 100 + i * 40, y1: 100, x2: 600, y2: 700 }, mask: null, areaPct: Math.max(2, 30 - i * 5), keep: !r.likelyBought })), source: 'fixture', costUsd: 0 };
 }
-export async function segmentPiece(env: Record<string, string | undefined>, imageDataUrl: string, prompt: string, client?: MetaClient): Promise<{ boxes: SamBox[]; source: 'live' | 'fixture' }> {
+export async function segmentPiece(env: Record<string, string | undefined>, imageDataUrl: string, prompt: string, client?: MetaClient): Promise<{ boxes: SamBox[]; masks?: { w: number; h: number; ones: number; paths: [number, number][][] }[]; source: 'live' | 'fixture' }> {
   if (env.META_API_KEY && imageDataUrl) {
     try {
       const c = client ?? new MetaClient(env.META_API_KEY);
       const text = await c.samText(imageDataUrl, prompt);
+      const decoded = decodeSamText(text);
+      if (decoded.length) return { boxes: decoded.map((d) => d.box), masks: decoded.map((d) => ({ w: d.maskW, h: d.maskH, ones: d.ones, paths: d.paths })), source: 'live' };
       const boxes = parseSamBoxes(text);
       if (boxes.length) return { boxes, source: 'live' };
     } catch (e) { console.error('segment live failed:', e instanceof Error ? e.message : String(e)); }

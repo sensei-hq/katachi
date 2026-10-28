@@ -153,7 +153,7 @@ export class AppState {
       else if (job === 'layers.plan') void this.muse.planLayers(craft, f.makeAs, { imageDataUrl: image, description: f.brief || f.subject }).then((r) => f.applyLayers(r));
       else if (job === 'layers.imagineGaps') void this.muse.imagineGaps(craft, image);
       else if (job === 'layers.unfold') void this.muse.unfold(craft).then((r) => f.applyParts(r));
-      else if (job === 'sheets.vectorise') void this.muse.vectorise(craft, f.layers.length);
+      else if (job === 'sheets.vectorise') void this.muse.vectorise(craft, f.layers.length, { regions: f.regions, sizeMm: f.outline.sizeMm }).then((r) => f.applySheets(r.sheetsData));
       else if (job === 'assemble.instructions') void this.muse.writeInstructions(craft, this.assembly).then((r) => { this.instructions = r; });
     }
   }
@@ -178,8 +178,10 @@ export class AppState {
   /** Download .zip: the vectorised sheets (placeholder until sheets.vectorise is wired). */
   exportSheets() {
     if (!this.project) return;
-    void this.muse.vectorise(this.project.id, this.layers.layers.length).then(() =>
-      this.flow.conversation.say(`The .zip will hold ${this.layers.layers.length} sheet files (SVG + device format) once tracing is wired — for now the sheets are previews.`));
+    void this.muse.vectorise(this.project.id, this.layers.layers.length, { regions: this.layers.regions, sizeMm: this.layers.outline.sizeMm }).then((r) => {
+      this.layers.applySheets(r.sheetsData);
+      this.flow.conversation.say(r.pathCount ? `Traced ${r.pathCount} closed paths across ${r.sheetsData.length} sheets — the .zip export carries those SVG paths per sheet.` : `The .zip will hold ${this.layers.layers.length} sheet files (SVG + device format) once tracing is wired — for now the sheets are previews.`);
+    });
   }
   /** Assemble · Muse Image pictures the finished piece (placeholder). */
   renderFinished() { if (this.project) void this.muse.renderFinished(this.project.id, this.project.image || undefined); }

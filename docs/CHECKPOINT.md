@@ -15,9 +15,10 @@
   reloads under the same code, and checks a second code sees an empty gallery.
 - Gates: 225 unit (38 files, coverage lines 90.9%), arch/lint/check clean,
   build ok, e2e 47/47.
-- Next command: review the diff, commit, then `bun run dev` and try a second
-  sample from `samples/multiple/` by hand.
-- Open: full SAM bit decode + potrace vectorise (sheets stay previews);
+- Slice 2 (same day): full SAM bit-decode via @meta-sam/parser (recorded sun
+  mask = 40,987 bits) and domain/vector tracing to closed mm paths on Sheets;
+  committed and redeployed after gates (232 unit, e2e 47/47).
+- Open: SVG/G-code file export from sheetPaths (paths exist, files do not);
   budget caps (R-PL-2) unwired; Wonder batch and voice relay still fixtures;
   Supabase auth/storage is the stretch goal once this is committed.
 - Known broken: none in tests.

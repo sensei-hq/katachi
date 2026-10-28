@@ -103,10 +103,10 @@ export class MuseAgents {
     const fallback: Region[] = regions.map((r) => ({ ...r }));
     return this.run('shape.segment', craftId, async () => {
       const j = sendable(opts.imageDataUrl) && opts.briefRegions?.length ? await post('/api/segment', { imageDataUrl: opts.imageDataUrl, regions: opts.briefRegions }) : null;
-      const live = (j?.regions ?? []) as { id: string; label: string; note?: string; areaPct?: number; keep?: boolean }[];
+      const live = (j?.regions ?? []) as { id: string; label: string; note?: string; areaPct?: number; keep?: boolean; ones?: number; paths?: [number, number][][] }[];
       if (live.length) {
         const tones = ['warn', 'accent', 'ok', 'ink', 'muted'] as const;
-        const found = live.map((r, i) => ({ id: r.id as Region['id'], name: r.label, pct: Math.round((r.areaPct ?? 0) * 10) / 10, note: r.note ?? '', tone: tones[i % tones.length], keep: r.keep ?? true })) as Region[];
+        const found = live.map((r, i) => ({ id: r.id as Region['id'], name: r.label, pct: Math.round((r.areaPct ?? 0) * 10) / 10, note: r.note ?? '', tone: tones[i % tones.length], keep: r.keep ?? true, ...(r.ones ? { ones: r.ones } : {}), ...(r.paths?.length ? { paths: r.paths } : {}) })) as Region[];
         return { result: found, summary: `${found.length} regions found`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
       }
       await tick(); return { result: fallback, summary: `${fallback.length} regions found`, source: 'fixture' as const };
@@ -145,8 +145,22 @@ export class MuseAgents {
     return this.run('layers.refine', craftId, async () => { await tick(); return { result: { applied: false, ops: [] as string[] }, summary: `Will apply “${note.text}”${note.layer ? ` to ${note.layer}` : ''}` }; });
   }
   // ── Sheets
-  vectorise(craftId: string, sheets: number) {
-    return this.run('sheets.vectorise', craftId, async () => { await tick(); return { result: { sheets }, summary: `${sheets} sheets traced and nested` }; });
+  /** Sheets: SAM mask paths (0-1000 image coords from /api/segment) scaled to mm and traced to closed SVG per kept region. */
+  vectorise(craftId: string, sheets: number, opts: { regions?: Region[]; sizeMm?: number } = {}) {
+    return this.run('sheets.vectorise', craftId, async () => {
+      const { scalePaths, pathsToSvg, cutLength } = await import('../domain/vector');
+      const sizeMm = opts.sizeMm ?? 300;
+      const mmPerUnit = sizeMm / 1000;
+      const kept = (opts.regions ?? []).filter((r) => r.keep && r.paths?.length);
+      const data = kept.map((r) => {
+        const traced = (r.paths ?? []).map((points) => ({ points, area: 0, closed: true as const }));
+        const mm = scalePaths(traced, mmPerUnit);
+        return { name: r.name, svg: pathsToSvg(mm), pathCount: mm.length, cutLengthMm: cutLength(mm) };
+      });
+      const pathCount = data.reduce((a, s) => a + s.pathCount, 0);
+      if (pathCount) return { result: { sheets, pathCount, sheetsData: data }, summary: `${data.length} sheets traced · ${pathCount} closed paths · ${data.reduce((a, s) => a + s.cutLengthMm, 0).toFixed(0)} mm of cut`, source: 'live' as const, costUsd: 0 };
+      await tick(); return { result: { sheets, pathCount: 0, sheetsData: data }, summary: `${sheets} sheets traced and nested`, source: 'fixture' as const };
+    });
   }
   // ── Assemble
   /** Placeholder: returns the code-derived steps it is given; the live job has Spark rewrite them from the ObjectSpec. */

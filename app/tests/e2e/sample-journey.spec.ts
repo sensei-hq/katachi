@@ -62,6 +62,8 @@ test.describe('sample journey · live Muse wiring (1440px)', () => {
     await expect(page).toHaveURL(/\/make\/gaps$/);
     await main(page).getByRole('button', { name: /Stack & cut/ }).click();
     await expect(page).toHaveURL(/\/make\/output$/);
+    // Sheets: the SAM masks were bit-decoded and traced to closed mm paths (domain/vector)
+    if (live) await expect(activity(page)).toContainText('closed paths', { timeout: 120_000 });
     await main(page).getByRole('link', { name: 'Assemble' }).click();
     await expect(page).toHaveURL(/\/make\/assemble$/);
     await main(page).getByRole('button', { name: 'Next' }).click();

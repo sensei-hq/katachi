@@ -5,7 +5,8 @@ const fresh = (s: LayerSetId): Layer[] => layerSets[s].layers.map((l) => ({ ...l
 /** What the models found, in the shape the live calls return. Pages read these fields only; the fixtures are just
  * the starting values until MuseAgents (lib/state/muse.svelte.ts) writes a result over them. */
 export interface Check { status: 'pass' | 'warn' | 'fail'; text: string }
-export type Region = (typeof regions)[number];
+export type Region = (typeof regions)[number] & { paths?: [number, number][][]; ones?: number };
+export interface SheetPaths { name: string; svg: string; pathCount: number; cutLengthMm: number }
 export interface Part { name: string; size: string; needs: ViewId[]; any?: boolean; missing: string }
 export interface Outline { shape: 'circle' | 'rect' | 'free'; sizeMm: number }
 export const fixtureParts: Part[] = [
@@ -32,6 +33,9 @@ export class LayerFlowState {
   applyRegions(list: Region[]) { this.regionList = list; this.keep = Object.fromEntries(list.map((r) => [r.id, r.keep])) as Record<RegionId, boolean>; }
   applyLayers(layers: Layer[]) { this.stack = layers.map((l, i) => ({ ...l, n: i + 1 })); this.sel = Math.min(this.sel, this.stack.length) || 1; this.overrides = {}; }
   applyParts(parts: Part[]) { this.parts = parts; }
+  /** traced cut paths per sheet (S7, from the SAM masks via domain/vector), kept with the craft */
+  sheetPaths = $state<SheetPaths[]>([]);
+  applySheets(sheets: SheetPaths[]) { this.sheetPaths = sheets; }
   /** parts with whether the captured views cover them (3D) */
   get partRows() { return this.parts.map((p) => ({ ...p, ok: p.any ? p.needs.some((v) => this.done.includes(v)) : p.needs.every((v) => this.done.includes(v)) })); }
 
@@ -188,7 +192,7 @@ export class LayerFlowState {
   toggleAssembled(i: number) { this.assembled = this.assembled.includes(i) ? this.assembled.filter((x) => x !== i) : [...this.assembled, i]; }
 
   // project save / reopen: every choice above, as plain data
-  private static readonly SAVED = ['subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job'] as const;
+  private static readonly SAVED = ['subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths'] as const;
   /** a fresh flow's choices (New starts from these) */
   static defaults() { return new LayerFlowState().snapshot(); }
   snapshot(): Record<string, unknown> {

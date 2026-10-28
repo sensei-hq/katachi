@@ -22,7 +22,7 @@ export const agentJobs: Record<AgentJobId, AgentJob> = {
   'layers.imagineGaps': { id: 'layers.imagineGaps', model: 'Muse Image', step: 'layers', label: 'Imagines what hides behind each layer', route: '/api/art', status: 'live', estUsd: 0.01 },
   'layers.unfold': { id: 'layers.unfold', model: 'Muse Spark 1.3', step: 'layers', label: 'Unfolds six views into parts with joints', route: '/api/design', status: 'placeholder', estUsd: 0.02 },
   'layers.refine': { id: 'layers.refine', model: 'Muse Spark 1.3', step: 'layers', label: 'Turns your note into edits on the layers', route: '/api/design', status: 'placeholder', estUsd: 0.005 },
-  'sheets.vectorise': { id: 'sheets.vectorise', model: 'Code', step: 'sheets', label: 'Traces each layer into cut paths and nests the sheets', route: 'lib/domain', status: 'placeholder', estUsd: 0 },
+  'sheets.vectorise': { id: 'sheets.vectorise', model: 'Code', step: 'sheets', label: 'Traces each layer into cut paths and nests the sheets', route: 'lib/domain/vector', status: 'live', estUsd: 0 },
   'assemble.instructions': { id: 'assemble.instructions', model: 'Muse Spark 1.3', step: 'assemble', label: 'Writes the assembly steps', route: '/api/design', status: 'placeholder', estUsd: 0.01 },
   'assemble.render': { id: 'assemble.render', model: 'Muse Image', step: 'assemble', label: 'Renders the finished piece', route: '/api/preview', status: 'live', estUsd: 0.04 }
 };

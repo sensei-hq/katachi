@@ -54,3 +54,15 @@ describe('MuseAgents wired to the server routes (live shapes, labelled by source
     expect(m.tasks.at(-1)?.status).toBe('placeholder');
   });
 });
+
+describe('sheets.vectorise from SAM mask paths', () => {
+  it('scales 0-1000 mask paths to mm and counts closed paths + cut length', async () => {
+    const m = new MuseAgents();
+    const square: [number, number][] = [[100, 100], [400, 100], [400, 400], [100, 400]];
+    const r = await m.vectorise('c1', 2, { sizeMm: 300, regions: [{ id: 'sun', name: 'Sun', pct: 9, note: '', tone: 'accent', keep: true, paths: [square] }, { id: 'sky', name: 'Sky', pct: 20, note: '', tone: 'warn', keep: false, paths: [square] }] as never });
+    expect(r.pathCount).toBe(1);
+    expect(r.sheetsData[0].svg).toBe('M30 30L120 30L120 120L30 120Z');
+    expect(r.sheetsData[0].cutLengthMm).toBe(360); // 300mm/1000 * 1200 units of perimeter
+    expect(m.tasks.at(-1)).toMatchObject({ status: 'done', summary: expect.stringContaining('1 closed paths') });
+  });
+});
