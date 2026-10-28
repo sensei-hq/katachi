@@ -13,3 +13,21 @@ describe('analyseScene degraded modes (PRD 04 §4.4)', () => {
     expect((await analyseScene({ META_API_KEY: 'k' }, bad as any)).source).toBe('fixture');
   });
 });
+
+describe('analyseImage (S2 ImageBrief)', () => {
+  it('returns the fixture brief without a key or image', async () => {
+    const { analyseImage } = await import('./analyse');
+    const r = await analyseImage({}, undefined);
+    expect(r.source).toBe('fixture');
+    expect(r.brief.class).toBe('layered');
+  });
+  it('uses live Spark vision when the brief parses', async () => {
+    const { analyseImage } = await import('./analyse');
+    const brief = { subject: 'wooden sunset', class: 'layered', likelyMaterial: 'wood', subjectPrompt: 'wall art', regions: [], colourGroupsHint: 5, reference: null, topDownConfidence: 0.8, notes: '' };
+    const live = { sparkVision: async () => ({ data: brief, costUsd: 0.01, latencyMs: 5 }) };
+    const r = await analyseImage({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', live as any);
+    expect([r.source, r.brief.subject]).toEqual(['live', 'wooden sunset']);
+    const bad = { sparkVision: async () => ({ data: { nope: 1 }, costUsd: 0, latencyMs: 1 }) };
+    expect((await analyseImage({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', bad as any)).source).toBe('fixture');
+  });
+});

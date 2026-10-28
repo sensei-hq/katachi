@@ -20,6 +20,9 @@ export const fixtureParts: Part[] = [
 export class LayerFlowState {
   // ── Model results (MuseAgents → apply*): what is in the picture, its outline, regions, parts, the assembly
   subject = $state('layered paper art in a round hoop');
+  /** the Spark ImageBrief for the captured picture (design/01 S2), kept with the craft */
+  imageBrief = $state<import('../domain/schemas').ImageBrief | null>(null);
+  applyBrief(brief: import('../domain/schemas').ImageBrief) { this.imageBrief = brief; this.subject = brief.subject; }
   outline = $state<Outline>({ shape: 'circle', sizeMm: 300 });
   cutoutChecks = $state<Check[]>(copy.cutout.checks.map((c) => ({ ...c })) as Check[]);
   regionList = $state<Region[]>(regions.map((r) => ({ ...r })));
@@ -185,7 +188,7 @@ export class LayerFlowState {
   toggleAssembled(i: number) { this.assembled = this.assembled.includes(i) ? this.assembled.filter((x) => x !== i) : [...this.assembled, i]; }
 
   // project save / reopen: every choice above, as plain data
-  private static readonly SAVED = ['subject', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job'] as const;
+  private static readonly SAVED = ['subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job'] as const;
   /** a fresh flow's choices (New starts from these) */
   static defaults() { return new LayerFlowState().snapshot(); }
   snapshot(): Record<string, unknown> {

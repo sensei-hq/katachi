@@ -31,6 +31,28 @@ export const BurnEventsSchema = z.object({
 }).strict();
 export type BurnEvents = z.infer<typeof BurnEventsSchema>;
 
+export const ImageBriefSchema = z.object({
+  subject: z.string(), class: z.enum(['layered', 'composite-3d', 'pattern-shape', 'fit-target']),
+  likelyMaterial: z.enum(['paper', 'wood', 'acrylic', 'mixed', 'unknown']),
+  subjectPrompt: z.string(),
+  regions: z.array(z.object({ id: z.string(), label: z.string(), samPrompt: z.string(), likelyBought: z.boolean(), note: z.string() }).strict()),
+  colourGroupsHint: z.number().int().min(1).max(12),
+  reference: z.object({ kind: z.string(), samPrompt: z.string() }).strict().nullable(),
+  topDownConfidence: z.number().min(0).max(1), notes: z.string()
+}).strict();
+export type ImageBrief = z.infer<typeof ImageBriefSchema>;
+export const ImageBriefJsonSchema = {
+  type: 'object', additionalProperties: false, required: ['subject', 'class', 'likelyMaterial', 'subjectPrompt', 'regions', 'colourGroupsHint', 'reference', 'topDownConfidence', 'notes'],
+  properties: {
+    subject: { type: 'string' }, class: { type: 'string', enum: ['layered', 'composite-3d', 'pattern-shape', 'fit-target'] },
+    likelyMaterial: { type: 'string', enum: ['paper', 'wood', 'acrylic', 'mixed', 'unknown'] }, subjectPrompt: { type: 'string' },
+    regions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'label', 'samPrompt', 'likelyBought', 'note'], properties: { id: { type: 'string' }, label: { type: 'string' }, samPrompt: { type: 'string' }, likelyBought: { type: 'boolean' }, note: { type: 'string' } } } },
+    colourGroupsHint: { type: 'integer' },
+    reference: { anyOf: [{ type: 'object', additionalProperties: false, required: ['kind', 'samPrompt'], properties: { kind: { type: 'string' }, samPrompt: { type: 'string' } } }, { type: 'null' }] },
+    topDownConfidence: { type: 'number' }, notes: { type: 'string' }
+  }
+} as const;
+
 export const SceneAnalysisJsonSchema = {
   type: 'object', additionalProperties: false, required: ['objects', 'reference', 'camera', 'notes'],
   properties: {

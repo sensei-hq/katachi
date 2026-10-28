@@ -10,6 +10,7 @@ export async function POST({ request, cookies }) {
   const { code, attested18 } = await request.json().catch(() => ({}));
   const r = checkInvite(String(code ?? ''), Boolean(attested18), inviteCodes(env.SNAP_INVITE_CODES));
   if (!r.ok) return json({ ok: false, reason: r.reason }, { status: 403 });
-  cookies.set(SESSION_COOKIE, await signSession(crypto.randomUUID(), secret), { path: '/', httpOnly: true, sameSite: 'lax', secure: !dev, maxAge: 86400 });
-  return json({ ok: true });
+  const userId = String(code ?? '').trim();
+  cookies.set(SESSION_COOKIE, await signSession(userId, secret), { path: '/', httpOnly: true, sameSite: 'lax', secure: !dev, maxAge: 86400 });
+  return json({ ok: true, user_id: userId });
 }

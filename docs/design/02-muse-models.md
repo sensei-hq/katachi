@@ -53,3 +53,16 @@ The 6-view 3D path adds 6 SAM calls and one `high` Spark call: about +$0.04.
 - **SAM output size.** Does SAM 3.1 return full-resolution masks for 2048 px inputs, or downsample? If it downsamples, upsample in code with an edge-aware refine, using the subject alpha as a guide.
 - **Muse Image edits and colour.** Can `/images/edits` keep a flat colour exactly? If not, re-quantise its output to the layer's hex (k = 1) before vectorising. That step is already planned.
 - **Multi-image throughput.** What is Spark's multi-image token cost for 6 views? Measure on `samples/` before choosing `high` vs `medium` effort.
+
+## Live-probed corrections (2026-10-28)
+
+Verified against `https://api.meta.ai/v1` with the demo key on
+`samples/layered/setting_sun_circle_scene.webp`:
+
+- Spark 1.3 vision accepts the strict `ImageBrief` schema and returns
+  `class: layered` with SAM region phrases (5.4 s).
+- SAM 3.1 returns `<|box;...|><|mask;data=<h>,<w>,<bits>|>` per concept; the
+  mask header is the crop size. `parseSamMasks` in `server/meta/sam.ts` reads
+  box + crop size + box area; full bit decode is still open (doc 04 #1).
+- Muse Image `/images/edits` requires `images:[{image_url}]` (400 without)
+  and returns `b64_json`; `MetaClient.imageEditWith` is the only edit path.

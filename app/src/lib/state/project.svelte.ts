@@ -33,30 +33,55 @@ export class MemoryStorage implements KeyValueStorage {
 
 const LIST = 'katachi.projects';
 const CURRENT = 'katachi.current';
+const ns = (userId: string, key: string) => `katachi:v1:${userId}:${key}`;
 
-/** Saved projects in browser storage (server-side projects are P2, R-PL-6). */
+/** Saved projects in browser storage, namespaced by user_id (the invite code; server-side projects arrive with auth, same id). */
 export class ProjectStore {
-  constructor(private storage: KeyValueStorage = new MemoryStorage()) {}
+  constructor(private storage: KeyValueStorage = new MemoryStorage(), private userId = 'guest') {}
+  get user() { return this.userId; }
+  private listKey() { return ns(this.userId, 'projects'); }
+  private currentKey() { return ns(this.userId, 'current'); }
+  /** Switch user: legacy un-namespaced crafts move to the first real user who signs in, once. */
+  setUserId(userId: string) {
+    if (!userId || userId === this.userId) return;
+    this.userId = userId;
+    try {
+      if (userId !== 'guest' && !this.storage.getItem(this.listKey())) {
+        const legacy = this.storage.getItem(LIST);
+        if (legacy) { this.storage.setItem(this.listKey(), legacy); this.storage.removeItem(LIST); }
+        const cur = this.storage.getItem(CURRENT);
+        if (cur) { this.storage.setItem(this.currentKey(), cur); this.storage.removeItem(CURRENT); }
+      }
+    } catch { /* storage unavailable */ }
+  }
   private read(): ProjectRecord[] {
     try {
-      const v = JSON.parse(this.storage.getItem(LIST) ?? '[]');
+      const v = JSON.parse(this.storage.getItem(this.listKey()) ?? '[]');
       return Array.isArray(v) ? v : [];
     } catch { return []; }
   }
-  private write(list: ProjectRecord[]) { this.storage.setItem(LIST, JSON.stringify(list)); }
+  private write(list: ProjectRecord[]) {
+    try { this.storage.setItem(this.listKey(), JSON.stringify(list)); }
+    catch {
+      // Quota: drop the oldest finished craft's thumbnail and retry once.
+      const slim = [...list].sort((a, b) => a.updatedAt - b.updatedAt);
+      const victim = slim.find((p) => p.status === 'finished' && p.image);
+      if (victim) { victim.image = ''; this.storage.setItem(this.listKey(), JSON.stringify(list)); }
+    }
+  }
   /** newest first */
   list(): ProjectRecord[] { return this.read().sort((a, b) => b.updatedAt - a.updatedAt); }
   load(id: string): ProjectRecord | null { return this.read().find((p) => p.id === id) ?? null; }
   save(p: ProjectRecord) { this.write([...this.read().filter((x) => x.id !== p.id), p]); }
   remove(id: string) {
     this.write(this.read().filter((p) => p.id !== id));
-    if (this.current() === id) this.storage.removeItem(CURRENT);
+    if (this.current() === id) this.storage.removeItem(this.currentKey());
   }
-  current(): string | null { return this.storage.getItem(CURRENT); }
-  setCurrent(id: string | null) { if (id) this.storage.setItem(CURRENT, id); else this.storage.removeItem(CURRENT); }
-  /** small per-browser settings (the default device) */
-  getSetting(key: string): string | null { try { return this.storage.getItem(key); } catch { return null; } }
-  setSetting(key: string, value: string) { try { this.storage.setItem(key, value); } catch { /* storage unavailable: keep it for this session */ } }
+  current(): string | null { return this.storage.getItem(this.currentKey()); }
+  setCurrent(id: string | null) { if (id) this.storage.setItem(this.currentKey(), id); else this.storage.removeItem(this.currentKey()); }
+  /** small per-user settings (the default device), namespaced like the crafts */
+  getSetting(key: string): string | null { try { return this.storage.getItem(ns(this.userId, key)); } catch { return null; } }
+  setSetting(key: string, value: string) { try { this.storage.setItem(ns(this.userId, key), value); } catch { /* storage unavailable: keep it for this session */ } }
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

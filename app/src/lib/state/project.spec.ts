@@ -34,3 +34,29 @@ describe('ProjectStore · saved projects (browser storage)', () => {
     expect(new ProjectStore(s).list()).toEqual([]);
   });
 });
+
+describe('ProjectStore · per-user namespaces (invite code as user_id)', () => {
+  it('isolates crafts between two invite codes on the same browser', () => {
+    const mem = new MemoryStorage();
+    const alice = new ProjectStore(mem, 'ALICE-1');
+    alice.save(rec('a', 1));
+    alice.setCurrent('a');
+    const bob = new ProjectStore(mem, 'BOB-2');
+    expect(bob.list()).toEqual([]);
+    expect(bob.current()).toBeNull();
+    bob.save(rec('b', 2));
+    expect(alice.list().map((p) => p.id)).toEqual(['a']);
+    expect(mem.getItem('katachi:v1:ALICE-1:projects')).toContain('"a"');
+  });
+  it('migrates legacy un-namespaced crafts to the first user who signs in', () => {
+    const mem = new MemoryStorage();
+    mem.setItem('katachi.projects', JSON.stringify([rec('old', 1)]));
+    mem.setItem('katachi.current', 'old');
+    const store = new ProjectStore(mem, 'guest');
+    expect(store.list()).toEqual([]);
+    store.setUserId('ALICE-1');
+    expect(store.list().map((p) => p.id)).toEqual(['old']);
+    expect(store.current()).toBe('old');
+    expect(mem.getItem('katachi.projects')).toBeNull();
+  });
+});

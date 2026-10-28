@@ -18,3 +18,23 @@ describe('DesignSpec strict schema (R-DS-1)', () => {
     expect(DesignSpecSchema.safeParse(v).success).toBe(true);
   });
 });
+
+describe('ImageBrief strict schema (design/01 S2)', () => {
+  const valid = {
+    subject: 'circular layered wooden wall art of a mountain sunset over a lake',
+    class: 'layered', likelyMaterial: 'wood', subjectPrompt: 'layered wooden wall art',
+    regions: [{ id: 'r1', label: 'sun', samPrompt: 'light orange round sun', likelyBought: false, note: 'small disc' }],
+    colourGroupsHint: 6,
+    reference: null, topDownConfidence: 0.9, notes: ''
+  };
+  it('accepts the live Spark shape and rejects extra keys', async () => {
+    const { ImageBriefSchema, ImageBriefJsonSchema } = await import('./schemas');
+    expect(ImageBriefSchema.safeParse(valid).success).toBe(true);
+    expect(ImageBriefSchema.safeParse({ ...valid, bogus: 1 }).success).toBe(false);
+    expect(ImageBriefJsonSchema.required).toContain('subject');
+  });
+  it('rejects an unknown class', async () => {
+    const { ImageBriefSchema } = await import('./schemas');
+    expect(ImageBriefSchema.safeParse({ ...valid, class: 'hologram' }).success).toBe(false);
+  });
+});

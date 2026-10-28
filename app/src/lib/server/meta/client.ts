@@ -40,4 +40,11 @@ export class MetaClient {
     await this.post('/images/edits', { model: 'muse-image-1.0', prompt, n, output_format: 'png', tool_enablement: { enable_web_search: false, enable_shell: false, enable_image_search: false }, reasoning_strength: 'low' });
     return { costUsd: costFor('muse-image-1.0', { images: n }) };
   }
+  /** Muse Image edit/generate with a source image (probed live: edits 400s without `images`, returns b64_json). */
+  async imageEditWith(imageDataUrl: string, prompt: string, n = 1): Promise<{ images: string[]; costUsd: number; latencyMs: number }> {
+    const t0 = Date.now();
+    const out = await this.post('/images/edits', { model: 'muse-image-1.0', prompt, images: [{ image_url: imageDataUrl }], n, output_format: 'png', tool_enablement: { enable_web_search: false, enable_shell: false, enable_image_search: false }, reasoning_strength: 'low' });
+    const images = (out.data ?? []).map((d: { b64_json?: string; url?: string }) => (d.b64_json ? `data:image/png;base64,${d.b64_json}` : (d.url ?? ''))).filter(Boolean);
+    return { images, costUsd: costFor('muse-image-1.0', { images: Math.max(1, images.length) }), latencyMs: Date.now() - t0 };
+  }
 }

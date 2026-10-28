@@ -3,6 +3,20 @@ import { copy, regions, layerSets, type Kind, type MakeAs } from '../content/lay
 import { fixtureParts, type Check, type Outline, type Part, type Region } from './layer-flow.svelte';
 import type { AssemblyStep } from '../domain/assembly';
 import { startFor, type Start } from '../content/journey';
+import type { ImageBrief } from '../domain/schemas';
+import type { Layer } from '../content/layers';
+
+type Live<T> = { result: T; summary: string; source?: 'live' | 'fixture'; costUsd?: number };
+async function post(route: string, body: unknown): Promise<any | null> {
+  try {
+    const r = await fetch(route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r || typeof r.json !== 'function') return null;
+    const j = await r.json().catch(() => null);
+    return (r as { ok?: boolean }).ok === false ? null : j;
+  } catch { return null; }
+}
+const sendable = (u?: string) => Boolean(u && (u.startsWith('data:image/') || u.startsWith('http')));
+const traceCost = (j: any): number | undefined => Array.isArray(j?.trace) ? j.trace.reduce((a: number, x: any) => a + (Number(x?.costUsd) || 0), 0) : undefined;
 
 /** One run of a model or agent job for a craft, as the UI shows it. */
 export interface AgentTask { key: string; job: AgentJobId; craftId: string; status: 'running' | 'done' | 'placeholder' | 'failed'; summary: string; costUsd?: number; ms?: number }
@@ -20,16 +34,16 @@ export class MuseAgents {
   /** told about every finished job (AppState posts it in the chat with its model, action and cost) */
   onFinish: ((t: AgentTask) => void) | null = null;
 
-  private async run<T>(job: AgentJobId, craftId: string, work: () => Promise<{ result: T; summary: string }>): Promise<T> {
+  private async run<T>(job: AgentJobId, craftId: string, work: () => Promise<Live<T>>): Promise<T> {
     const key = `${craftId}:${job}:${this.tasks.length}`;
     this.tasks = [...this.tasks, { key, job, craftId, status: 'running', summary: agentJobs[job].label }];
     const set = (patch: Partial<AgentTask>) => { this.tasks = this.tasks.map((t) => (t.key === key ? { ...t, ...patch } : t)); };
     const started = Date.now();
     const finish = (patch: Partial<AgentTask>) => { set({ ...patch, ms: Date.now() - started }); const t = this.tasks.find((x) => x.key === key); if (t) this.onFinish?.(t); };
     try {
-      const { result, summary } = await work();
-      // placeholders report the job's typical cost as an estimate; live jobs report what the server billed
-      finish({ status: agentJobs[job].status === 'live' ? 'done' : 'placeholder', summary, costUsd: agentJobs[job].estUsd });
+      const { result, summary, source, costUsd } = await work();
+      const live = source ? source === 'live' : agentJobs[job].status === 'live';
+      finish({ status: live ? 'done' : 'placeholder', summary, costUsd: live ? (costUsd ?? agentJobs[job].estUsd) : agentJobs[job].estUsd });
       return result;
     } catch (e) {
       finish({ status: 'failed', summary: `${agentJobs[job].label} failed`, costUsd: 0 });
@@ -49,31 +63,78 @@ export class MuseAgents {
     return start;
   }
   // ── Capture
-  describeCapture(craftId: string, kind: Kind) {
-    const subject = kind === '3d' ? 'a birdhouse' : 'layered paper art in a round hoop';
-    return this.run('capture.describe', craftId, async () => { await tick(); return { result: { subject }, summary: `Sees ${subject}` }; });
+  describeCapture(craftId: string, kind: Kind, imageDataUrl?: string) {
+    const fallback = kind === '3d' ? 'a birdhouse' : 'layered paper art in a round hoop';
+    return this.run('capture.describe', craftId, async () => {
+      const j = sendable(imageDataUrl) ? await post('/api/scene', { imageDataUrl }) : null;
+      const brief = (j?.brief ?? null) as ImageBrief | null;
+      if (brief?.subject) return { result: { subject: brief.subject, brief }, summary: `Sees ${brief.subject}`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
+      await tick(); return { result: { subject: fallback, brief: null as ImageBrief | null }, summary: `Sees ${fallback}`, source: 'fixture' as const };
+    });
   }
+  /** Import brief via Spark (/api/convert). Lives here so AppState never fetches directly. */
+  async brief(body: { imageDataUrl?: string; description: string; group: string }) { return post('/api/convert', body); }
   // ── Shape
-  cleanSketch(craftId: string) {
-    return this.run('shape.cleanSketch', craftId, async () => { await tick(); return { result: { variants: 3 }, summary: '3 line-art takes of your sketch' }; });
+  cleanSketch(craftId: string, imageDataUrl?: string) {
+    return this.run('shape.cleanSketch', craftId, async () => {
+      const j = sendable(imageDataUrl) ? await post('/api/art', { imageDataUrl, prompt: 'Redraw this sketch as clean, bold, single-color black line art on pure white, laser-engraving friendly, keep the composition', n: 1 }) : null;
+      const images = (j?.images ?? []) as string[];
+      if (images.length) return { result: { variants: images.length, images }, summary: `${images.length} line-art take of your sketch`, source: 'live' as const, costUsd: traceCost(j) };
+      await tick(); return { result: { variants: 3, images: [] as string[] }, summary: '3 line-art takes of your sketch', source: 'fixture' as const };
+    });
   }
-  cutout(craftId: string) {
-    const outline: Outline = { shape: 'circle', sizeMm: 300 };
-    const checks = copy.cutout.checks.map((c) => ({ ...c })) as Check[];
-    return this.run('shape.cutout', craftId, async () => { await tick(); return { result: { outline, checks }, summary: `Background removed · ${outline.shape} outline, Ø ${outline.sizeMm} mm` }; });
+  cutout(craftId: string, opts: { imageDataUrl?: string; subjectPrompt?: string } = {}) {
+    const fallbackOutline: Outline = { shape: 'circle', sizeMm: 300 };
+    const fallbackChecks = copy.cutout.checks.map((c) => ({ ...c })) as Check[];
+    return this.run('shape.cutout', craftId, async () => {
+      const j = sendable(opts.imageDataUrl) ? await post('/api/segment', { imageDataUrl: opts.imageDataUrl, prompt: opts.subjectPrompt ?? 'main subject' }) : null;
+      const box = j?.boxes?.[0];
+      if (box) {
+        const w = Math.max(1, box.x2 - box.x1), h = Math.max(1, box.y2 - box.y1);
+        const shape: Outline['shape'] = Math.abs(w - h) / Math.max(w, h) < 0.25 ? 'circle' : 'rect';
+        const outline: Outline = { shape, sizeMm: 300 };
+        const checks: Check[] = [{ status: 'pass', text: `Outline found · SAM 3.1 (${j.source ?? 'fixture'})` }, { status: 'pass', text: `Shape · ${shape}` }];
+        return { result: { outline, checks }, summary: `Background removed · ${shape} outline, Ø 300 mm`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
+      }
+      await tick(); return { result: { outline: fallbackOutline, checks: fallbackChecks }, summary: `Background removed · ${fallbackOutline.shape} outline, Ø ${fallbackOutline.sizeMm} mm`, source: 'fixture' as const };
+    });
   }
-  segment(craftId: string) {
-    const found: Region[] = regions.map((r) => ({ ...r }));
-    return this.run('shape.segment', craftId, async () => { await tick(); return { result: found, summary: `${found.length} regions found` }; });
+  segment(craftId: string, opts: { imageDataUrl?: string; briefRegions?: ImageBrief['regions'] } = {}) {
+    const fallback: Region[] = regions.map((r) => ({ ...r }));
+    return this.run('shape.segment', craftId, async () => {
+      const j = sendable(opts.imageDataUrl) && opts.briefRegions?.length ? await post('/api/segment', { imageDataUrl: opts.imageDataUrl, regions: opts.briefRegions }) : null;
+      const live = (j?.regions ?? []) as { id: string; label: string; note?: string; areaPct?: number; keep?: boolean }[];
+      if (live.length) {
+        const tones = ['warn', 'accent', 'ok', 'ink', 'muted'] as const;
+        const found = live.map((r, i) => ({ id: r.id as Region['id'], name: r.label, pct: Math.round((r.areaPct ?? 0) * 10) / 10, note: r.note ?? '', tone: tones[i % tones.length], keep: r.keep ?? true })) as Region[];
+        return { result: found, summary: `${found.length} regions found`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
+      }
+      await tick(); return { result: fallback, summary: `${fallback.length} regions found`, source: 'fixture' as const };
+    });
   }
   // ── Layers
-  planLayers(craftId: string, makeAs: MakeAs) {
+  planLayers(craftId: string, makeAs: MakeAs, opts: { imageDataUrl?: string; description?: string } = {}) {
     const set = layerSets[makeAs === 'wood' ? 'wood' : 'paper'];
-    const layers = set.layers.map((l) => ({ ...l, shapes: [...l.shapes] }));
-    return this.run('layers.plan', craftId, async () => { await tick(); return { result: layers, summary: `${layers.length} layers · ${set.label.toLowerCase()}` }; });
+    const fallback = set.layers.map((l) => ({ ...l, shapes: [...l.shapes] }));
+    return this.run('layers.plan', craftId, async () => {
+      const j = sendable(opts.imageDataUrl) ? await post('/api/convert', { imageDataUrl: opts.imageDataUrl, description: opts.description ?? 'layered craft from this photo', group: makeAs === 'wood' ? 'laser-cut' : 'cricut-paper' }) : null;
+      const pieces = (j?.pieces ?? []) as { name: string; kind: string; note: string }[];
+      const layerPieces = pieces.filter((x) => x.kind === 'layer' || j?.conversionClass === 'layered');
+      if (layerPieces.length >= 2) {
+        const shapes = ['sky', 'sun', 'far', 'ridge', 'hills', 'pines'] as const;
+        const layers: Layer[] = layerPieces.map((piece, i) => { const base = set.layers[i % set.layers.length]; return { n: i + 1, name: piece.name.replace(/^Layer \d+ \((back|mid|front)\)\s*/i, '') || piece.name, shapes: [shapes[i % shapes.length]], colour: base.colour, visiblePct: Math.max(2, Math.round((100 / layerPieces.length) * 10) / 10), hiddenPct: i === layerPieces.length - 1 ? 0 : 40, material: base.material }; });
+        return { result: layers, summary: `${layers.length} layers · ${String(j.objective ?? set.label).slice(0, 60)}`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) ?? j?.costUsd };
+      }
+      await tick(); return { result: fallback, summary: `${fallback.length} layers · ${set.label.toLowerCase()}`, source: 'fixture' as const };
+    });
   }
-  imagineGaps(craftId: string) {
-    return this.run('layers.imagineGaps', craftId, async () => { await tick(); return { result: { filled: 0 }, summary: 'Ready to fill hidden areas when you ask' }; });
+  imagineGaps(craftId: string, imageDataUrl?: string) {
+    return this.run('layers.imagineGaps', craftId, async () => {
+      const j = sendable(imageDataUrl) ? await post('/api/art', { imageDataUrl, prompt: 'Continue the hidden areas behind each layer in the same flat style, single colours', n: 1 }) : null;
+      const images = (j?.images ?? []) as string[];
+      if (images.length) return { result: { filled: images.length, images }, summary: 'Imagined what hides behind each layer', source: 'live' as const, costUsd: traceCost(j) };
+      await tick(); return { result: { filled: 0, images: [] as string[] }, summary: 'Ready to fill hidden areas when you ask', source: 'fixture' as const };
+    });
   }
   unfold(craftId: string) {
     const parts: Part[] = fixtureParts.map((p) => ({ ...p, needs: [...p.needs] }));
@@ -92,7 +153,11 @@ export class MuseAgents {
   writeInstructions(craftId: string, draft: AssemblyStep[]) {
     return this.run('assemble.instructions', craftId, async () => { await tick(); return { result: draft, summary: `${draft.length} assembly steps` }; });
   }
-  renderFinished(craftId: string) {
-    return this.run('assemble.render', craftId, async () => { await tick(); return { result: { image: '' }, summary: 'Photo of the finished piece' }; });
+  renderFinished(craftId: string, imageDataUrl?: string) {
+    return this.run('assemble.render', craftId, async () => {
+      const j = sendable(imageDataUrl) ? await post('/api/preview', { imageDataUrl }) : null;
+      if (j?.image) return { result: { image: j.image as string }, summary: 'Photo of the finished piece', source: 'live' as const, costUsd: traceCost(j) };
+      await tick(); return { result: { image: '' }, summary: 'Photo of the finished piece', source: 'fixture' as const };
+    });
   }
 }

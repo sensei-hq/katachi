@@ -1,7 +1,33 @@
-import { SceneAnalysisSchema, SceneAnalysisJsonSchema, type SceneAnalysis } from '../../domain/schemas';
+import { SceneAnalysisSchema, SceneAnalysisJsonSchema, ImageBriefSchema, ImageBriefJsonSchema, type SceneAnalysis, type ImageBrief } from '../../domain/schemas';
 import { measureScene, type MeasureResult } from '../../domain/measure';
 import { MetaClient } from './client';
 const FIXTURE: SceneAnalysis = { objects: [{ id: 'o1', label: 'hand-drawn M logo', samPrompt: 'logo drawing', role: 'art', bbox: [0, 0, 10, 10], shapeHint: 'freeform' }, { id: 'o2', label: 'mug base', samPrompt: 'bottom rim of the mug', role: 'fit_target', bbox: [0, 0, 10, 10], shapeHint: 'round' }, { id: 'o3', label: 'credit card', samPrompt: 'credit card', role: 'reference', bbox: [0, 0, 10, 10], shapeHint: 'rectangular' }], reference: { objectId: 'o3', kind: 'id1_card' }, camera: { topDownConfidence: 0.92 }, notes: 'demo fixture' };
+export const FIXTURE_BRIEF: ImageBrief = {
+  subject: 'layered paper art in a round hoop', class: 'layered', likelyMaterial: 'paper',
+  subjectPrompt: 'layered paper art',
+  regions: [
+    { id: 'frame', label: 'Frame ring', samPrompt: 'round frame ring', likelyBought: true, note: 'looks bought' },
+    { id: 'sky', label: 'Sky', samPrompt: 'sky background', likelyBought: false, note: 'back layer' },
+    { id: 'sun', label: 'Sun', samPrompt: 'round sun', likelyBought: false, note: 'small disc' },
+    { id: 'mountains', label: 'Mountains', samPrompt: 'mountain range', likelyBought: false, note: 'peaks and ridge' },
+    { id: 'trees', label: 'Hills and pines', samPrompt: 'hills and pine trees', likelyBought: false, note: 'foreground' }
+  ],
+  colourGroupsHint: 6, reference: null, topDownConfidence: 0.9, notes: 'demo fixture'
+};
+const BRIEF_SYSTEM = 'You are Katachi, a workshop buddy who turns a photo into cut layers. Classify the image for a layered/3D craft build. Give each distinct region a short SAM noun phrase. Mark bought hardware (frames, hoops) likelyBought. Never emit coordinates.';
+/** S2 Classify: Spark vision on the real image -> ImageBrief. Fixture brief without a key or on failure. */
+export async function analyseImage(env: Record<string, string | undefined>, imageDataUrl: string | undefined, client?: MetaClient): Promise<{ brief: ImageBrief; source: 'live' | 'fixture'; trace: { model: string; purpose: string; stage: string; latencyMs: number; costUsd: number }[] }> {
+  if (env.META_API_KEY && imageDataUrl) {
+    try {
+      const c = client ?? new MetaClient(env.META_API_KEY);
+      const r = await c.sparkVision(BRIEF_SYSTEM, 'Analyse this photo for a layered craft build.', imageDataUrl, ImageBriefJsonSchema as unknown as Record<string, unknown>, 'ImageBrief');
+      const parsed = ImageBriefSchema.safeParse(r.data);
+      if (parsed.success) return { brief: parsed.data, source: 'live', trace: [{ model: 'muse-spark-1.3', purpose: 'analyze_image', stage: 'S2', latencyMs: r.latencyMs, costUsd: r.costUsd }] };
+      console.error('ImageBrief parse failed, using fixture');
+    } catch (e) { console.error('live image analysis failed, using fixture:', e instanceof Error ? e.message : String(e)); }
+  }
+  return { brief: FIXTURE_BRIEF, source: 'fixture', trace: [{ model: 'muse-spark-1.3', purpose: 'analyze_image (demo fixture — set META_API_KEY for live)', stage: 'S2', latencyMs: 900, costUsd: 0.01 }] };
+}
 export async function analyseScene(env: Record<string, string | undefined>, client?: MetaClient): Promise<{ scene: SceneAnalysis; measure: MeasureResult; source: 'live' | 'fixture'; trace: { model: string; purpose: string; latencyMs: number; costUsd: number }[] }> {
   const measure = measureScene({ reference: { kind: 'id1_card', wPx: 856, hPx: 540 }, targets: [{ id: 'o2', shape: 'round', minorPx: 820, majorPx: 850 }] });
   if (env.META_API_KEY) {

@@ -14,17 +14,17 @@ export interface AgentJob { id: AgentJobId; model: AgentModel; step: JourneyId |
 
 export const agentJobs: Record<AgentJobId, AgentJob> = {
   'intent.classify': { id: 'intent.classify', model: 'Muse Spark 1.3', step: 'home', label: 'Understands what you want to make', route: '/api/intent', status: 'placeholder', estUsd: 0.004 },
-  'capture.describe': { id: 'capture.describe', model: 'Muse Spark 1.3', step: 'capture', label: 'Says what is in the picture', route: '/api/scene', status: 'placeholder', estUsd: 0.01 },
-  'shape.cleanSketch': { id: 'shape.cleanSketch', model: 'Muse Image', step: 'shape', label: 'Cleans your sketch into line art', route: '/api/art', status: 'placeholder', estUsd: 0.03 },
-  'shape.cutout': { id: 'shape.cutout', model: 'SAM 3.1', step: 'shape', label: 'Removes the background and finds the outline', route: '/api/segment', status: 'placeholder', estUsd: 0.0025 },
-  'shape.segment': { id: 'shape.segment', model: 'SAM 3.1', step: 'shape', label: 'Finds the regions that can become parts', route: '/api/segment', status: 'placeholder', estUsd: 0.0025 },
-  'layers.plan': { id: 'layers.plan', model: 'Muse Spark 1.3', step: 'layers', label: 'Groups regions into layers, back to front', route: '/api/convert', status: 'placeholder', estUsd: 0.02 },
-  'layers.imagineGaps': { id: 'layers.imagineGaps', model: 'Muse Image', step: 'layers', label: 'Imagines what hides behind each layer', route: '/api/art', status: 'placeholder', estUsd: 0.01 },
+  'capture.describe': { id: 'capture.describe', model: 'Muse Spark 1.3', step: 'capture', label: 'Says what is in the picture', route: '/api/scene', status: 'live', estUsd: 0.01 },
+  'shape.cleanSketch': { id: 'shape.cleanSketch', model: 'Muse Image', step: 'shape', label: 'Cleans your sketch into line art', route: '/api/art', status: 'live', estUsd: 0.03 },
+  'shape.cutout': { id: 'shape.cutout', model: 'SAM 3.1', step: 'shape', label: 'Removes the background and finds the outline', route: '/api/segment', status: 'live', estUsd: 0.0025 },
+  'shape.segment': { id: 'shape.segment', model: 'SAM 3.1', step: 'shape', label: 'Finds the regions that can become parts', route: '/api/segment', status: 'live', estUsd: 0.0025 },
+  'layers.plan': { id: 'layers.plan', model: 'Muse Spark 1.3', step: 'layers', label: 'Groups regions into layers, back to front', route: '/api/convert', status: 'live', estUsd: 0.02 },
+  'layers.imagineGaps': { id: 'layers.imagineGaps', model: 'Muse Image', step: 'layers', label: 'Imagines what hides behind each layer', route: '/api/art', status: 'live', estUsd: 0.01 },
   'layers.unfold': { id: 'layers.unfold', model: 'Muse Spark 1.3', step: 'layers', label: 'Unfolds six views into parts with joints', route: '/api/design', status: 'placeholder', estUsd: 0.02 },
   'layers.refine': { id: 'layers.refine', model: 'Muse Spark 1.3', step: 'layers', label: 'Turns your note into edits on the layers', route: '/api/design', status: 'placeholder', estUsd: 0.005 },
   'sheets.vectorise': { id: 'sheets.vectorise', model: 'Code', step: 'sheets', label: 'Traces each layer into cut paths and nests the sheets', route: 'lib/domain', status: 'placeholder', estUsd: 0 },
   'assemble.instructions': { id: 'assemble.instructions', model: 'Muse Spark 1.3', step: 'assemble', label: 'Writes the assembly steps', route: '/api/design', status: 'placeholder', estUsd: 0.01 },
-  'assemble.render': { id: 'assemble.render', model: 'Muse Image', step: 'assemble', label: 'Renders the finished piece', route: '/api/preview', status: 'placeholder', estUsd: 0.04 }
+  'assemble.render': { id: 'assemble.render', model: 'Muse Image', step: 'assemble', label: 'Renders the finished piece', route: '/api/preview', status: 'live', estUsd: 0.04 }
 };
 
 /** The jobs Katachi runs when a craft first reaches each flow route. */

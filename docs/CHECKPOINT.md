@@ -1,13 +1,23 @@
 # Checkpoint — Katachi · Snap → Make Phase 1
 
-- Slice 2026-10-28 (UX journey pass, merged from ux/craft-journey into main and develop at 8c3ff48; not pushed): one craft journey Capture · Shape · Layers · Sheets · Assemble (design/07, PRD 02 J0, PRD 03 R-UX-1…11, PRD 06 rewritten). New: landing hero + how it works, Home (start a craft / continue / recent crafts, desktop two-column), `/crafts` gallery, Sketch capture source, `/make/assemble` + Save craft, chat notes per step/layer, Settings → My devices with default device, nav by place (Home · Crafts · Current craft · Work area · Watch). `MuseAgents` (`lib/state/muse.svelte.ts`) is the only path to models; every craft job is a labelled placeholder with an activity strip per step; `test:arch` rejects model calls / file I/O in presentation. `/scene` `/plan` `/art` `/preview` redirect to Home (hero.spec and impl-switch.spec removed; journey.spec added).
-- Gates at merge: 211 unit (37 files; coverage lines 92 %, functions 90 %), 46/46 e2e, build, arch/lint/check clean. Not deployed. Submission package planned in `docs/submission/` (git-ignored, local only).
-- Next command: `git push origin main develop`, then wire MuseAgents jobs to routes (design/07 §5), canvas on the craft's sheets, assistant column overlap (design/07 §6).
-
-- Slice: feedback round 2026-10-28 — all six parts done, pushed and deployed (Worker version 162e0659). Live gate verified: pages → /, /api 401, old built-in code rejected.
-- Done: (1) app at the root — `/` gate, studio pages top level, flow `/make/{import,cutout,segment,layers,gaps,output,views,reference}`, `/snap/*` → 308, Material step gone, desktop frame pinned (window never scrolls); (2) projects — New → Capture → flow → cuts, named from the first step, autosaved (localStorage), Open on /workshop, steps unlock as reached, `/make` resumes; Capture fits the viewport, strip as footer, one Choose; (3) assistant on Rokkit ChatShell; (4) Layers — duplicate / merge down / split by islands, no row numbers, stack under the list, solid/hidden toggles, medium from Import; (5) Output — one sheet at a time (feed → send → progress → verify → next); (6) server gate — HMAC-signed httpOnly session checked in hooks for every page (→ /) and /api (401), codes only from `SNAP_INVITE_CODES`, `SESSION_SECRET` required in production, specific errors, two-column welcome; Convert folded into Import (describe → Muse variations in chat → plan).
-- Gates: 186 unit (coverage 91 %), 46/46 e2e, build, arch/lint/check clean.
-- Incident: first deploy (ab7fb3cf) failed every request with 1101 for ~10 min — `crypto.randomUUID()` at module scope in `lib/server/session.ts`; fixed (lazy), redeployed, and `scripts/check-arch.mjs` now rejects random values / timers / fetch in server global scope.
-- Next command: doc 04 #1–7 so layers run on real uploads; then wire budget caps (needs KV or Supabase).
-- Open: budget caps (R-PL-2) still unwired — need KV or Supabase to hold across Worker instances; no rate limit on /api/gate; `database/import/staging/snap_invites.csv` still holds `DEMO-JUDGES` (seed, not used by the gate); split by tone waits for real masks (doc 04); the user's Chrome 404 URL unknown; repo not a Sensei workspace.
+- Slice 2026-10-28 (E2E Muse wiring + invite-as-user storage, uncommitted on main):
+  Spark ImageBrief (`/api/scene` with the real image), SAM 3.1 box+mask parse and
+  per-region fan-out (`/api/segment`), Muse Image edits with the source image
+  (`/api/art`, `/api/preview`, `imageEditWith`). `MuseAgents` jobs describe /
+  cutout / segment / plan / gaps / sketch / render are live with fixture fallback
+  labelled placeholder; `AppState.askForBrief` goes through `MuseAgents.brief`.
+  Invite code is the `user_id`: the gate signs it and returns it, the root layout
+  binds it, crafts live in localStorage under `katachi:v1:{user_id}:*` with a
+  one-time legacy migration. No Supabase in the runtime path.
+- Evidence: live probes on `samples/layered/setting_sun_circle_scene.webp`
+  (Spark layered + 9 regions, SAM sun box+mask, Muse Image b64 edit);
+  Playwright `sample-journey.spec.ts` walks that file Capture → Assemble → Save,
+  reloads under the same code, and checks a second code sees an empty gallery.
+- Gates: 225 unit (38 files, coverage lines 90.9%), arch/lint/check clean,
+  build ok, e2e 47/47.
+- Next command: review the diff, commit, then `bun run dev` and try a second
+  sample from `samples/multiple/` by hand.
+- Open: full SAM bit decode + potrace vectorise (sheets stay previews);
+  budget caps (R-PL-2) unwired; Wonder batch and voice relay still fixtures;
+  Supabase auth/storage is the stretch goal once this is committed.
 - Known broken: none in tests.

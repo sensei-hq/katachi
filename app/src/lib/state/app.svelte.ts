@@ -53,6 +53,21 @@ export class AppState {
     const saved = id ? store.load(id) : null;
     if (saved) this.apply(saved);
   }
+  /** The invite code is the user_id (demo-grade identity): crafts live under that user's storage namespace. */
+  userId = $state('guest');
+  bindUser(userId: string | null | undefined) {
+    if (!userId || userId === this.userId) return;
+    this.userId = userId;
+    this.session.userId = userId;
+    this.store.setUserId(userId);
+    this.projects = this.store.list();
+    const d = this.store.getSetting(DEVICE_KEY) as DeviceId | null;
+    if (d) this.defaultDevice = d;
+    const id = this.store.current();
+    const saved = id ? this.store.load(id) : null;
+    this.project = null;
+    if (saved) this.apply(saved);
+  }
   private apply(p: ProjectRecord) {
     this.instructions = null;
     this.watch.reset();
@@ -94,8 +109,8 @@ export class AppState {
     this.project = { ...p, name: p.name || projectName({ fileName, at: when, prefix }), kind, image: images[0] ?? p.image,
       reached: Math.max(p.reached, 0), path: flowPath(mode === 'multi' ? 'views' : kind === 'ref' ? 'reference' : 'import') };
     this.save();
-    void this.muse.describeCapture(p.id, kind).then((r) => this.layers.applySubject(r.subject));
-    if (this.capture.media.some((m) => m.source === 'sketch')) void this.muse.cleanSketch(p.id);
+    void this.muse.describeCapture(p.id, kind, images[0]).then((r) => { if (r.brief) this.layers.applyBrief(r.brief); else this.layers.applySubject(r.subject); this.save(); });
+    if (this.capture.media.some((m) => m.source === 'sketch')) void this.muse.cleanSketch(p.id, images[0]);
   }
   /** Home · release the mic: what was heard starts a craft (returns where to go), or nothing was heard. */
   listenToStart(): string | null {
@@ -132,10 +147,11 @@ export class AppState {
       if (this.muse.has(craft, job)) continue;
       // each result is written into the flow state; the pages only ever read that state
       const f = this.layers;
-      if (job === 'shape.cutout') void this.muse.cutout(craft).then((r) => f.applyCutout(r));
-      else if (job === 'shape.segment') void this.muse.segment(craft).then((r) => f.applyRegions(r));
-      else if (job === 'layers.plan') void this.muse.planLayers(craft, f.makeAs).then((r) => f.applyLayers(r));
-      else if (job === 'layers.imagineGaps') void this.muse.imagineGaps(craft);
+      const image = this.project?.image || undefined;
+      if (job === 'shape.cutout') void this.muse.cutout(craft, { imageDataUrl: image, subjectPrompt: f.imageBrief?.subjectPrompt }).then((r) => f.applyCutout(r));
+      else if (job === 'shape.segment') void this.muse.segment(craft, { imageDataUrl: image, briefRegions: f.imageBrief?.regions }).then((r) => f.applyRegions(r));
+      else if (job === 'layers.plan') void this.muse.planLayers(craft, f.makeAs, { imageDataUrl: image, description: f.brief || f.subject }).then((r) => f.applyLayers(r));
+      else if (job === 'layers.imagineGaps') void this.muse.imagineGaps(craft, image);
       else if (job === 'layers.unfold') void this.muse.unfold(craft).then((r) => f.applyParts(r));
       else if (job === 'sheets.vectorise') void this.muse.vectorise(craft, f.layers.length);
       else if (job === 'assemble.instructions') void this.muse.writeInstructions(craft, this.assembly).then((r) => { this.instructions = r; });
@@ -166,7 +182,7 @@ export class AppState {
       this.flow.conversation.say(`The .zip will hold ${this.layers.layers.length} sheet files (SVG + device format) once tracing is wired — for now the sheets are previews.`));
   }
   /** Assemble · Muse Image pictures the finished piece (placeholder). */
-  renderFinished() { if (this.project) void this.muse.renderFinished(this.project.id); }
+  renderFinished() { if (this.project) void this.muse.renderFinished(this.project.id, this.project.image || undefined); }
   /** Autosave: called whenever the project or its choices change (a draft with nothing captured is not saved). */
   save() {
     const p = this.project;
@@ -183,8 +199,7 @@ export class AppState {
     if (!text) return;
     this.flow.conversation.ingestTranscript(text);
     const group = this.layers.makeAs === 'paper' ? 'cricut-paper' : 'laser-cut';
-    const r = await fetch('/api/convert', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ imageDataUrl: this.project?.image || undefined, description: text, group }) })
-      .then((x) => (x.ok ? x.json() : null)).catch(() => null);
+    const r = await this.muse.brief({ imageDataUrl: this.project?.image || undefined, description: text, group });
     if (!r?.objective) { this.flow.conversation.say('I couldn’t reach Muse just now — try again in a moment.'); return; }
     this.variations = (r.variations ?? []).slice(0, 3);
     this.flow.conversation.say(`${r.objective}. Pick a direction and I’ll plan the layers around it:`, this.variations.map((v, i) => ({ label: v.title, id: `variation:${i}` })));
