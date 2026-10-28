@@ -94,9 +94,10 @@ export class MuseAgents {
         const shape: Outline['shape'] = Math.abs(w - h) / Math.max(w, h) < 0.25 ? 'circle' : 'rect';
         const outline: Outline = { shape, sizeMm: 300 };
         const checks: Check[] = [{ status: 'pass', text: `Outline found · SAM 3.1 (${j.source ?? 'fixture'})` }, { status: 'pass', text: `Shape · ${shape}` }];
-        return { result: { outline, checks }, summary: `Background removed · ${shape} outline, Ø 300 mm`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
+        const paths = (j?.masks?.[0]?.paths ?? []) as [number, number][][];
+        return { result: { outline, checks, paths }, summary: `Background removed · ${shape} outline, Ø 300 mm`, source: j.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
       }
-      await tick(); return { result: { outline: fallbackOutline, checks: fallbackChecks }, summary: `Background removed · ${fallbackOutline.shape} outline, Ø ${fallbackOutline.sizeMm} mm`, source: 'fixture' as const };
+      await tick(); return { result: { outline: fallbackOutline, checks: fallbackChecks, paths: [] as [number, number][][] }, summary: `Background removed · ${fallbackOutline.shape} outline, Ø ${fallbackOutline.sizeMm} mm`, source: 'fixture' as const };
     });
   }
   segment(craftId: string, opts: { imageDataUrl?: string; briefRegions?: ImageBrief['regions'] } = {}) {
@@ -142,7 +143,7 @@ export class MuseAgents {
   }
   /** Spark turns a chat note into edit operations (merge, split, raise, recolour) on the layer it names. */
   applyRefinement(craftId: string, note: { step: string; layer?: string; text: string }) {
-    return this.run('layers.refine', craftId, async () => { await tick(); return { result: { applied: false, ops: [] as string[] }, summary: `Will apply “${note.text}”${note.layer ? ` to ${note.layer}` : ''}` }; });
+    return this.run('layers.refine', craftId, async () => { await tick(); return { result: { applied: false, ops: [] as string[] }, summary: `Noted “${note.text}”${note.layer ? ` for ${note.layer}` : ''} — saved with the craft` }; });
   }
   // ── Sheets
   /** Sheets: SAM mask paths (0-1000 image coords from /api/segment) scaled to mm and traced to closed SVG per kept region. */
@@ -155,7 +156,7 @@ export class MuseAgents {
       const data = kept.map((r) => {
         const traced = (r.paths ?? []).map((points) => ({ points, area: 0, closed: true as const }));
         const mm = scalePaths(traced, mmPerUnit);
-        return { name: r.name, svg: pathsToSvg(mm), pathCount: mm.length, cutLengthMm: cutLength(mm) };
+        return { name: r.name, svg: pathsToSvg(mm), pathCount: mm.length, cutLengthMm: cutLength(mm), sizeMm };
       });
       const pathCount = data.reduce((a, s) => a + s.pathCount, 0);
       if (pathCount) return { result: { sheets, pathCount, sheetsData: data }, summary: `${data.length} sheets traced · ${pathCount} closed paths · ${data.reduce((a, s) => a + s.cutLengthMm, 0).toFixed(0)} mm of cut`, source: 'live' as const, costUsd: 0 };

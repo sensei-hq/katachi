@@ -5,6 +5,7 @@ import { Button, Card } from '@rokkit/ui';
 import { InputCheckbox } from '@rokkit/forms';
 import StepScreen from '$lib/components/StepScreen.svelte';
 import LayeredScene from '$lib/components/illustrations/LayeredScene.svelte';
+import PhotoStage from '$lib/components/PhotoStage.svelte';
 import BirdhouseView from '$lib/components/illustrations/BirdhouseView.svelte';
 import { guide } from '$lib/content/layers';
 import { useApp } from '$lib/state/context';
@@ -56,6 +57,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
     {/if}
     <figure class="m-0 relative aspect-[4/3] md:aspect-[16/10] rounded-lg overflow-hidden border border-paper-edge bg-paper-soft">
       {#if joined}<BirdhouseView view={views[Math.min(at, views.length - 1)]} label={step.title} />
+      {:else if app.stageImage && f.overlays.length}<PhotoStage image={app.stageImage} label={step.title} overlays={f.overlays.filter((_, i) => !step.layer || i < step.layer).map((o) => ({ d: o.d, tone: o.tone, opacity: 0.5 }))} />
       {:else}<span class="absolute inset-0 p-4 flex justify-center"><span class="h-full max-w-full aspect-square"><LayeredScene layers={step.layer ? f.layers.filter((l) => l.n <= step.layer!) : f.layers} mode={step.layer ? 'layer' : 'full'} selected={step.layer ?? 0} hidden={false} label={step.title} /></span></span>{/if}
       <figcaption class="absolute left-2.5 top-2.5 meta rounded-full bg-paper-soft border border-paper-edge px-2.5 py-1">Step {at + 1} of {steps.length}</figcaption>
     </figure>

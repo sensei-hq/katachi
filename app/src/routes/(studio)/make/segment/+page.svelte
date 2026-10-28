@@ -4,6 +4,7 @@ import { resolve } from '$app/paths';
 import { Button, Card, Switch, Toggle } from '@rokkit/ui';
 import StepScreen from '$lib/components/StepScreen.svelte';
 import LayeredScene from '$lib/components/illustrations/LayeredScene.svelte';
+import PhotoStage from '$lib/components/PhotoStage.svelte';
 import { copy, refineTools, type RefineTool, type SegmentView } from '$lib/content/layers';
 import { useApp } from '$lib/state/context';
 // D2 · Segment + pick regions (studio) · 03 · Objects (phone)
@@ -50,7 +51,11 @@ const tools = refineTools.map((t) => ({ label: t.label, value: t.id }));
     <div class="lt-md:hidden"><Toggle options={views} value={f.segmentView} label="Show" onchange={(v) => f.setSegmentView(v as SegmentView)} /></div>
     <figure class="relative m-0 w-full max-w-[640px] aspect-square md:flex-1 md:max-h-[640px] rounded-lg overflow-hidden border border-paper-edge bg-paper-soft">
       <span class="absolute left-2.5 top-2.5 z-1 meta rounded-sm bg-paper px-2 py-0.5 border border-paper-edge">{f.kept.length} of {f.regions.length} kept · {f.keptPct}% of image</span>
-      {#if f.segmentView === 'masks'}<LayeredScene layers={f.layers} mode="regions" regions={f.regions} label="Regions found in the image, tinted by kind" />
+      {#if app.stageImage && f.overlays.length}
+        <PhotoStage image={app.stageImage} label={`Your photo with the SAM regions: ${app.title}`} overlays={f.segmentView === 'original' ? [] : f.overlays.filter((o) => f.segmentView === 'masks' || o.on).map((o) => ({ d: o.d, tone: o.tone, opacity: o.on ? 0.45 : 0.07, outlineOnly: !o.on }))} />
+      {:else if app.stageImage}
+        <PhotoStage image={app.stageImage} label={`Your photo: ${app.title}`} />
+      {:else if f.segmentView === 'masks'}<LayeredScene layers={f.layers} mode="regions" regions={f.regions} label="Regions found in the image, tinted by kind" />
       {:else}<LayeredScene layers={f.layers} mode={f.segmentView} />{/if}
     </figure>
   </div>

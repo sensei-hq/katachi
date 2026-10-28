@@ -118,6 +118,10 @@ export function scalePaths(paths: TracedPath[], mmPerPx: number, originPx: [numb
 }
 const round = (n: number) => Math.round(n * 100) / 100;
 
+export function pointsToPath(points: [number, number][]): string {
+  return points.length ? `M${points.map(([x, y]) => `${round(x)} ${round(y)}`).join('L')}Z` : '';
+}
+
 export function pathsToSvg(paths: TracedPath[]): string {
   return paths.map((p) => `M${p.points.map(([x, y]) => `${round(x)} ${round(y)}`).join('L')}Z`).join('');
 }

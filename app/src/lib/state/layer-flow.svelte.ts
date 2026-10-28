@@ -1,4 +1,5 @@
 import { changes, copy, type Layer, devices, gapChoices, kinds, layerSets, regions, views, type DeviceId, type GapChoice, type GapRule, type Joinery, type Kind, type LayerSetId, type MakeAs, type RefineTool, type RegionId, type SegmentView, type ViewId } from '../content/layers';
+import { pointsToPath } from '../domain/vector';
 
 const fresh = (s: LayerSetId): Layer[] => layerSets[s].layers.map((l) => ({ ...l, shapes: [...l.shapes] }));
 
@@ -6,7 +7,7 @@ const fresh = (s: LayerSetId): Layer[] => layerSets[s].layers.map((l) => ({ ...l
  * the starting values until MuseAgents (lib/state/muse.svelte.ts) writes a result over them. */
 export interface Check { status: 'pass' | 'warn' | 'fail'; text: string }
 export type Region = (typeof regions)[number] & { paths?: [number, number][][]; ones?: number };
-export interface SheetPaths { name: string; svg: string; pathCount: number; cutLengthMm: number }
+export interface SheetPaths { name: string; svg: string; pathCount: number; cutLengthMm: number; sizeMm?: number }
 export interface Part { name: string; size: string; needs: ViewId[]; any?: boolean; missing: string }
 export interface Outline { shape: 'circle' | 'rect' | 'free'; sizeMm: number }
 export const fixtureParts: Part[] = [
@@ -29,7 +30,16 @@ export class LayerFlowState {
   regionList = $state<Region[]>(regions.map((r) => ({ ...r })));
   parts = $state<Part[]>(fixtureParts.map((p) => ({ ...p, needs: [...p.needs] })));
   applySubject(subject: string) { this.subject = subject; }
-  applyCutout(r: { outline: Outline; checks: Check[] }) { this.outline = r.outline; this.cutoutChecks = r.checks; }
+  /** the SAM subject mask, traced to closed paths in 0-1000 image coordinates (Cutout view) */
+  subjectPaths = $state<[number, number][][]>([]);
+  applyCutout(r: { outline: Outline; checks: Check[]; paths?: [number, number][][] }) { this.outline = r.outline; this.cutoutChecks = r.checks; if (r.paths) this.subjectPaths = r.paths; }
+  /** every region's traced mask as an SVG overlay for the photo stage (empty until SAM returns paths) */
+  get overlays() {
+    return this.regions.filter((r) => r.paths?.length).map((r) => ({ id: r.id, name: r.name, tone: r.tone, on: r.on, d: (r.paths ?? []).map(pointsToPath).join('') }));
+  }
+  get hasPhotoStage() { return this.overlays.length > 0 || this.subjectPaths.length > 0; }
+  get subjectD() { return this.subjectPaths.map(pointsToPath).join(''); }
+  sheetFor(n: number) { return this.sheetPaths[n - 1]; }
   applyRegions(list: Region[]) { this.regionList = list; this.keep = Object.fromEntries(list.map((r) => [r.id, r.keep])) as Record<RegionId, boolean>; }
   applyLayers(layers: Layer[]) { this.stack = layers.map((l, i) => ({ ...l, n: i + 1 })); this.sel = Math.min(this.sel, this.stack.length) || 1; this.overrides = {}; }
   applyParts(parts: Part[]) { this.parts = parts; }
@@ -192,7 +202,7 @@ export class LayerFlowState {
   toggleAssembled(i: number) { this.assembled = this.assembled.includes(i) ? this.assembled.filter((x) => x !== i) : [...this.assembled, i]; }
 
   // project save / reopen: every choice above, as plain data
-  private static readonly SAVED = ['subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths'] as const;
+  private static readonly SAVED = ['subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths', 'subjectPaths'] as const;
   /** a fresh flow's choices (New starts from these) */
   static defaults() { return new LayerFlowState().snapshot(); }
   snapshot(): Record<string, unknown> {

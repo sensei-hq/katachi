@@ -3,6 +3,7 @@ import { Button, Card, ProgressBar } from '@rokkit/ui';
 import { InputField } from '@rokkit/forms';
 import StepScreen from '$lib/components/StepScreen.svelte';
 import LayeredScene from '$lib/components/illustrations/LayeredScene.svelte';
+import SheetSvg from '$lib/components/SheetSvg.svelte';
 import LayerSwatch from '$lib/components/illustrations/LayerSwatch.svelte';
 import { copy, guide } from '$lib/content/layers';
 import { useApp } from '$lib/state/context';
@@ -35,7 +36,7 @@ const statusText = { cut: 'cut', current: 'next', waiting: '' } as const;
   <div class="flex flex-col gap-5">
     {#if cutting}
       <section aria-label="Cutting" class="rounded-lg border border-paper-edge bg-paper-soft p-4 grid gap-4 md:grid-cols-[180px_1fr] items-center">
-        <div class="aspect-square rounded-md bg-paper border border-paper-edge p-3"><LayeredScene layers={f.layers} mode="layer" selected={f.jobLayer.n} label={`Sheet ${pad(f.jobLayer.n)}, ${f.jobLayer.name}`} /></div>
+        <div class="aspect-square rounded-md bg-paper border border-paper-edge p-3">{#if f.sheetFor(f.jobLayer.n)}<SheetSvg svg={f.sheetFor(f.jobLayer.n)!.svg} sizeMm={f.sheetFor(f.jobLayer.n)!.sizeMm ?? 300} label={`Sheet ${pad(f.jobLayer.n)}, ${f.jobLayer.name}: traced cut paths`} />{:else}<LayeredScene layers={f.layers} mode="layer" selected={f.jobLayer.n} label={`Sheet ${pad(f.jobLayer.n)}, ${f.jobLayer.name}`} />{/if}</div>
         <div class="flex flex-col gap-3">
           {#if f.job.phase === 'done'}
             <p class="eyebrow">All sheets cut</p>
@@ -71,7 +72,7 @@ const statusText = { cut: 'cut', current: 'next', waiting: '' } as const;
           {@const status = cutting ? f.sheetStatus(l.n) : 'waiting'}
           <div class="rounded-lg border bg-paper-soft p-2 md:p-3 flex flex-col gap-2 {status === 'current' ? 'border-accent' : 'border-paper-edge'}">
             <div class="relative aspect-square rounded-md bg-paper border border-paper-edge p-3 md:p-4">
-              <LayeredScene layers={f.layers} mode="layer" selected={l.n} label={`Sheet ${pad(l.n)}, ${l.name}`} />
+              {#if f.sheetFor(l.n)}<SheetSvg svg={f.sheetFor(l.n)!.svg} sizeMm={f.sheetFor(l.n)!.sizeMm ?? 300} label={`Sheet ${pad(l.n)}, ${l.name}: traced cut paths`} />{:else}<LayeredScene layers={f.layers} mode="layer" selected={l.n} label={`Sheet ${pad(l.n)}, ${l.name}`} />{/if}
               <span class="absolute left-2 top-2 w-2 h-2 rounded-full border border-accent" aria-hidden="true"></span>
               <span class="absolute right-2 top-2 w-2 h-2 rounded-full border border-accent" aria-hidden="true"></span>
               <span class="absolute left-2 bottom-2 w-2 h-2 rounded-full border border-accent" aria-hidden="true"></span>

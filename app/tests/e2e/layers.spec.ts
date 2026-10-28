@@ -31,7 +31,7 @@ test.describe('image → layers · studio (1280×800)', () => {
     const controls = page.getByRole('complementary', { name: 'Step controls' });
     await expect(assistant.getByRole('tab')).toHaveCount(0);
     await expect(assistant).toContainText('I found 5 regions');
-    await expect(assistant.getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Raise the sun on a spacer' })).toBeVisible();
+    await expect(assistant.getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Drop the Sky' })).toBeVisible();
     const regions = controls.getByRole('region', { name: 'Regions', exact: true });
     await expect(regions).toContainText('4 of 5 kept');
     await regions.getByRole('switch', { name: 'Sun' }).click();

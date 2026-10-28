@@ -36,7 +36,7 @@ describe('AppState runs the step jobs once per craft and shows them per step', (
     expect(app.activity('shape').map((t) => t.model)).toEqual(['SAM 3.1', 'SAM 3.1']);
     await app.ask('raise the sun', '/make/segment');
     await settle();
-    expect(app.activity().at(-1)).toMatchObject({ model: 'Muse Spark 1.3', status: 'placeholder', summary: 'Will apply “raise the sun”' });
+    expect(app.activity().at(-1)).toMatchObject({ model: 'Muse Spark 1.3', status: 'placeholder', summary: expect.stringContaining('Noted “raise the sun”') });
   });
 });
 

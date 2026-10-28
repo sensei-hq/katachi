@@ -74,6 +74,8 @@ export class AppState {
     this.layers.restore({ ...LayerFlowState.defaults(), ...p.choices });
     this.project = p;
   }
+  /** The best image for the stage views: the in-session capture, else the saved thumbnail. */
+  get stageImage() { return this.capture.media[0]?.url || this.project?.image || ''; }
   /** The project's name, or the example subject until something is captured. */
   get title() { return this.project?.name || this.layers.data.project; }
   newProject() {
@@ -109,7 +111,11 @@ export class AppState {
     this.project = { ...p, name: p.name || projectName({ fileName, at: when, prefix }), kind, image: images[0] ?? p.image,
       reached: Math.max(p.reached, 0), path: flowPath(mode === 'multi' ? 'views' : kind === 'ref' ? 'reference' : 'import') };
     this.save();
-    void this.muse.describeCapture(p.id, kind, images[0]).then((r) => { if (r.brief) this.layers.applyBrief(r.brief); else this.layers.applySubject(r.subject); this.save(); });
+    void this.muse.describeCapture(p.id, kind, images[0]).then((r) => {
+      if (r.brief) this.layers.applyBrief(r.brief); else this.layers.applySubject(r.subject);
+      this.save();
+      if (r.brief) this.flow.conversation.say(`I see ${r.brief.subject}. ${r.brief.regions.length} regions to work with: ${r.brief.regions.slice(0, 5).map((x) => x.label).join(', ')}. Next I’ll trace the outline from the photo.`);
+    });
     if (this.capture.media.some((m) => m.source === 'sketch')) void this.muse.cleanSketch(p.id, images[0]);
   }
   /** Home · release the mic: what was heard starts a craft (returns where to go), or nothing was heard. */
@@ -148,12 +154,12 @@ export class AppState {
       // each result is written into the flow state; the pages only ever read that state
       const f = this.layers;
       const image = this.project?.image || undefined;
-      if (job === 'shape.cutout') void this.muse.cutout(craft, { imageDataUrl: image, subjectPrompt: f.imageBrief?.subjectPrompt }).then((r) => f.applyCutout(r));
-      else if (job === 'shape.segment') void this.muse.segment(craft, { imageDataUrl: image, briefRegions: f.imageBrief?.regions }).then((r) => f.applyRegions(r));
-      else if (job === 'layers.plan') void this.muse.planLayers(craft, f.makeAs, { imageDataUrl: image, description: f.brief || f.subject }).then((r) => f.applyLayers(r));
+      if (job === 'shape.cutout') void this.muse.cutout(craft, { imageDataUrl: image, subjectPrompt: f.imageBrief?.subjectPrompt }).then((r) => { f.applyCutout(r); if (r.paths?.length) this.flow.conversation.say(`Outline traced on your photo: ${r.paths.length} closed path${r.paths.length > 1 ? 's' : ''} around the ${f.outline.shape}. Next, I’ll split it into regions.`); });
+      else if (job === 'shape.segment') void this.muse.segment(craft, { imageDataUrl: image, briefRegions: f.imageBrief?.regions }).then((r) => { f.applyRegions(r); this.flow.conversation.say(`Split into ${f.regions.length} regions: ${f.regions.slice(0, 6).map((x) => `${x.name} ${x.pct}%`).join(', ')}. ${f.kept.length} kept. Toggle any, or tell me which to drop.`); });
+      else if (job === 'layers.plan') void this.muse.planLayers(craft, f.makeAs, { imageDataUrl: image, description: f.brief || f.subject }).then((r) => { f.applyLayers(r); this.flow.conversation.say(`Planned ${f.layers.length} layers, back to front: ${f.layers.map((l) => l.name).join(' · ')}. Pick one to inspect, or tell me to merge or split it.`); });
       else if (job === 'layers.imagineGaps') void this.muse.imagineGaps(craft, image);
       else if (job === 'layers.unfold') void this.muse.unfold(craft).then((r) => f.applyParts(r));
-      else if (job === 'sheets.vectorise') void this.muse.vectorise(craft, f.layers.length, { regions: f.regions, sizeMm: f.outline.sizeMm }).then((r) => f.applySheets(r.sheetsData));
+      else if (job === 'sheets.vectorise') void this.muse.vectorise(craft, f.layers.length, { regions: f.regions, sizeMm: f.outline.sizeMm }).then((r) => { f.applySheets(r.sheetsData); if (r.pathCount) this.flow.conversation.say(`Traced ${r.pathCount} closed paths across ${r.sheetsData.length} sheets (${r.sheetsData.reduce((a, s) => a + s.cutLengthMm, 0).toFixed(0)} mm of cut). Pick a device and send the first sheet.`); });
       else if (job === 'assemble.instructions') void this.muse.writeInstructions(craft, this.assembly).then((r) => { this.instructions = r; });
     }
   }
@@ -241,11 +247,18 @@ export class AppState {
   noteFor(id: StepId): string {
     const f = this.layers;
     switch (id) {
-      case 'import': return `Looks like ${f.subject}. Tell me what to make of it, or go on and I’ll find the outline.`;
-      case 'cutout': return `Background removed and the outline found: a ${f.outline.shape}, about ${f.outline.shape === 'circle' ? 'Ø ' : ''}${f.outline.sizeMm} mm. Check the edge, then I’ll find the objects.`;
-      case 'segment': return `I found ${f.regions.length} regions. Which should become parts? Toggle any region, or click the image to add one.`;
-      case 'layers': return `${f.layers.length} layers, back to front. Pick a layer to see what shows and what hides behind the ones in front.`;
-      default: return guide[id].text;
+      case 'import': return f.imageBrief
+        ? `Looks like ${f.subject} \u2014 ${f.imageBrief.class}, ${f.imageBrief.likelyMaterial}. I see ${f.imageBrief.regions.length} regions to cut: ${f.imageBrief.regions.slice(0, 5).map((r) => r.label).join(', ')}. Tell me what to make of it, or go on and I\u2019ll find the outline.`
+        : `Looks like ${f.subject}. Tell me what to make of it, or go on and I\u2019ll find the outline.`;
+      case 'cutout': return `Background removed and the outline found: a ${f.outline.shape}, about ${f.outline.shape === 'circle' ? '\u00d8 ' : ''}${f.outline.sizeMm} mm${f.subjectPaths.length ? `, traced as ${f.subjectPaths.length} closed path${f.subjectPaths.length > 1 ? 's' : ''} on your photo` : ''}. Check the edge, then I\u2019ll find the objects.`;
+      case 'segment': return `I found ${f.regions.length} regions in your photo: ${f.regions.slice(0, 6).map((r) => `${r.name} ${r.pct}%`).join(', ')}. ${f.kept.length} kept (${f.keptPct}%). Toggle any region, or tell me \u201cdrop the ${f.kept[0]?.name ?? 'frame'}\u201d.`;
+      case 'layers': return `${f.layers.length} layers, back to front: ${f.layers.map((l) => l.name).join(' \u00b7 ')}. Pick a layer to see what shows and what hides behind the ones in front \u2014 or tell me \u201cmerge ${f.selected.name} down\u201d.`;
+      case 'gaps': return `${f.selected.name} is ${f.selected.hiddenPct}% hidden behind the layers in front. Across the stack you\u2019d use ${f.materialPct}% of ${f.layers.length} full sheets. Tell me \u201cmake ${f.selected.name} solid\u201d or \u201cleave ${f.selected.name} open\u201d, or pick a rule.`;
+      case 'output': return f.sheetPaths.length
+        ? `${f.sheetPaths.length} sheets traced from your masks: ${f.sheetPaths.reduce((a, s) => a + s.pathCount, 0)} closed paths, ${f.sheetPaths.reduce((a, s) => a + s.cutLengthMm, 0).toFixed(0)} mm of cut for the ${f.currentDevice.label}. Feed a sheet and send it, or download the paths.`
+        : `${f.layers.length} sheets for the ${f.currentDevice.label} (${f.currentDevice.format}). The traced paths appear here once the masks are in \u2014 go back to Layers if the count looks wrong.`;
+      case 'assemble': return `Here\u2019s how ${this.title} goes together: ${this.assembly.slice(0, 3).map((s, i) => `${i + 1}. ${s.title}`).join('  ')} Tick each step off, then Save craft so you can find it again.`;
+      default: return guide.gaps.text;
     }
   }
   /** Assemble · Save craft: finished, with its layers, instructions and chat notes. */
@@ -298,8 +311,15 @@ export class AppState {
       ...(next ? [{ label: `Next · ${next.label}`, href: next.path }] : [])
     ]);
   }
-  /** Suggestion chips for the composer: the current step's, else the workshop's. */
-  get suggestions() { return this.currentStep ? guide[this.currentStep].chips : WORKSHOP_CHIPS; }
+  /** Suggestion chips for the composer: from the actual regions/layers when we have them, else the step's defaults. */
+  get suggestions() {
+    const f = this.layers;
+    if (this.currentStep === 'segment' && f.regions.length) return [...f.kept.slice(0, 2).map((r) => `Drop the ${r.name}`), ...f.regions.filter((r) => !r.on).slice(0, 1).map((r) => `Keep the ${r.name}`), 'Separate into layers'];
+    if (this.currentStep === 'layers' && f.layers.length) return [`Merge ${f.selected.name} down`, `Duplicate ${f.selected.name}`, `Split ${f.selected.name}`];
+    if (this.currentStep === 'gaps') return [`Make ${f.selected.name} solid`, `Leave ${f.selected.name} open`, 'Imagine the hidden parts'];
+    if (this.currentStep === 'assemble') return this.assembly.slice(0, 2).map((s) => s.title);
+    return this.currentStep ? guide[this.currentStep].chips : WORKSHOP_CHIPS;
+  }
 
   /** Phones show the assistant as a sheet over the work area. */
   sheetOpen = $state(false);
@@ -326,11 +346,27 @@ export class AppState {
     await this.flow.analyse();
     return null;
   }
-  /** A chat refinement on a craft step: noted against the step and, on Layers, the selected layer. */
+  /** Plain chat commands the app can apply itself, right now (drop/keep a region, merge/duplicate/split, solid/open). */
+  private applyChatCommand(text: string): string | null {
+    const f = this.layers, t = text.toLowerCase();
+    const region = f.regions.find((r) => t.includes(r.name.toLowerCase()));
+    if (region && /\b(drop|remove|exclude|hide|without)\b/.test(t)) { f.keep[region.id] = false; return `dropped ${region.name} — ${f.kept.length} of ${f.regions.length} regions kept (${f.keptPct}%)`; }
+    if (region && /\b(keep|include|add|restore|back)\b/.test(t)) { f.keep[region.id] = true; return `kept ${region.name} — ${f.kept.length} of ${f.regions.length} regions kept (${f.keptPct}%)`; }
+    const sel = f.selected;
+    if (sel && /\bmerge\b/.test(t) && f.canMergeDown(sel.n)) { const name = sel.name; f.mergeDown(sel.n); return `merged ${name} down — now ${f.layers.length} layers`; }
+    if (sel && /\bduplicate\b/.test(t)) { f.duplicate(sel.n); return `duplicated ${sel.name} — now ${f.layers.length} layers`; }
+    if (sel && /\bsplit\b/.test(t) && f.canSplit(sel.n)) { const name = sel.name; f.split(sel.n); return `split ${name} — now ${f.layers.length} layers`; }
+    if (sel && /\b(solid|fill)\b/.test(t)) { f.overrides = { ...f.overrides, [sel.n]: true }; return `${sel.name} will be cut solid`; }
+    if (sel && /\b(open|leave|hollow)\b/.test(t)) { f.overrides = { ...f.overrides, [sel.n]: false }; return `${sel.name} will be left open with a glue lip`; }
+    return null;
+  }
+  /** A chat refinement on a craft step: applied at once when it is a plain command, else noted against the step/layer. */
   refine(text: string, path: string) {
     const step = journeyStepFor(path)?.label ?? 'Craft';
     const layer = /^\/make\/(layers|gaps)$/.test(path) ? `Layer ${this.layers.selected.n} · ${this.layers.selected.name}` : undefined;
     this.flow.conversation.ingestTranscript(text);
+    const applied = this.applyChatCommand(text);
+    if (applied) { this.save(); this.flow.conversation.say(`Done — ${applied}. Saved with the craft.`); return; }
     const note = { step, ...(layer ? { layer } : {}), text };
     this.layers.addNote(note);
     if (this.project) void this.muse.applyRefinement(this.project.id, note);

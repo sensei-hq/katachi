@@ -4,6 +4,7 @@ import { resolve } from '$app/paths';
 import { Button, Card, List, ProgressBar, Toggle } from '@rokkit/ui';
 import StepScreen from '$lib/components/StepScreen.svelte';
 import LayeredScene from '$lib/components/illustrations/LayeredScene.svelte';
+import PhotoStage from '$lib/components/PhotoStage.svelte';
 import LayerSwatch from '$lib/components/illustrations/LayerSwatch.svelte';
 import { InputCheckbox } from '@rokkit/forms';
 import { copy, gapChoices, type GapChoice } from '$lib/content/layers';
@@ -78,7 +79,9 @@ const selLabel = $derived(`Layer ${f.selected.n}, ${f.selected.name}: ${[f.showS
 <svelte:head><title>Katachi · Layers</title></svelte:head>
 <StepScreen {aside} {actions} note={app.noteFor('layers')}>
   <figure class="md:hidden relative m-0 h-[214px] rounded-lg overflow-hidden border border-paper-edge bg-paper-soft p-2">
-    <LayeredScene layers={f.layers} mode="layer" selected={f.selected.n} solid={f.showSolid} hidden={f.showHidden} label={selLabel} />
+    {#if app.stageImage && f.overlays.length}
+      <PhotoStage image={app.stageImage} label={selLabel} overlays={f.overlays.map((o, i) => ({ d: o.d, tone: o.tone, opacity: i === f.selected.n - 1 ? 0.75 : 0.15 }))} />
+    {:else}<LayeredScene layers={f.layers} mode="layer" selected={f.selected.n} solid={f.showSolid} hidden={f.showHidden} label={selLabel} />{/if}
     <span class="absolute left-2.5 top-2.5 meta rounded-sm bg-paper px-2 py-0.5 border border-paper-edge">L{f.selected.n} · {f.selected.name}</span>
     <span class="absolute right-2.5 bottom-2.5 flex flex-col items-end gap-1">
       <span class="meta rounded-sm bg-paper px-2 py-0.5 border border-paper-edge flex items-center gap-1.5"><LayerSwatch colour={f.selected.colour} size="sm" />visible {f.selected.visiblePct}%</span>
@@ -86,7 +89,7 @@ const selLabel = $derived(`Layer ${f.selected.n}, ${f.selected.name}: ${[f.showS
     </span>
   </figure>
   <div class="lt-md:hidden h-full flex flex-col items-center gap-3">
-    <figure class="m-0 flex-1 min-h-0 w-full max-w-[640px] rounded-lg border border-paper-edge bg-paper-soft p-4"><LayeredScene layers={f.layers} mode="layer" selected={f.selected.n} solid={f.showSolid} hidden={f.showHidden} label={selLabel} /></figure>
+    <figure class="m-0 flex-1 min-h-0 w-full max-w-[640px] rounded-lg overflow-hidden border border-paper-edge bg-paper-soft">{#if app.stageImage && f.overlays.length}<PhotoStage image={app.stageImage} label={selLabel} overlays={f.overlays.map((o, i) => ({ d: o.d, tone: o.tone, opacity: i === f.selected.n - 1 ? 0.75 : 0.15 }))} />{:else}<span class="block h-full p-4"><LayeredScene layers={f.layers} mode="layer" selected={f.selected.n} solid={f.showSolid} hidden={f.showHidden} label={selLabel} /></span>{/if}</figure>
     {@render viewToggles()}
   </div>
   <div class="md:hidden mt-3">{@render viewToggles()}</div>

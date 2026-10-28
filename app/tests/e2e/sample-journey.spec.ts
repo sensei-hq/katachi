@@ -37,6 +37,10 @@ test.describe('sample journey · live Muse wiring (1440px)', () => {
     if (live) expect((await (await cutoutRes).json()).source).toBe('live');
     await expect(activity(page)).toContainText('SAM 3.1', { timeout: 120_000 });
     if (live) await expect(activity(page)).not.toContainText('placeholder');
+    // the stage shows YOUR photo with the traced SAM outline on it, not the fixture illustration
+    await expect(main(page).locator('[data-photo-stage]:visible').first()).toBeVisible({ timeout: 120_000 });
+    await expect.poll(async () => page.locator('[data-photo-stage] path').count(), { timeout: 120_000 }).toBeGreaterThan(0);
+    await expect(page.getByRole('complementary', { name: 'Katachi chat' })).toContainText('Outline traced on your photo', { timeout: 120_000 });
 
     const segRes = page.waitForResponse((r) => r.url().includes('/api/segment'), { timeout: 180_000 });
     await main(page).getByRole('button', { name: 'Find the objects' }).click();
@@ -50,7 +54,10 @@ test.describe('sample journey · live Muse wiring (1440px)', () => {
     await main(page).getByRole('button', { name: /Separate into layers/ }).click();
     await expect(page).toHaveURL(/\/make\/layers$/);
     if (live) expect((await (await planRes).json()).source).toBe('live');
+    await expect(main(page).locator('[data-photo-stage]:visible').first()).toBeVisible();
+    await expect.poll(async () => page.locator('[data-photo-stage] path').count()).toBeGreaterThan(2);
     await expect(main(page)).toContainText('Stacked layers', { timeout: 120_000 });
+    await expect(page.getByRole('complementary', { name: 'Katachi chat' })).toContainText('Planned', { timeout: 120_000 });
     const chat = page.getByRole('complementary', { name: 'Katachi chat' });
     await chat.getByRole('textbox').fill('split the hills in two');
     await chat.getByRole('button', { name: 'Send' }).click();
@@ -64,6 +71,7 @@ test.describe('sample journey · live Muse wiring (1440px)', () => {
     await expect(page).toHaveURL(/\/make\/output$/);
     // Sheets: the SAM masks were bit-decoded and traced to closed mm paths (domain/vector)
     if (live) await expect(activity(page)).toContainText('closed paths', { timeout: 120_000 });
+    if (live) { await expect(page.locator('[data-sheet-svg]:visible').first()).toBeVisible({ timeout: 120_000 }); await expect.poll(async () => page.locator('[data-sheet-svg] path').count()).toBeGreaterThan(0); }
     await main(page).getByRole('link', { name: 'Assemble' }).click();
     await expect(page).toHaveURL(/\/make\/assemble$/);
     await main(page).getByRole('button', { name: 'Next' }).click();
