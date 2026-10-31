@@ -46,14 +46,41 @@ export function decodeSamText(text: string): DecodedSamMask[] {
   return out;
 }
 export interface SamRegionInput { id: string; label: string; samPrompt: string; likelyBought?: boolean; note?: string }
-export interface SamRegion extends SamRegionInput { box: SamBox | null; mask: { h: number; w: number } | null; areaPct: number; keep: boolean; ones?: number; paths?: [number, number][][] }
+export interface SamRegion extends SamRegionInput { box: SamBox | null; mask: { h: number; w: number } | null; areaPct: number; keep: boolean; ones?: number; paths?: [number, number][][]; itemId?: string; itemName?: string }
+export interface SamItemInput { id: string; label: string; samPrompt: string; arrangement: 'stacked' | 'single-item'; regions: SamRegionInput[] }
 /** One SAM call per region phrase, in parallel (design/01 S4). Missing masks keep the region with a box estimate. */
-export async function segmentRegions(env: Record<string, string | undefined>, imageDataUrl: string, regions: SamRegionInput[], client?: MetaClient, opts: { multiple?: boolean; subjectPrompt?: string } = {}): Promise<{ regions: SamRegion[]; source: 'live' | 'fixture'; costUsd: number }> {
-  if (env.META_API_KEY && imageDataUrl && regions.length) {
+export async function segmentRegions(env: Record<string, string | undefined>, imageDataUrl: string, regions: SamRegionInput[], client?: MetaClient, opts: { multiple?: boolean; subjectPrompt?: string; items?: SamItemInput[] } = {}): Promise<{ regions: SamRegion[]; source: 'live' | 'fixture'; costUsd: number }> {
+  if (env.META_API_KEY && imageDataUrl && (regions.length || opts.items?.length)) {
     try {
       const c = client ?? new MetaClient(env.META_API_KEY);
       // Multiple separate items: one generic SAM call returns every instance mask at once.
       // Spark lists items left→right, so match instances sorted by box x to items in order.
+      if (opts.items?.length && opts.subjectPrompt) {
+        const text = await c.samText(imageDataUrl, opts.subjectPrompt);
+        const instances = decodeSamText(text).sort((a, b) => a.box.x1 - b.box.x1);
+        const centreIn = (d: DecodedSamMask, box: SamBox | null) => { if (!box) return true; const cx = (d.box.x1 + d.box.x2) / 2, cy = (d.box.y1 + d.box.y2) / 2; return cx >= box.x1 - 20 && cx <= box.x2 + 20 && cy >= box.y1 - 20 && cy <= box.y2 + 20; };
+        const found: SamRegion[] = [];
+        for (const [i, item] of opts.items.entries()) {
+          let inst = instances[i];
+          if (!inst) {
+            // Generic call came back short: a per-item phrase returns the same instance set, so take this item's ordinal mask.
+            const perItem = decodeSamText(await c.samText(imageDataUrl, item.samPrompt)).sort((a, b) => a.box.x1 - b.box.x1);
+            inst = perItem[i] ?? perItem.find((d) => !instances.some((g) => g.box.x1 === d.box.x1));
+          }
+          const base = { itemId: item.id, itemName: item.label };
+          if (item.arrangement === 'single-item' || !item.regions.length) {
+            found.push({ id: item.id, label: item.label, samPrompt: item.samPrompt, ...base, box: inst?.box ?? null, mask: inst ? { h: inst.maskH, w: inst.maskW } : null, areaPct: inst?.areaPct ?? 0, ones: inst?.ones, paths: inst?.paths, keep: true });
+            continue;
+          }
+          for (const r of item.regions) {
+            const rtext = await c.samText(imageDataUrl, r.samPrompt);
+            const scoped = decodeSamText(rtext).find((d) => centreIn(d, inst?.box ?? null)) ?? decodeSamText(rtext)[0];
+            const d = scoped ?? inst;
+            found.push({ ...r, ...base, box: d?.box ?? null, mask: d ? { h: d.maskH, w: d.maskW } : null, areaPct: d?.areaPct ?? 0, ones: d?.ones, paths: d?.paths ?? inst?.paths, keep: !r.likelyBought });
+          }
+        }
+        if (instances.length >= 2 || found.some((r) => r.box)) return { regions: found, source: 'live', costUsd: 0.0025 * (1 + found.length) };
+      }
       if (opts.multiple && opts.subjectPrompt) {
         const text = await c.samText(imageDataUrl, opts.subjectPrompt);
         const instances = decodeSamText(text).sort((a, b) => a.box.x1 - b.box.x1);
@@ -92,11 +119,15 @@ export async function segmentPiece(env: Record<string, string | undefined>, imag
   if (env.META_API_KEY && imageDataUrl) {
     try {
       const c = client ?? new MetaClient(env.META_API_KEY);
-      const text = await c.samText(imageDataUrl, prompt);
-      const decoded = decodeSamText(text);
-      if (decoded.length) return { boxes: decoded.map((d) => d.box), masks: decoded.map((d) => ({ w: d.maskW, h: d.maskH, ones: d.ones, paths: d.paths })), source: 'live' };
-      const boxes = parseSamBoxes(text);
-      if (boxes.length) return { boxes, source: 'live' };
+      const words = prompt.split(/\s+/).filter(Boolean);
+      const phrases = [...new Set([prompt, words.slice(-3).join(' '), words[words.length - 1] ?? '', 'the main subject', 'the object in the center'].filter(Boolean))].slice(0, 4);
+      for (const phrase of phrases) {
+        const text = await c.samText(imageDataUrl, phrase);
+        const decoded = decodeSamText(text);
+        if (decoded.length) return { boxes: decoded.map((d) => d.box), masks: decoded.map((d) => ({ w: d.maskW, h: d.maskH, ones: d.ones, paths: d.paths })), source: 'live' };
+        const boxes = parseSamBoxes(text);
+        if (boxes.length) return { boxes, source: 'live' };
+      }
     } catch (e) { console.error('segment live failed:', e instanceof Error ? e.message : String(e)); }
   }
   return { boxes: [{ x1: 300, y1: 200, x2: 700, y2: 800 }], source: 'fixture' };

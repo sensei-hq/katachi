@@ -61,3 +61,25 @@ describe('decodeSamMasks (full bit decode via @meta-sam/parser)', () => {
     expect(decodeSamText('no masks here')).toEqual([]);
   });
 });
+
+describe('segmentRegions · multiple items with per-item layers (design/08-A)', () => {
+  it('matches SAM instances left-to-right and segments a stacked item’s insides scoped to its box', async () => {
+    const { segmentRegions } = await import('./sam');
+    const sunPayload = "203,326,!!!!#kAq1j9u_Sx(hp_i:l?dD&f5.i@g`U2Asv7r897@+5GX`Iznq$:CRh7Xt_Dx*ve!C1[P/PsuIyHQc+UT03ZeJxmRmjV$Tc6ZNqm3F_w@UhJ%lOxL0M*4'A91G^reWlWm0rhKZK_?a^rS9X&B2.a$PS^!6J[0Q/-F9g!UCBBBTlxd[Qg:+CSu'ik`VE3a2!3e!!";
+    // generic prompt -> two instances; internal phrase -> one scoped mask; anything else -> nothing
+    const client = { samText: async (_img: string, prompt: string) => {
+      if (prompt === 'two bookmarks') return `<|box;x1=100;y1=100;x2=300;y2=700;w=1000;h=1000|><|mask;x=0;y=0;data=${sunPayload}|><|box;x1=500;y1=100;x2=700;y2=700;w=1000;h=1000|><|mask;x=0;y=0;data=${sunPayload}|>`;
+      if (prompt === 'cat silhouette') return `<|box;x1=520;y1=200;x2=620;y2=400;w=1000;h=1000|><|mask;x=0;y=0;data=${sunPayload}|>`;
+      return 'nothing';
+    } };
+    const r = await segmentRegions({ META_API_KEY: 'k' }, 'data:image/jpeg;base64,AA', [], client as never, {
+      subjectPrompt: 'two bookmarks',
+      items: [
+        { id: 'b1', label: 'Plain bookmark', samPrompt: 'plain bookmark', arrangement: 'single-item', regions: [] },
+        { id: 'b2', label: 'Cat bookmark', samPrompt: 'cat bookmark', arrangement: 'stacked', regions: [{ id: 'cat', label: 'Cat', samPrompt: 'cat silhouette' }] }
+      ]
+    });
+    expect(r.regions.map((x) => [x.label, x.itemName])).toEqual([['Plain bookmark', 'Plain bookmark'], ['Cat', 'Cat bookmark']]);
+    expect(r.regions[0].box?.x1).toBe(100);
+  });
+});

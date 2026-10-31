@@ -10,7 +10,7 @@
 %sveltekit.head%
 </head>
 <body data-sveltekit-preload-data="hover" data-style="zen-sumi" data-density="comfortable">
-<script>;(function(){try{var t=JSON.parse(localStorage.getItem('snap-to-make-theme')||'{}');var qs=new URLSearchParams(location.search);var qStyle=qs.get('theme');var qMode=qs.get('mode');var qDensity=qs.get('density');var r=document.documentElement;var b=document.body;var style=qStyle||t.style||void 0;if(style){r.dataset.style=style;if(b)b.dataset.style=style}var m=qMode||t.mode||'system';if(m==='system'||m==='auto')m=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';r.dataset.mode=m;if(b)b.dataset.mode=m;var d=qDensity||t.density||'comfortable';r.dataset.density=d;if(b)b.dataset.density=d;var rad=t.radius||'soft';r.dataset.radius=rad;if(b)b.dataset.radius=rad;if(t.skin){r.dataset.skin=t.skin;if(b)b.dataset.skin=t.skin}}catch(e){}})()</script>
+<script>;(function(){try{var t=JSON.parse((localStorage.getItem('katachi-theme')||localStorage.getItem('snap-to-make-theme'))||'{}');var qs=new URLSearchParams(location.search);var qStyle=qs.get('theme');var qMode=qs.get('mode');var qDensity=qs.get('density');var r=document.documentElement;var b=document.body;var style=qStyle||t.style||void 0;if(style){r.dataset.style=style;if(b)b.dataset.style=style}var m=qMode||t.mode||'system';if(m==='system'||m==='auto')m=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';r.dataset.mode=m;if(b)b.dataset.mode=m;var d=qDensity||t.density||'comfortable';r.dataset.density=d;if(b)b.dataset.density=d;var rad=t.radius||'soft';r.dataset.radius=rad;if(b)b.dataset.radius=rad;if(t.skin){r.dataset.skin=t.skin;if(b)b.dataset.skin=t.skin}}catch(e){}})()</script>
 <div style="display: contents">%sveltekit.body%</div>
 </body>
 </html>

@@ -1,0 +1,377 @@
+diff --git a/app/src/lib/domain/cutplan/plan.ts b/app/src/lib/domain/cutplan/plan.ts
+index 43a6467..04b39e5 100644
+--- a/app/src/lib/domain/cutplan/plan.ts
++++ b/app/src/lib/domain/cutplan/plan.ts
+@@ -72,7 +72,7 @@ function planParts(craft: CraftDoc, profile: CutProfile, sheets: Sheet[], nextN:
+       const pm = partMm(item, part);
+       for (let copy = 1; copy <= qty; copy++) {
+         const at: [number, number] = [m, m];
+-        const name = single ? part.name : `${item.name} · ${part.name}`;
++        const name = single || part.name === item.name ? part.name : `${item.name} · ${part.name}`;
+         sheets.push({
+           id: qty > 1 ? `${part.id}:${copy}` : part.id,
+           n: nextN(),
+diff --git a/app/src/lib/domain/cutplan/queue.ts b/app/src/lib/domain/cutplan/queue.ts
+index a69ac24..464714f 100644
+--- a/app/src/lib/domain/cutplan/queue.ts
++++ b/app/src/lib/domain/cutplan/queue.ts
+@@ -1,6 +1,6 @@
+ // Cut-queue adapter (task T2): a planned sheet becomes what the queue runs today, unchanged.
+ import type { NewQueueItem } from '../../state/queue.svelte';
+-import { fromLoops, toSvgD } from '../geo';
++import { sheetD } from '../toolpath';
+ import type { CraftDoc } from '../craft/types';
+ import type { CutProfile, Sheet } from './types';
+ 
+@@ -16,7 +16,8 @@ export function toQueueInput(sheet: Sheet, craft: CraftDoc, profile: CutProfile)
+     op: sheet.passes.every((p) => p.kind !== 'cut') ? 'engrave' : 'cut',
+     colour: sheet.colour,
+     machine: profile.machine === 'laser' ? 'laser' : 'paper',
+-    cut: toSvgD(fromLoops(shapes)),
++    // the thumbnail draws it in 0-1000 of the sheet (CutSheet), like every sheet preview
++    cut: sheetD(shapes, sheet.sizeMm),
+     shapes,
+     sheetMm: sheet.sizeMm,
+   };
+diff --git a/app/src/lib/state/app.svelte.ts b/app/src/lib/state/app.svelte.ts
+index 843d664..9324e73 100644
+--- a/app/src/lib/state/app.svelte.ts
++++ b/app/src/lib/state/app.svelte.ts
+@@ -22,7 +22,9 @@ import { craftToFlow } from '../domain/craft/bridge';
+ import { rowsOf, type CraftDoc } from '../domain/craft';
+ import { fastPath, refsFromPlan, toolList, type Said } from '../domain/actions/chat';
+ import type { ActionCtx, ActionId } from '../domain/actions/types';
+-import { actionOf } from '../domain/actions/registry';
++import { planCut } from '../domain/cutplan/plan';
++import { profileFor } from '../domain/cutplan/profiles';
++import { toQueueInput } from '../domain/cutplan/queue';
+ import { loadPixels } from './photo';
+ 
+ /** what the layer toolbar asks for; every one is said in the chat first, then applied */
+@@ -143,7 +145,9 @@ export class AppState {
+   syncCraft(label?: string, { fresh = false } = {}) {
+     const p = this.project;
+     if (!p) return;
+-    const snap = this.layers.snapshot() as unknown as V1Snapshot;
++    // only what the craft is read from (a whole snapshot copies every traced path, sheet and cutout too)
++    const f = this.layers;
++    const snap = { subject: f.subject, build: f.build, aspect: f.aspect, widthMm: f.widthMm, sizeBasis: f.sizeBasis, stack: $state.snapshot(f.stack), regionList: $state.snapshot(f.regionList), plan: $state.snapshot(f.plan) } as unknown as V1Snapshot;
+     const next: CraftDoc = migrateV1({ id: p.id, name: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt, kind: p.kind }, snap, () => `s${(this.narrated++).toString(36)}`);
+     const cur = this.craft.doc.id === p.id && !fresh ? this.craft.toJSON() : null;
+     // what only the craft knows (a turn, a flip, how many, the model's call) stays when the screens' state is re-read
+@@ -186,8 +190,10 @@ export class AppState {
+   /** can this row be split (the engine's split: a merged layer, or one with separate pieces) */
+   canSplit(n: number) {
+     if (!this.engineOn) return this.layers.canSplit(n);
+-    const r = rowsOf(this.craft.doc)[n - 1], def = actionOf('split');
+-    return Boolean(r && def && def.can(this.craft.doc, { targets: [r.op?.id ?? r.part.id], opts: {} }) === true);
++    // cheap (it is read on every render): a merged part, or a cut with more than one loop; the action itself checks
++    // properly when pressed and says "one piece" if it is
++    const r = rowsOf(this.craft.doc)[n - 1];
++    return Boolean(r && !r.op && (r.part.from?.length || (r.part.ops.find((o) => o.kind === 'cut')?.geometry.paths.length ?? 0) > 1));
+   }
+   /** Spark reads the request into action calls (design/14 §7); false = nothing it could plan */
+   private async planAndRun(text: string): Promise<boolean> {
+@@ -610,7 +616,10 @@ export class AppState {
+     if (!p || !f.layers.length) return 0;
+     const ns = (only ?? f.passOrder).filter((n) => f.layers[n - 1]);
+     const machine = f.machine;
+-    const added = this.queue.add(ns.map((n) => {
++    // the hand-off (design/15 §5): the craft becomes sheets for this device — a part's engraving and its cut on
++    // one sheet, engraving first, holes before outlines
++    const planned = this.engineOn ? this.plannedSheets(only) : null;
++    const added = planned ? this.queue.add(planned) : this.queue.add(ns.map((n) => {
+       const l = f.layers[n - 1];
+       return { craftId: p.id, craftName: p.name || this.title, layer: n, name: l.name, material: l.material, op: f.opFor(n), colour: l.colour, machine,
+         ...((pc) => ({ cut: pc.d, shapes: pc.shapes, sheetMm: pc.sheetMm }))(f.pieceFor(n)) };
+@@ -621,6 +630,15 @@ export class AppState {
+     c.log = c.log.map((e, i) => (i === c.log.length - 1 ? { ...e, actions: [{ label: 'Open the cut queue', href: '/queue' }] } : e));
+     return added;
+   }
++  /** the cut plan's sheets as queue items (all, or the sheets holding the given rows) */
++  private plannedSheets(only?: number[]) {
++    const doc = this.craft.toJSON(), rows = rowsOf(doc);
++    const profile = profileFor(this.layers.device, rows[0]?.part.material ?? '');
++    const plan = planCut(doc, profile);
++    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a lookup built per call, not reactive state
++    const parts = only ? new Set(only.map((n) => rows[n - 1]?.part.id).filter(Boolean)) : null;
++    return plan.sheets.filter((s) => !parts || s.placements.some((pl) => parts.has(pl.partId))).map((s) => ({ ...toQueueInput(s, doc, profile), craftName: doc.name || this.title }));
++  }
+   /** Sheets · a virtual run of every pass, start to end: blank sheet, engraving, cut, the extra pieces vanish. */
+   runId = 0;
+   async playRun() {
+diff --git a/app/src/lib/state/craft/actions.svelte.ts b/app/src/lib/state/craft/actions.svelte.ts
+index ac11852..32f33d0 100644
+--- a/app/src/lib/state/craft/actions.svelte.ts
++++ b/app/src/lib/state/craft/actions.svelte.ts
+@@ -38,6 +38,7 @@ export class ActionState {
+   async performAll(calls: Call[], via: EntryDoc['via'] = 'chat', summary?: string): Promise<Outcome> {
+     const start = this.craft.toJSON();
+     let doc: CraftDoc = start;
++    let lastDetail: string | undefined;
+     const children: EntryDoc[] = [], key = `act:${this.done.length}:${calls.map((c) => c.action).join('+')}`;
+     for (const c of calls) {
+       const def = actionOf(c.action);
+@@ -55,14 +56,15 @@ export class ActionState {
+       // links to anything removed go in the same step, so undo puts them back too
+       const next = prune(applyResult(doc, r)), d = diff(doc, next);
+       children.push({ id: this.ctx().newId(), action: c.action, opts: o.opts, targets, via, summary: r.summary, at: Date.now(), before: d.before, after: d.after });
+-      doc = next;
++      doc = next; lastDetail = r.detail;
+       if (r.select) this.selected = r.select;
+     }
+     const whole = diff(start, doc);
+-    if (isEmpty(whole.after)) { this.say.done?.(key, children.at(-1)?.summary ?? 'Nothing changed', 'nothing to change'); return { ok: true, entry: children.at(-1)! }; }
++    // nothing changed (already upright, nothing hidden): said with what the action found, not recorded
++    if (isEmpty(whole.after)) { this.say.done?.(key, children.at(-1)?.summary ?? 'Nothing changed', lastDetail ?? 'nothing to change'); return { ok: true, entry: children.at(-1)! }; }
+     const entry: EntryDoc = children.length === 1 ? children[0] : { id: this.ctx().newId(), action: children.map((c) => c.action).join('+'), opts: {}, targets: children.flatMap((c) => c.targets), via, summary: summary ?? children.map((c) => c.summary).join(' · '), at: Date.now(), before: whole.before, after: whole.after, children };
+     this.craft.commit({ ...doc, history: { done: [...start.history.done, entry].slice(-KEEP), undone: [] } });
+-    this.say.done?.(key, entry.summary, children.length > 1 ? `${children.length} steps · one undo` : undefined);
++    this.say.done?.(key, entry.summary, children.length > 1 ? `${children.length} steps · one undo` : lastDetail);
+     return { ok: true, entry };
+   }
+   /** an edit made outside the actions (a mask re-measured from the photo) lands in the same history */
+diff --git a/app/src/lib/state/craft/craft.svelte.ts b/app/src/lib/state/craft/craft.svelte.ts
+index a1982e6..da86171 100644
+--- a/app/src/lib/state/craft/craft.svelte.ts
++++ b/app/src/lib/state/craft/craft.svelte.ts
+@@ -8,7 +8,9 @@ export function emptyCraft(id: Id, name = '', at = 0): CraftDoc {
+ }
+ 
+ export class CraftState {
+-  doc = $state<CraftDoc>(emptyCraft(''));
++  // raw, not deeply reactive: the doc is never changed in place (load and commit replace it whole), and a craft's
++  // geometry is tens of thousands of points that must not each become a proxy
++  doc = $state.raw<CraftDoc>(emptyCraft(''));
+   readonly index = $derived(indexCraft(this.doc));
+   /** wrappers are cached by id, so a screen keeps the same object across changes */
+   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a wrapper cache, never rendered
+@@ -20,7 +22,8 @@ export class CraftState {
+   /** open a craft (replaces everything; the history comes with it) */
+   load(doc: CraftDoc) { this.doc = { ...doc, rev: doc.rev + 1 }; this.items$.clear(); this.parts$.clear(); }
+   /** the document as saved */
+-  toJSON(): CraftDoc { return $state.snapshot(this.doc) as CraftDoc; }
++  /** the document as saved (immutable: callers copy before changing anything) */
++  toJSON(): CraftDoc { return this.doc; }
+   /** the one place a changed document lands (actions call this): links pruned, rev and time moved on */
+   commit(next: CraftDoc) { this.doc = { ...prune(next), rev: this.doc.rev + 1, updatedAt: this.clock() }; }
+ 
+diff --git a/app/src/lib/state/photo-flow.spec.ts b/app/src/lib/state/photo-flow.spec.ts
+index 326b911..4532221 100644
+--- a/app/src/lib/state/photo-flow.spec.ts
++++ b/app/src/lib/state/photo-flow.spec.ts
+@@ -337,6 +337,16 @@ describe('photo → outline → colour layers in AppState (code measures; no SAM
+     expect(app.flow.conversation.log.at(-1)?.step?.title).toBe('Each of the 2 items is on its own sheet, upright');
+     expect(f.view).toBe('cut');
+     expect(app.hiddenItems()).toEqual([]);
++    // the cut queue takes the cut plan's sheets: each bookmark is one sheet, its engraving and its cut together
++    // (engraving first), turned upright
++    app.queue.items = [];
++    expect(app.queueSheets()).toBe(2);
++    expect(app.queue.items.map((i) => i.name)).toEqual(['Fox bookmark', 'Owl bookmark']);
++    const q = app.queue.items[0];
++    expect(q.op).toBe('cut');
++    expect(q.sheetMm[1]).toBeGreaterThan(q.sheetMm[0] * 2);
++    expect(q.shapes.length).toBeGreaterThan(1);
++    expect(q.cut).toMatch(/^M/);
+     // engraving runs first, then the cuts
+     expect(f.passOrder.map((n) => f.opFor(n))).toEqual(['engrave', 'engrave', 'cut', 'cut']);
+     const pv = f.previewFor(f.passOrder[0]);
+diff --git a/app/tests/e2e/samples.spec.ts b/app/tests/e2e/samples.spec.ts
+index a5e05cf..6213670 100644
+--- a/app/tests/e2e/samples.spec.ts
++++ b/app/tests/e2e/samples.spec.ts
+@@ -68,7 +68,7 @@ test.describe('samples · end to end', () => {
+     expect(count).toBeGreaterThanOrEqual(5);
+     // edits by number, then undo puts it back
+     await say(page, 'delete layer 2');
+-    await expect(step(page, /Deleted Fox bookmark · cut/)).toBeVisible();
++    await expect(step(page, /Deleted Fox bookmark/)).toBeVisible();
+     await expect(rows(page)).toHaveCount(count - 1);
+     await say(page, 'undo');
+     await expect(step(page, /Undone: delete layer 2/)).toBeVisible();
+diff --git a/docs/tasks/README.md b/docs/tasks/README.md
+index cf14bb9..c98672c 100644
+--- a/docs/tasks/README.md
++++ b/docs/tasks/README.md
+@@ -32,15 +32,18 @@ Claude (the lead in this repo) owns the contracts and reviews every hand-back.
+ 
+ | Id | Task | Depends on | Size | Who |
+ |---|---|---|---|---|
+-| T1 | Geometry library (`domain/geo`) — **accepted, one fix: ragged smoothing** (see `T1-review.md`) | contracts only | ~1 day | delegate |
++| T1 | Geometry library (`domain/geo`) — **accepted**, smoothing fix in (`T1-review.md`) | contracts only | ~1 day | delegate |
+ | T2 | Cut plan: profiles, `planCut`, queue adapter (`domain/cutplan`) — **accepted** (`T2-review.md`) | contracts; T1's core (already implemented) | ~1 day | delegate |
+ | T3 | Geometry actions as `ActionDef`s (`domain/actions/defs`) — **accepted**, registered (`T3-review.md`) | T1 | ~1 day | delegate, after T1 |
++| T4 | Fit to board: the `nest` layout (`cutplan/nest.ts`) | T2 | ~1 day | delegate |
++| T5 | Sheet files: SVG + DXF export, SVG import → craft (`domain/files/`) | T2 | ~1 day | delegate |
++| T6 | Kerf compensation + the `given` layout (kits) | T1, T2 | ~0.5 day | delegate |
+ | L1 | Craft state classes, v1 → v2 migration, `LocalRepository` — **done** (`domain/craft`, `state/craft`) | contracts | ~1.5 days | Claude |
+ | L2 | Action registry, `perform` / undo / redo / again, history in the doc — **done**, with merge, delete, duplicate, reorder, rename, recolour, set-role, group, ungroup (`domain/actions`, `state/craft/actions.svelte.ts`); straighten / interpolate / resize / enhance next | L1 | ~1 day | Claude |
+ | L3 | Wire the screens: layers, queue, Assemble and Cut read the craft and the cut plan (animations unchanged) | L1, L2, T2 | ~1 day | Claude |
+ | L4 | Chat: fast path from `says`, Spark tool-calling over the registry (`/api/actions/plan`) | L2, T3 | ~1 day | Claude |
+ 
+-T1 and T2 can start now, in parallel with L1. T3 starts when T1 lands.
++T4, T5 and T6 are independent of each other (all three touch `cutplan/plan.ts`'s layout switch: T4 adds `nest`, T6 adds `given` + kerf; merge in that order).
+ 
+ ## For T3: how to plug in
+ 
+diff --git a/docs/tasks/T1-review.md b/docs/tasks/T1-review.md
+index b8365b7..23c8810 100644
+--- a/docs/tasks/T1-review.md
++++ b/docs/tasks/T1-review.md
+@@ -1,6 +1,6 @@
+ # T1 review (Claude, 2026-10-30)
+ 
+-**Status:** accepted, with one fix needed: smoothing ragged outlines (below). Everything else checks out on real shapes.
++**Status:** accepted. The smoothing fix is in (2026-10-30): a staircase circle goes from 188 segments to 6, the jitter to 4, and a clean square keeps 4 exact corners.
+ 
+ ## Checked
+ 
+diff --git a/docs/tasks/T4-nest.md b/docs/tasks/T4-nest.md
+new file mode 100644
+index 0000000..34a2e53
+--- /dev/null
++++ b/docs/tasks/T4-nest.md
+@@ -0,0 +1,43 @@
++# T4 · Fit to board: the `nest` layout (`app/src/lib/domain/cutplan/nest.ts`)
++
++**Goal:** implement `layout: 'nest'` in `planCut`. Parts are packed onto as few boards as possible, to waste less material. Today `planCut` throws `'fit to board lands later'` for it.
++
++## Files
++
++- `cutplan/nest.ts`: `nestOnBoards(parts: NestInput[], board, opts): NestResult`.
++- A wiring change in `cutplan/plan.ts`: route `nest` to a `planNest(...)`, keeping every other layout unchanged.
++- Specs for both.
++
++No other files.
++
++## Contract
++
++- **Input:** `NestInput { partId, itemId, loopsMm: Pt[][] (outline + holes, at the origin), material, colour, qty, groupId?, keepTogether? }`.
++- **Output:** per sheet, placements `{ partId, itemId, at, rotateDeg }` that the existing `Placement` type can hold. Passes are built the same way `planParts` does (engrave/score first, then holes, then outlines), shifted to each placement.
++
++**Rules:**
++
++- **Packing:** bottom-left fill on the parts' *outlines*, not just their bounding boxes. Rasterise each part at 1 mm (or 0.5 mm when the board is small) on an occupancy grid, dilated by `spacingMm`.
++  - Try rotations 0/90/180/270, plus 45° steps when `allowRotate` is set (rotation is allowed by default).
++  - Place the largest parts first.
++  - A part may sit inside another part's *hole* if it fits (earrings in a bookmark's cut-out). The grid handles this for free: holes are empty cells.
++- **Inside the board:** every placement stays within `board − 2 × marginMm`.
++- **Materials:** a sheet never mixes materials (as in T2). Different materials go on different sheets.
++- **Pairs and sets:** a `pair` group (`rule: 'same-sheet'`) is placed together or not at all (as in T2). Sets may spill.
++- **Deterministic:** the same input gives the same output. No `Math.random`; tie-break by part id.
++- **Speed:** 50 earrings on a 300 × 300 board in under 1 s in Node.
++
++## Tests (at least)
++
++- **Rectangles:** 20 rectangles of 50 × 30 on a 300 × 300 board, margin 5 → 1 sheet; no two placements overlap (check with the occupancy grid); all inside the margin.
++- **Rotation:** an L-shaped part and its 180°-rotated twin nest into roughly one bounding box (the combined bbox area is under 1.3 × the sum of the two parts' areas).
++- **Parts inside holes:** a 200 × 200 ring (hole 150 × 150) plus a 100 × 100 square → 1 sheet, with the square's placement inside the hole.
++- **Pairs:** pairs are never split across sheets; materials never mix.
++- **Determinism:** two runs give deep-equal output.
++- **`planCut` with `layout: 'nest'`:** passes per sheet are in machine order (engrave, holes, outlines); `qty: 3` places 3 copies.
++
++## Out of scope
++
++- Arbitrary-angle rotation.
++- True no-fit-polygon nesting (the grid is enough).
++- Screens.
+diff --git a/docs/tasks/T5-export.md b/docs/tasks/T5-export.md
+new file mode 100644
+index 0000000..c0d0742
+--- /dev/null
++++ b/docs/tasks/T5-export.md
+@@ -0,0 +1,49 @@
++# T5 · Sheet files: SVG and DXF export, SVG import (`app/src/lib/domain/files/`)
++
++**Goal:** a cut plan's sheets become files a maker can open in their own software. A maker's own SVG (an original kit file) becomes a craft at exact geometry: no photo, no approximation. This is the precise path the castle needed ("import the original SVG / DXF").
++
++## Files
++
++- `files/svg.ts`:
++  - `sheetToSvg(sheet: Sheet, opts?): string`;
++  - `svgToCraft(svg: string, opts: { name: string; newId: () => string; mmPerUnit?: number }): CraftDoc`.
++- `files/dxf.ts`: `sheetToDxf(sheet: Sheet): string`.
++- Specs.
++
++No other files.
++
++## Export
++
++- **SVG** (`sheetToSvg`):
++  - Units are mm: `width="…mm" height="…mm"` and `viewBox` in mm.
++  - One `<g>` per pass kind, in machine order, with ids `engrave`, `score`, `cut`.
++  - Colours by convention (Glowforge, LightBurn and xTool read them): cut red `#FF0000` at stroke 0.1 mm, score blue `#0000FF`, engrave black fill `#000000`.
++  - Closed paths end in `Z`.
++  - Each part's paths are grouped in a `<g data-part="…">`.
++- **DXF** (`sheetToDxf`):
++  - AutoCAD R12 ASCII (the most compatible): `LWPOLYLINE` is fine, or `POLYLINE` / `VERTEX` / `SEQEND` for R12 strictness. Pick one and say which.
++  - Layers `CUT`, `SCORE`, `ENGRAVE`. Units mm (`$INSUNITS` 4). Closed flag set on closed loops.
++  - It must open in LibreCAD and import into Inkscape; check one by hand if you can, and say so in the hand-back.
++
++## Import (`svgToCraft`)
++
++- **Parsing:** `<path>`, `<polygon>`, `<polyline>`, `<rect>`, `<circle>` and `<ellipse>`, with `transform` on the elements and their groups (`matrix`, `translate`, `scale`, `rotate`). Path commands M L H V C S Q T A Z, absolute and relative. Arcs go to cubics.
++
++  You may add **one** dependency for the path parsing if it is small and MIT (e.g. `svg-path-parser`, or `svgpath`, which also does transforms and arcs). Otherwise write it.
++- **Units:** from `width`/`height` with mm, cm or in units and the `viewBox`, else `mmPerUnit` (default 25.4 / 96).
++- **Kinds:** stroke red (or no fill with a red-ish stroke) → `cut`; blue → `score`; black or filled → `engrave`. Unknown colours → `cut`.
++- **Pieces:** each connected outline, with its holes (even-odd nesting, `geo.depths`), becomes a **part** of one item `kind: '3d'`, `build: 'assembly'`. Engravings and scores inside a part's outline go to that part's ops.
++- **Frame:** the item's frame is tier XL over the whole drawing, at the measured `pxPerMm`. Use `craft/index.ts` `frameSize`.
++- **Output:** the result passes `craft/index.ts` `validate()`.
++
++## Tests (at least)
++
++- **Round trip:** a planned sheet (build one with `planCut` from a small `CraftDoc` fixture) → `sheetToSvg` → `svgToCraft` → `planCut` again gives the same loops within 0.01 mm, the same pass kinds, and the same part count.
++- **Real-world SVG:** a `<g transform="translate(10,10) scale(2)">` with a `<rect>`, a `<circle>` with a hole (even-odd path) and a blue score line → 2 parts, the circle's part with 1 hole, the score inside the right part, at the right mm.
++- **Units:** `width="100mm" viewBox="0 0 1000 1000"` gives 0.1 mm per unit; `in` and `cm` work too.
++- **DXF:** the output parses back with a minimal reader in the test (count the entities per layer, closed flags, first vertex coordinates).
++
++## Out of scope
++
++- Screens and download buttons (Claude wires those to the Cut page).
++- DXF import.
+diff --git a/docs/tasks/T6-kerf-given.md b/docs/tasks/T6-kerf-given.md
+new file mode 100644
+index 0000000..7f859f7
+--- /dev/null
++++ b/docs/tasks/T6-kerf-given.md
+@@ -0,0 +1,38 @@
++# T6 · Kerf compensation and the `given` layout (`app/src/lib/domain/cutplan/`)
++
++Two small pieces of the cut plan.
++
++## A · Kerf (`cutplan/kerf.ts`)
++
++`withKerf(sheet: Sheet, kerfMm: number): Sheet`: each cut pass is offset by half the kerf so the *part* comes out the drawn size.
++
++- **Direction:** outlines (even depth) grow by kerf/2; holes (odd depth) shrink by kerf/2 (they get *bigger* as cut), so holes come out the drawn size too.
++- **Unchanged:** engrave and score passes, and the part's identity.
++- **How:** `geo.offset` per loop (T1, already in). Find each loop's depth with `geo.depths` on the sheet's cut loops of the same part.
++- **Where it's applied:** in `planCut`, after placement, when `profile.kerfMm > 0`. Remove the `// kerf: applied by the program, later` note.
++- **Collapse:** a loop that would collapse (a hole smaller than the kerf) is dropped, and the sheet gets a `warnings: string[]` entry: "a 0.2 mm hole in Fox can't be cut with a 0.2 mm kerf". Add `warnings?: string[]` to `Sheet` in `cutplan/types.ts`; this is the one contract change allowed.
++
++**Tests:**
++
++- A 20 × 20 square with kerf 0.2 cuts at 20.2 × 20.2 (area within 0.5%), and its 10 × 10 hole cuts at 9.8 × 9.8.
++- Engraving is untouched.
++- A tiny hole is dropped and the warning is present.
++- Kerf 0 changes nothing (deep-equal).
++
++## B · The `given` layout (`cutplan/plan.ts`)
++
++A kit's own sheet arrangement: the castle's parts layout. Each kit part is already one sheet (`Sheet A1`…), drawn where it sits on the kit's sheet.
++
++- **Behaviour:** for `layout: 'given'`, each part of an item with `build: 'assembly'` becomes one sheet **in place**. There is no re-centring on its bounding box: the frame origin is the sheet's corner, and the sheet size is the part's frame extent in mm (`frame.size / pxPerMm`, which for a kit is the kit sheet, e.g. 300 × 301).
++- **Items that aren't kits** fall back to `one-part-per-sheet`.
++- **Remove the throw:** `'layout "given" lands with the kit layout'` goes.
++
++**Tests:**
++
++- A kit item with 2 parts (as `migrateV1` makes from a plan; build one with `craft/migrate.ts` and a `plan` snapshot) → 2 sheets of 300 × 300, with loops at the same mm positions as drawn.
++- Non-kit items in the same craft get one-part-per-sheet.
++
++## Out of scope
++
++- Screens.
++- Nesting (T4).

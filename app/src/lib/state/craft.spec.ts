@@ -29,10 +29,13 @@ describe('the craft journey in AppState (docs/design/07)', () => {
     app.layers.applyLayers(layerSets.paper.layers.map((l) => ({ ...l, shapes: [...l.shapes] })));
     app.layers.selectLayer(5);
     expect(await app.ask('split the hills in two', '/make/layers')).toBeNull();
-    expect(app.layers.notes).toEqual([{ step: 'Layers', layer: 'Layer 5 · Hills', text: 'split the hills in two' }]);
-    await app.ask('shadow on the left edge', '/make/cutout');
-    expect(app.layers.notes.at(-1)).toEqual({ step: 'Shape', text: 'shadow on the left edge' });
-    expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted for Shape');
+    expect(app.layers.notes).toEqual([{ step: 'Layers', layer: 'Hills', text: 'split the hills in two' }]);
+    await app.ask('shadow on the left edge', '/make/gaps');
+    expect(app.layers.notes.at(-1)).toMatchObject({ step: 'Layers', text: 'shadow on the left edge' });
+    expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted for Hills');
+    await app.ask('a warmer frame', '/make/output');
+    expect(app.layers.notes.at(-1)).toEqual({ step: 'Cut', text: 'a warmer frame' });
+    expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted for Cut');
   });
 
   it('a remix lands on its changes; the journey progress follows the path', () => {
@@ -40,7 +43,7 @@ describe('the craft journey in AppState (docs/design/07)', () => {
     app.startCraft('ref');
     app.startFromCapture({ images: ['x'], mode: 'single' });
     expect(app.project?.path).toBe('/make/reference');
-    expect(app.progressOf(app.project!).label).toBe('Step 2 of 5 · Shape');
+    expect(app.progressOf(app.project!).label).toBe('Step 2 of 4 · Layers');
   });
 
   it('Save craft marks it finished with its instructions and notes, and it reopens on Assemble', () => {

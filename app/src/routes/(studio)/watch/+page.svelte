@@ -4,6 +4,8 @@ import { Button, Card, List, Message, ProgressBar } from '@rokkit/ui';
 import { useApp } from '$lib/state/context';
 import WatchFeed from '$lib/components/illustrations/WatchFeed.svelte';
 import LayeredScene from '$lib/components/illustrations/LayeredScene.svelte';
+import CutSheet from '$lib/components/CutSheet.svelte';
+import CutPreview from '$lib/components/CutPreview.svelte';
 // Burn Watch: the craft's cuts as a list, like Sheets: each cut's status, Send (the next sheet) or Watch, and
 // Download .zip. The stage shows the selected cut's clip, alerts and events. No craft open: the demo clip.
 const app = useApp();
@@ -21,6 +23,8 @@ const cutText = (n: number) => {
   if (s === 'current') return f.job.phase === 'cutting' ? `cutting ${f.job.progress}%` : f.job.phase === 'verify' ? 'check it' : 'next';
   return 'waiting';
 };
+// the virtual run on the bed for the cut on stage: the current one moves with the job, done ones show the piece
+const stagePhase = (n: number) => { const st = f.sheetStatus(n); return st === 'cut' ? 'done' : st === 'current' ? (f.job.phase === 'done' ? 'done' : f.job.phase) : 'feed'; };
 const watchText = (n: number) => { const a = watch.alertsOn(n); return a == null ? '' : a === 0 ? 'clean' : `${a} alert${a > 1 ? 's' : ''}`; };
 $effect(() => app.setScreen('Burn Watch', craft ? `${app.title} · ${f.layers.length} cuts · ${f.currentDevice.label}` : `demo clip · ${clock(watch.clipSec)}`));
 onMount(() => { if (!craft) void watch.load(); });
@@ -37,7 +41,7 @@ onMount(() => { if (!craft) void watch.load(); });
         {#each f.layers as l (l.n)}
           {@const status = f.sheetStatus(l.n)}
           <li aria-label={`Cut ${pad(l.n)}, ${l.name}`} class="flex items-center gap-3 rounded-lg border bg-paper-soft p-2.5 {watch.sheet === l.n ? 'border-accent' : 'border-paper-edge'}">
-            <button type="button" class="w-12 h-12 shrink-0 rounded-md bg-paper border border-paper-edge p-1 cursor-pointer" aria-label={`Show cut ${pad(l.n)}`} onclick={() => watch.showSheet(l.n)}><LayeredScene layers={f.layers} mode="layer" selected={l.n} hidden={false} label="" /></button>
+            <button type="button" class="w-12 h-12 shrink-0 rounded-md bg-paper border border-paper-edge p-1 cursor-pointer" aria-label={`Show cut ${pad(l.n)}`} onclick={() => watch.showSheet(l.n)}>{#if f.cutPathFor(l.n)}<CutSheet d={f.cutPathFor(l.n)} colour={l.colour} image={app.stageImage} label="" small />{:else}<LayeredScene layers={f.layers} mode="layer" selected={l.n} hidden={false} label="" />{/if}</button>
             <span class="flex-1 min-w-0">
               <span class="block text-body text-ink truncate">{pad(l.n)} · {l.name}</span>
               <span class="flex flex-wrap gap-x-2 meta"><span class={status === 'cut' ? 'text-success' : status === 'current' ? 'text-accent' : ''}>{cutText(l.n)}</span>{#if watchText(l.n)}<span class={watch.alertsOn(l.n) ? 'text-danger' : 'text-success'}>· {watchText(l.n)}</span>{/if}</span>
@@ -71,7 +75,7 @@ onMount(() => { if (!craft) void watch.load(); });
       <div class="relative rounded-lg overflow-hidden min-h-57 {onStage ? 'bg-camera grid place-items-center p-6' : ''}" data-mode="dark">
         {#if onStage}
           <!-- the cut's sheet on the bed with the SAM tracking outline (the live view replaces this with the camera) -->
-          <span class="relative w-[min(60%,260px)] aspect-square rounded-full outline-2 outline-dashed outline-accent outline-offset-4"><LayeredScene layers={f.layers} mode="layer" selected={onStage.n} hidden={false} label={`Sheet ${pad(onStage.n)} on the bed`} /></span>
+          <span class="relative w-[min(70%,320px)] aspect-square rounded-md outline-2 outline-dashed outline-accent outline-offset-4">{#if f.previewFor(onStage.n).cut}{@const pv = f.previewFor(onStage.n)}<CutPreview cut={pv.cut} engrave={pv.engrave} colour={pv.colour} mode={pv.mode} phase={stagePhase(onStage.n)} progress={f.job.progress} image={app.stageImage} label={`Sheet ${pad(onStage.n)} on the bed: a virtual run of the cut`} />{:else}<LayeredScene layers={f.layers} mode="layer" selected={onStage.n} hidden={false} label={`Sheet ${pad(onStage.n)} on the bed`} />{/if}</span>
         {:else}<WatchFeed />{/if}
         <span class="meta absolute left-3 top-3 text-ink">Workpiece · tracked</span>
         <span class="meta absolute right-3 bottom-3 text-ink">SAM 3.1 + Spark · {clock(watch.selected?.atSec ?? watch.positionSec)} · {watch.selected?.note ?? ''}</span>

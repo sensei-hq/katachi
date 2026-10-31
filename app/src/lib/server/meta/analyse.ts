@@ -12,9 +12,10 @@ export const FIXTURE_BRIEF: ImageBrief = {
     { id: 'mountains', label: 'Mountains', samPrompt: 'mountain range', likelyBought: false, note: 'peaks and ridge' },
     { id: 'trees', label: 'Hills and pines', samPrompt: 'hills and pine trees', likelyBought: false, note: 'foreground' }
   ],
-  colourGroupsHint: 6, reference: null, topDownConfidence: 0.9, notes: 'demo fixture'
+  items: [], colourGroupsHint: 6, reference: null, topDownConfidence: 0.9, notes: 'demo fixture',
+  realSizeMm: { w: 300, h: 300, basis: 'a typical 30 cm embroidery hoop' }
 };
-const BRIEF_SYSTEM = 'You are Katachi, a workshop buddy who turns a photo into cut layers. Classify the image for a layered/3D craft build. Set arrangement: stacked = one piece made of stacked layers; multiple-items = several separate finished objects side by side (bookmarks, earrings, coasters, ornaments) — then regions MUST be one entry per separate object, ordered left to right, each with its own SAM noun phrase; single-item = one flat shape; assembly-3d = parts of one 3D object. Give each distinct region a short SAM noun phrase. Mark bought hardware (frames, hoops, tassels, cords) likelyBought. Never emit coordinates.';
+const BRIEF_SYSTEM = 'You are Katachi, a workshop buddy who turns a photo into cut layers. Classify the image for a layered/3D craft build. Set arrangement: stacked = one piece made of stacked layers; multiple-items = several separate finished objects side by side (bookmarks, earrings, coasters, ornaments) — then regions MUST be one entry per separate object, ordered left to right, each with its own SAM noun phrase, AND items[] MUST carry one entry per object with its own arrangement (stacked if that object itself has layers, else single-item) and its internal regions when stacked; single-item = one flat shape; assembly-3d = parts of one 3D object. Give each distinct region a short SAM noun phrase. Mark bought hardware (frames, hoops, tassels, cords) likelyBought. Never emit coordinates. A photo has no scale: estimate realSizeMm, the real-world width and height in millimetres of the whole piece (for multiple-items: of ONE typical item, as it lies flat), from what it is and its proportions — e.g. a bookmark is about 50 × 180 mm, layered paper wall art 300–450 mm, a coaster 90–100 mm across — and give the basis in a few words.';
 /** S2 Classify: Spark vision on the real image -> ImageBrief. Fixture brief without a key or on failure. */
 export async function analyseImage(env: Record<string, string | undefined>, imageDataUrl: string | undefined, client?: MetaClient): Promise<{ brief: ImageBrief; source: 'live' | 'fixture'; trace: { model: string; purpose: string; stage: string; latencyMs: number; costUsd: number }[] }> {
   if (env.META_API_KEY && imageDataUrl) {
@@ -31,6 +32,10 @@ export async function analyseImage(env: Record<string, string | undefined>, imag
             if (second.success && second.data.regions.length > brief.regions.length) brief = { ...brief, regions: second.data.regions };
           } catch { /* keep the first brief */ }
         }
+        // Deterministic normalisation: a pattern-shape photo with several regions is a set of separate
+        // items (bookmarks, coasters, earrings) even when Spark under-reports the arrangement/items.
+        if (brief.class === 'pattern-shape' && brief.regions.length >= 3 && brief.arrangement !== 'multiple-items' && /separate|set of|items|bookmarks|coasters|earrings|ornaments|each (is|bookmark|item)/i.test(brief.subject + ' ' + brief.notes)) brief = { ...brief, arrangement: 'multiple-items' };
+        if (brief.arrangement === 'multiple-items' && !brief.items.length) brief = { ...brief, items: brief.regions.filter((r) => !r.likelyBought).map((r) => ({ id: r.id, label: r.label, samPrompt: r.samPrompt, arrangement: 'single-item' as const, regions: [] })) };
         return { brief, source: 'live', trace: [{ model: 'muse-spark-1.3', purpose: 'analyze_image', stage: 'S2', latencyMs: r.latencyMs, costUsd: r.costUsd }] };
       }
       console.error('ImageBrief parse failed, using fixture');

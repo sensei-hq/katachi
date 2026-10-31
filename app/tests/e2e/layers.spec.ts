@@ -1,9 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
 import { seedProject } from './seed';
 
-async function next(page: Page, name: RegExp | string, url: RegExp) {
-  await page.getByRole('main').getByRole('button', { name }).click();
-  await expect(page).toHaveURL(url);
+/** Layers' next step is a suggestion in the chat (studio column or the phone's chat sheet): Cut the sheets */
+async function cutTheSheets(page: Page) {
+  if (await page.getByRole('button', { name: 'Open Katachi chat' }).isVisible()) await page.getByRole('button', { name: 'Open Katachi chat' }).click();
+  await page.getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Cut the sheets' }).click();
+  await expect(page).toHaveURL(/\/make\/output$/);
 }
 
 // mockups/desktop D1–D6: nav rail · top bar with six step tabs · left controls · work area · Katachi column
@@ -11,72 +13,93 @@ test.describe('image → layers · studio (1280×800)', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
   test.beforeEach(({ page }) => seedProject(page));
 
-  test('five journey tabs; cutout and reference light Shape, gaps lights Layers', async ({ page }) => {
+  test('the open craft’s steps are rail icons (Layers · Cut · Assemble); old Shape routes open Layers; gaps and reference light Layers', async ({ page }) => {
     await page.goto('/make/cutout'); await page.waitForLoadState('networkidle');
-    const tabs = page.getByRole('navigation', { name: 'Craft steps' });
-    await expect(tabs.getByRole('link')).toHaveText([/Capture/, /Shape/, /Layers/, /Sheets/, /Assemble/]);
-    await expect(tabs.getByRole('link', { name: /Shape/ })).toHaveAttribute('aria-current', 'step');
-    await tabs.getByRole('link', { name: /Layers/ }).click();
     await expect(page).toHaveURL(/\/make\/layers$/);
+    const rail = page.getByRole('navigation', { name: 'Studio sections' });
+    const craft = rail.getByRole('region', { name: 'Current craft' });
+    await expect(craft.getByRole('link', { name: 'Layers' })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('navigation', { name: 'Craft steps' })).toHaveCount(0);
+    await craft.getByRole('link', { name: 'Cut', exact: true }).click();
+    await expect(page).toHaveURL(/\/make\/output$/);
+    await expect(craft.getByRole('link', { name: 'Cut', exact: true })).toHaveAttribute('aria-current', 'page');
     await page.goto('/make/gaps'); await page.waitForLoadState('networkidle');
-    await expect(tabs.getByRole('link', { name: /Layers/ })).toHaveAttribute('aria-current', 'step');
+    await expect(craft.getByRole('link', { name: 'Layers' })).toHaveAttribute('aria-current', 'page');
     await page.goto('/make/reference'); await page.waitForLoadState('networkidle');
-    await expect(tabs.getByRole('link', { name: /Shape/ })).toHaveAttribute('aria-current', 'step');
-    await expect(page.getByRole('navigation', { name: 'Studio sections' })).toBeVisible();
+    await expect(craft.getByRole('link', { name: 'Layers' })).toHaveAttribute('aria-current', 'page');
   });
 
-  test('controls sit in the left panel; Katachi talks in the right column with no tabs', async ({ page }) => {
-    await page.goto('/make/segment'); await page.waitForLoadState('networkidle');
+  test('the work area is the editor; the chat column holds only the conversation and its inline suggestions', async ({ page }) => {
+    await page.goto('/make/layers'); await page.waitForLoadState('networkidle');
     const assistant = page.getByRole('complementary', { name: 'Katachi chat' });
-    const controls = page.getByRole('complementary', { name: 'Step controls' });
     await expect(assistant.getByRole('tab')).toHaveCount(0);
-    await expect(assistant).toContainText('I found 5 regions');
-    await expect(assistant.getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Drop the Sky' })).toBeVisible();
-    const regions = controls.getByRole('region', { name: 'Regions', exact: true });
-    await expect(regions).toContainText('4 of 5 kept');
-    await regions.getByRole('switch', { name: 'Sun' }).click();
-    await expect(regions).toContainText('3 of 5 kept');
-    await page.getByRole('main').getByRole('radio', { name: 'Original' }).click();
-    await expect(page.getByRole('main').getByRole('img', { name: /Layered mountain sunset/ })).toBeVisible();
+    await expect(assistant.getByRole('region', { name: 'Layer', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('main').getByRole('toolbar', { name: 'Layer tools' })).toBeVisible();
+    await expect(assistant.getByRole('log').getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Remove the wall and shadows' })).toBeVisible();
+    await expect(assistant.getByRole('log').getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Cut the sheets' })).toBeVisible();
+    await expect(page.getByRole('main').getByRole('button', { name: 'Edit in work area' })).toHaveCount(0);
+    await expect(page.getByRole('main').getByRole('button', { name: /Review gaps/ })).toHaveCount(0);
+    // the layer's actions float by its row only (no second set on the work area)
+    await expect(page.getByRole('main').getByRole('toolbar', { name: 'Layer actions' })).toHaveCount(1);
+    await expect(page.getByRole('main').getByRole('toolbar', { name: 'Layer tools' }).getByRole('button', { name: /Hide|Quote/ })).toHaveCount(0);
   });
 
-  test('layers: pick a layer on the left, its inspector sits above the chat', async ({ page }) => {
+  test('layers: pick a layer in the list, its actions float by it; show only this layer; the views', async ({ page }) => {
     await page.goto('/make/layers'); await page.waitForLoadState('networkidle');
-    const assistant = page.getByRole('complementary', { name: 'Katachi chat' });
-    const inspector = assistant.getByRole('region', { name: 'Layer', exact: true });
-    await expect(inspector.getByRole('heading')).toHaveText('Snow ridge');
-    await page.getByRole('complementary', { name: 'Step controls' }).getByRole('button', { name: /Hills/ }).click();
-    await expect(inspector.getByRole('heading')).toHaveText('Hills');
-    await expect(inspector).toContainText('5 of 6');
+    const list = page.getByLabel('Layer stack, back to front');
+    await expect(list.locator('[data-layer-row="4"]').getByRole('toolbar', { name: 'Layer actions' })).toBeVisible();
+    await list.getByRole('button', { name: /Hills/ }).first().click();
+    await expect(list.locator('[data-layer-row="5"]').getByRole('toolbar', { name: 'Layer actions' })).toBeVisible();
+    await expect(page.getByRole('main').getByRole('img', { name: /Layer 5, Hills/ })).toBeVisible();
+    await list.getByRole('toolbar', { name: 'Layer actions' }).getByRole('button', { name: 'Show only this layer' }).click();
+    await expect(page.getByRole('complementary', { name: 'Katachi chat' })).toContainText('Showing only Hills');
+    const view = page.getByRole('main').getByRole('toolbar', { name: 'Layer tools' }).getByRole('radiogroup', { name: 'View' }).or(page.getByRole('main').getByRole('toolbar', { name: 'Layer tools' }).getByRole('group', { name: 'View' }));
+    await expect(view.getByRole('radio', { name: 'This layer' })).toHaveAttribute('aria-checked', 'true');
+    await view.getByRole('radio', { name: 'All layers' }).click();
+    await expect(view.getByRole('radio', { name: 'All layers' })).toHaveAttribute('aria-checked', 'true');
   });
 
-  test('layers: no row numbers, stack under the list, no paper/wood switch; duplicate, merge down, split', async ({ page }) => {
+  test('layers: duplicate, merge down and split from the toolbar — each said in the chat, then done there', async ({ page }) => {
     await page.goto('/make/layers'); await page.waitForLoadState('networkidle');
-    const controls = page.getByRole('complementary', { name: 'Step controls' });
-    const list = controls.getByRole('navigation', { name: 'Layer stack, back to front' });
-    await expect(list.getByRole('button').first()).not.toContainText(/^\s*\d/);
-    await expect(controls.getByRole('img', { name: 'Exploded stack, back to front' })).toBeVisible();
-    await expect(page.getByRole('radio', { name: /Paper layers|Laser wood/ })).toHaveCount(0);
-    await list.getByRole('button', { name: /Hills/ }).click();
-    await expect(controls.getByRole('button', { name: 'Split' })).toBeDisabled();
-    await controls.getByRole('button', { name: 'Duplicate' }).click();
+    const list = page.getByLabel('Layer stack, back to front');
+    const toolbar = list.getByRole('toolbar', { name: 'Layer actions' });
+    const chat = page.getByRole('complementary', { name: 'Katachi chat' });
+    await list.getByRole('button', { name: /Hills/ }).first().click();
+    await expect(toolbar.getByRole('button', { name: 'Split' })).toBeDisabled();
+    await toolbar.getByRole('button', { name: 'Duplicate this layer' }).click();
     await expect(list).toContainText('Hills copy');
-    await list.getByRole('button', { name: /^Sky/ }).click();
-    await controls.getByRole('button', { name: 'Merge down' }).click();
+    await expect(chat.locator('[data-timeline-entry="user"]').last()).toContainText('Duplicate this layer');
+    await expect(chat.locator('[data-timeline-entry="user"]').last().locator('[data-quote-card]')).toContainText('Hills');
+    await expect(chat).toContainText('Duplicated Hills');
+    // merge any two: Merge with… lists the other layers
+    await list.getByRole('button', { name: /Sky/ }).first().click();
+    await toolbar.getByRole('button', { name: 'Merge with…' }).click();
+    await list.getByRole('menu', { name: 'Merge with' }).getByRole('menuitem', { name: /Sun/ }).click();
     await expect(list).toContainText('Sky + Sun');
-    await controls.getByRole('button', { name: 'Split' }).click();
+    await expect(chat).toContainText('Merged Sky with Sun');
+    await toolbar.getByRole('button', { name: 'Split' }).click();
     await expect(list).not.toContainText('Sky + Sun');
-    await expect(list.getByRole('button', { name: /^Sun/ })).toBeVisible();
+    await expect(list.getByRole('button', { name: /Sun/ }).first()).toBeVisible();
   });
 
-  test('layers: the solid and hidden toggles change what the selected layer shows', async ({ page }) => {
+  test('layers: quote a layer — a card with it sits above the composer, rides with the message, and can be removed', async ({ page }) => {
     await page.goto('/make/layers'); await page.waitForLoadState('networkidle');
-    const work = page.getByRole('main');
-    await expect(work.getByRole('img', { name: /Snow ridge: visible area solid, hidden area hatched/ })).toBeVisible();
-    await work.getByRole('checkbox', { name: 'Hidden behind layers above' }).uncheck();
-    await expect(work.getByRole('img', { name: /Snow ridge: visible area solid$/ })).toBeVisible();
-    await work.getByRole('checkbox', { name: 'Shows as solid' }).uncheck();
-    await expect(work.getByRole('img', { name: /Snow ridge: outline only/ })).toBeVisible();
+    const chat = page.getByRole('complementary', { name: 'Katachi chat' });
+    const list = page.getByLabel('Layer stack, back to front');
+    await list.getByRole('button', { name: /Hills/ }).first().click();
+    await list.getByRole('toolbar', { name: 'Layer actions' }).getByRole('button', { name: 'Quote this layer in the chat' }).click();
+    const composer = chat.locator('[data-chat-composer]');
+    await expect(composer.locator('[data-quote-card]')).toContainText('Hills');
+    await composer.getByRole('button', { name: 'Remove the quote' }).click();
+    await expect(composer.locator('[data-quote-card]')).toHaveCount(0);
+    await list.getByRole('button', { name: /Sky/ }).first().click();
+    await list.getByRole('toolbar', { name: 'Layer actions' }).getByRole('button', { name: 'Quote this layer in the chat' }).click();
+    await composer.getByRole('textbox').fill('split it in two');
+    await chat.getByRole('button', { name: 'Send' }).click();
+    await expect(chat.locator('[data-timeline-entry="user"]').last().locator('[data-quote-card]')).toContainText('Sky');
+    // a plain action said in the chat runs (or says why it can't): never just "noted"
+    await expect(chat).toContainText('One piece — nothing to split');
+    await expect(composer.locator('[data-quote-card]')).toHaveCount(0);
   });
 
   test('output: cut one sheet at a time — feed, send, verify, next', async ({ page }) => {
@@ -96,32 +119,13 @@ test.describe('image → layers · studio (1280×800)', () => {
     await expect(page.getByRole('main').getByRole('button', { name: /Download/ })).toBeVisible();
   });
 
-  test('import: describe what you want; Katachi proposes variations in the chat; the pick becomes the plan', async ({ page }) => {
-    await page.route('**/api/convert', (r) => r.fulfill({ json: { objective: 'A layered sunset panel', variations: [{ title: 'Night sky', change: 'moon for sun' }, { title: 'Autumn', change: 'warm trees' }] } }));
-    await page.goto('/make/import'); await page.waitForLoadState('networkidle');
-    const controls = page.getByRole('complementary', { name: 'Step controls' });
-    await controls.getByRole('textbox', { name: /What do you want to make of it/ }).fill('a piece for the hallway');
-    await controls.getByRole('button', { name: 'Ask Katachi' }).click();
-    const assistant = page.getByRole('complementary', { name: 'Katachi chat' });
-    await expect(assistant).toContainText('A layered sunset panel');
-    await assistant.getByRole('button', { name: 'Autumn' }).click();
-    await expect(controls).toContainText('Plan: Autumn — warm trees');
-  });
-
-  test('walks import → output', async ({ page }) => {
-    await page.goto('/make/import'); await page.waitForLoadState('networkidle');
-    const controls = page.getByRole('complementary', { name: 'Step controls' });
-    await expect(controls.getByRole('radio', { name: /Flat · layered art/ })).toBeChecked();
-    await expect(page.getByRole('main').getByRole('link', { name: 'Retake' })).toBeVisible();
-    await next(page, 'Find the outline', /\/make\/cutout$/);
-    await next(page, 'Find the objects', /\/make\/segment$/);
-    await next(page, /Separate into layers/, /\/make\/layers$/);
-    await next(page, /Review all gaps/, /\/make\/gaps$/);
-    await expect(page.getByRole('main').getByRole('heading', { name: 'Fill what the photo can’t see' })).toBeVisible();
-    await page.getByRole('complementary', { name: 'Katachi chat' }).getByRole('radio', { name: /Leave all open/ }).check();
-    await expect(page.getByRole('main').getByRole('button', { name: /L1 Sky: open/ })).toBeVisible();
-    await next(page, /Stack & cut/, /\/make\/output$/);
+  test('walks layers → cut: the hidden-parts rule and the device sit beside the sheets', async ({ page }) => {
+    await page.goto('/make/layers'); await page.waitForLoadState('networkidle');
+    await cutTheSheets(page);
     await expect(page.getByRole('main').getByRole('heading', { name: /6 sheets/ })).toBeVisible();
+    const side = page.getByRole('complementary', { name: 'Katachi chat' });
+    await side.getByRole('radio', { name: /Leave all open/ }).check();
+    await expect(side.getByRole('radio', { name: /Leave all open/ })).toBeChecked();
     await page.getByRole('complementary', { name: 'Katachi chat' }).getByRole('radio', { name: /xTool S1 laser/ }).check();
     await expect(page.getByRole('main').getByRole('button', { name: 'Cut sheet 1' })).toBeVisible();
   });
@@ -130,18 +134,19 @@ test.describe('image → layers · studio (1280×800)', () => {
     await page.goto('/make/views'); await page.waitForLoadState('networkidle');
     const views = page.getByRole('region', { name: 'Views', exact: true });
     await expect(views.getByText('Waiting for a photo')).toHaveCount(3);
-    await expect(page.getByRole('complementary', { name: 'Katachi chat' }).getByRole('region', { name: 'Parts' })).toContainText('Front · back');
-    await expect(page.getByRole('main').getByRole('button', { name: /Build with 3 views/ })).toBeVisible();
+    await expect(page.getByRole('complementary', { name: 'Katachi chat' }).getByRole('region', { name: 'Parts' })).toContainText('Front');
+    await expect(page.getByRole('complementary', { name: 'Katachi chat' }).getByRole('region', { name: 'Parts' })).toContainText('×');
+    await expect(page.getByRole('complementary', { name: 'Katachi chat' }).getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Cut the parts' })).toBeVisible();
   });
 
   test('six captured sides unfold into the six-view step', async ({ page }) => {
     await page.goto('/capture'); await page.waitForLoadState('networkidle');
-    await page.getByRole('radio', { name: '6 sides' }).click();
+    await page.getByRole('radio', { name: 'Several views' }).click();
     for (let i = 0; i < 6; i++) await page.getByRole('button', { name: 'Take photo' }).click();
     await expect(page.getByText('All 6 sides captured')).toBeVisible();
-    await page.getByRole('main').getByRole('button', { name: 'Unfold into parts' }).click();
+    await page.getByRole('main').getByRole('button', { name: 'Analyze 6 views' }).click();
     await expect(page).toHaveURL(/\/make\/views$/);
-    await expect(page.getByRole('region', { name: 'Views', exact: true })).toContainText('Left');
+    await expect(page.getByRole('region', { name: 'Views', exact: true })).toContainText('left');
   });
 });
 
@@ -150,33 +155,28 @@ test.describe('image → layers · phone (390×844)', () => {
   test.use({ viewport: { width: 390, height: 844 } });
   test.beforeEach(({ page }) => seedProject(page));
 
-  test('step strip, back, inline controls and Katachi note; the icon nav opens the chat', async ({ page }) => {
-    await page.goto('/make/import'); await page.waitForLoadState('networkidle');
+  test('step strip, back, the layers editor; the icon nav opens the chat', async ({ page }) => {
+    await page.goto('/make/layers'); await page.waitForLoadState('networkidle');
     const strip = page.getByRole('navigation', { name: 'Craft steps' });
-    await expect(strip).toContainText('02 / 05 · Shape · what it is');
-    await expect(strip).toContainText('next · layers');
-    await expect(page.getByRole('main').getByRole('radio', { name: /Flat · layered art/ })).toBeVisible();
-    await next(page, 'Find the outline', /\/make\/cutout$/);
-    await next(page, 'Find the objects', /\/make\/segment$/);
-    await expect(strip).toContainText('02 / 05 · Shape · parts');
-    const main = page.getByRole('main');
-    await expect(main.getByRole('note', { name: 'Katachi' })).toContainText('I found 5 regions');
-    await main.getByRole('region', { name: 'Regions', exact: true }).getByRole('switch', { name: 'Sky' }).click();
-    await expect(main.getByRole('region', { name: 'Regions', exact: true })).toContainText('3 of 5 kept');
-    await page.getByRole('link', { name: 'Back' }).click();
-    await expect(page).toHaveURL(/\/make\/cutout$/);
+    await expect(strip).toContainText('02 / 04 · Layers · items & layers');
+    await expect(strip).toContainText('next · cut');
+    await expect(page.getByRole('main').getByRole('toolbar', { name: 'Layer tools' })).toBeVisible();
     const nav = page.getByRole('navigation', { name: 'Snap sections' });
-    await expect(nav.getByRole('link', { name: 'Current craft' })).toHaveAttribute('aria-current', 'page');
+    await expect(nav.getByRole('link', { name: 'Layers' })).toHaveAttribute('aria-current', 'page');
+    await expect(nav.getByRole('link', { name: 'Cut', exact: true })).toBeVisible();
     await nav.getByRole('button', { name: 'Open Katachi chat' }).click();
-    await expect(page.getByRole('dialog', { name: 'Katachi chat' })).toContainText('Background removed');
+    await expect(page.getByRole('dialog', { name: 'Katachi chat' }).getByRole('group', { name: 'Suggestions' })).toBeVisible();
+    await page.getByRole('dialog', { name: 'Katachi chat' }).getByRole('button', { name: 'Close chat' }).click();
+    await page.getByRole('link', { name: 'Back' }).click();
+    await expect(page).toHaveURL(/\/capture$/);
   });
 
   test('layers: list with share bars; gaps: radio list and apply-to-all', async ({ page }) => {
     await page.goto('/make/layers'); await page.waitForLoadState('networkidle');
     const main = page.getByRole('main');
-    await main.getByRole('button', { name: /Hills/ }).click();
+    await main.getByRole('button', { name: /Hills/ }).first().click();
     await expect(main.getByRole('img', { name: /Layer 5, Hills/ })).toBeVisible();
-    await next(page, 'Fill the gaps', /\/make\/gaps$/);
+    await page.goto('/make/gaps'); await page.waitForLoadState('networkidle');
     await main.getByRole('radio', { name: /Leave it open/ }).check();
     await expect(main.getByRole('checkbox', { name: /Use this for all 6 layers/ })).toBeChecked();
     await main.getByRole('button', { name: 'Next layer' }).click();

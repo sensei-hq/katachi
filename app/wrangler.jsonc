@@ -1,12 +1,12 @@
 {
-  "name": "snap-to-make",
+  "name": "katachi",
   "compatibility_date": "2026-10-27",
   "compatibility_flags": ["nodejs_compat"],
   "keep_vars": true,
   "workers_dev": true,
   "preview_urls": true,
   "main": "worker-entry.js",
-  "routes": [{ "pattern": "snap-to-make.sensei-hq.com", "custom_domain": true }],
+  "routes": [{ "pattern": "katachi.sensei-hq.com", "custom_domain": true }],
   "observability": { "enabled": true },
   "assets": { "binding": "ASSETS", "directory": ".svelte-kit/cloudflare" }
 }

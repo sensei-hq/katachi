@@ -1,30 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { sections } from './sections';
+import { craftSections, sections } from './sections';
 
-describe('app sections (phone icon nav and studio rail share one list)', () => {
-  it('lists where you are (Home, Crafts, the current craft…), not tools; Batch is studio-only', () => {
-    expect(sections.map((s) => s.id)).toEqual(['workshop', 'crafts', 'craft', 'canvas', 'watch', 'batch']);
-    expect(sections.map((s) => s.href)).toEqual(['/workshop', '/crafts', '/capture', '/canvas', '/watch', '/batch']);
-    expect(sections.filter((s) => s.phone !== false).map((s) => s.id)).toEqual(['workshop', 'crafts', 'craft', 'canvas', 'watch']);
+describe('app sections (design/11: phone icon nav and studio rail share the lists)', () => {
+  it('Home (start + your crafts) and the cut queue; a craft adds its steps: Layers · Cut · Assemble', () => {
+    expect(sections.map((s) => [s.id, s.href])).toEqual([['workshop', '/workshop'], ['queue', '/queue']]);
+    expect(sections.filter((s) => s.phone !== false).map((s) => s.id)).toEqual(['workshop', 'queue']);
+    expect(craftSections().map((s) => [s.label, s.href])).toEqual([['Layers', '/make/layers'], ['Cut', '/make/output'], ['Assemble', '/make/assemble']]);
+    expect(craftSections('3d')[0].href).toBe('/make/views');
   });
 
   it('gives every section a label and a Solar icon for the rail', () => {
-    for (const s of sections) {
+    for (const s of [...sections, ...craftSections()]) {
       expect(s.label.length).toBeGreaterThan(0);
       expect(s.icon).toMatch(/^i-solar:[a-z0-9-]+-linear$/);
     }
   });
 });
 
-describe('sectionFor (which tab / rail item is current)', () => {
+describe('sectionFor (which rail item is current)', () => {
   it('matches the longest section prefix, so stage routes keep their section', async () => {
     const { sectionFor } = await import('./sections');
     expect(sectionFor('/workshop')).toBe('workshop');
-    expect(sectionFor('/crafts')).toBe('crafts');
-    expect(sectionFor('/watch')).toBe('watch');
-    expect(sectionFor('/capture')).toBe('craft');
-    expect(sectionFor('/make/layers')).toBe('craft');
-    expect(sectionFor('/make/assemble')).toBe('craft');
+    expect(sectionFor('/capture')).toBe('workshop');
+    expect(sectionFor('/make/layers')).toBe('layers');
+    expect(sectionFor('/make/gaps')).toBe('layers');
+    expect(sectionFor('/make/views')).toBe('layers');
+    expect(sectionFor('/make/output')).toBe('cut');
+    expect(sectionFor('/make/assemble')).toBe('assemble');
+    expect(sectionFor('/queue')).toBe('queue');
     expect(sectionFor('/hood')).toBe('workshop');
   });
 });

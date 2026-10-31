@@ -1,0 +1,95 @@
+diff --git a/app/src/lib/domain/craft/migrate.ts b/app/src/lib/domain/craft/migrate.ts
+index ded90e4..19444eb 100644
+--- a/app/src/lib/domain/craft/migrate.ts
++++ b/app/src/lib/domain/craft/migrate.ts
+@@ -54,7 +54,8 @@ export function migrateV1(project: V1Project, snap: V1Snapshot, newId: () => Id)
+   // a frame for photo loops inside `box` (0-1000 units): crop, turn, px per mm from the real size
+   const frameFor = (box: { x: number; y: number; w: number; h: number }, rotateDeg: number) => {
+     const wMm = (box.w / 1000) * widthMm, hMm = (box.h / 1000) * (widthMm / aspect);
+-    const tier = tierFor(Math.max(wMm, hMm)), size = frameSize(tier, wMm, hMm);
++    // the size is kept exact (not rounded to whole px): one px per mm on both axes, so geometry stays true to size
++    const tier = tierFor(Math.max(wMm, hMm)), k = Math.max(...frameSize(tier, wMm, hMm)) / Math.max(wMm, hMm, 1e-6), size: [number, number] = [wMm * k, hMm * k];
+     return { frame: { tier, size, fromSource: { sourceId: source.id, box, rotateDeg }, pxPerMm: Math.max(...size) / Math.max(wMm, hMm, 1e-6) },
+       toFrame: (loops: Loops): Loops => loops.map((l) => l.map(([x, y]) => [((x - box.x) / box.w) * size[0], ((y - box.y) / box.h) * size[1]] as [number, number])) };
+   };
+diff --git a/docs/tasks/README.md b/docs/tasks/README.md
+index c98672c..d71d7fe 100644
+--- a/docs/tasks/README.md
++++ b/docs/tasks/README.md
+@@ -35,9 +35,9 @@ Claude (the lead in this repo) owns the contracts and reviews every hand-back.
+ | T1 | Geometry library (`domain/geo`) — **accepted**, smoothing fix in (`T1-review.md`) | contracts only | ~1 day | delegate |
+ | T2 | Cut plan: profiles, `planCut`, queue adapter (`domain/cutplan`) — **accepted** (`T2-review.md`) | contracts; T1's core (already implemented) | ~1 day | delegate |
+ | T3 | Geometry actions as `ActionDef`s (`domain/actions/defs`) — **accepted**, registered (`T3-review.md`) | T1 | ~1 day | delegate, after T1 |
+-| T4 | Fit to board: the `nest` layout (`cutplan/nest.ts`) | T2 | ~1 day | delegate |
+-| T5 | Sheet files: SVG + DXF export, SVG import → craft (`domain/files/`) | T2 | ~1 day | delegate |
+-| T6 | Kerf compensation + the `given` layout (kits) | T1, T2 | ~0.5 day | delegate |
++| T4 | Fit to board: the `nest` layout (`cutplan/nest.ts`) — **two fixes needed** (`T456-review.md`) | T2 | ~1 day | delegate |
++| T5 | Sheet files: SVG + DXF export, SVG import → craft (`domain/files/`) — **accepted** | T2 | ~1 day | delegate |
++| T6 | Kerf compensation + the `given` layout (kits) — **accepted** | T1, T2 | ~0.5 day | delegate |
+ | L1 | Craft state classes, v1 → v2 migration, `LocalRepository` — **done** (`domain/craft`, `state/craft`) | contracts | ~1.5 days | Claude |
+ | L2 | Action registry, `perform` / undo / redo / again, history in the doc — **done**, with merge, delete, duplicate, reorder, rename, recolour, set-role, group, ungroup (`domain/actions`, `state/craft/actions.svelte.ts`); straighten / interpolate / resize / enhance next | L1 | ~1 day | Claude |
+ | L3 | Wire the screens: layers, queue, Assemble and Cut read the craft and the cut plan (animations unchanged) | L1, L2, T2 | ~1 day | Claude |
+diff --git a/docs/tasks/T456-review.md b/docs/tasks/T456-review.md
+new file mode 100644
+index 0000000..f43188e
+--- /dev/null
++++ b/docs/tasks/T456-review.md
+@@ -0,0 +1,58 @@
++# T4–T6 review (Claude, 2026-10-30)
++
++| Task | Status |
++|---|---|
++| **T5** SVG / DXF export, SVG import | **accepted** |
++| **T6** kerf, `given` layout | **accepted** |
++| **T4** nest | **two fixes needed** (below) |
++
++Gates: 463 unit tests, check, lint and arch all pass with the three in.
++
++## T5: checked
++
++- **DXF:** a castle sheet's DXF opens in **ezdxf** (`recover.readfile`) with no errors and no fixes: R12 (AC1009), `$INSUNITS` 4, 77 closed `POLYLINE`s on `CUT` and 30 on `ENGRAVE`.
++- **SVG:** the castle's sheet A1 exported to SVG and imported back with `svgToCraft` gives **62 separate parts**. That is better than the one part per sheet the low-res picture reading gives. This is the precise kit path.
++- **No new dependency** (hand-written parser): fine.
++
++## T6: checked
++
++- **Kerf is exact.** On the xTool (0.15) the outline grows by exactly 0.15 and the hole shrinks by exactly 0.15 (kerf 0 → 0.15 → 0.4: 40.059 → 40.209 → 40.459, and 20.029 → 19.879 → 19.629).
++- The 0.03–0.06 mm residual was the craft migration rounding its frame to whole px. That was Claude's code, now fixed: frames keep their exact size.
++- **`given`:** the real castle layout gives 11 sheets of 300 × 301 mm, 389 passes, no warnings.
++
++## T4: two fixes
++
++### 1 · A part larger than the board is placed anyway, and the next part lands on it
++
++Repro, with `planCut` on the xTool profile (300 × 300 board, margin 5 → 290 × 290 inside):
++
++- A single 310 mm square part → 1 sheet, **no warning**.
++- A 301 mm and a 100 mm part → **1 sheet with both**, overlapping. The oversized part is placed "best effort at the origin" without stamping the grid, so the next one goes on top of it.
++
++**Fix:**
++
++- A part that doesn't fit an empty board (in any allowed rotation) gets **its own sheet**, at the margin, and the grid is **stamped as full**, so nothing else goes on that sheet.
++- The sheet gets a warning: `"Sheet A1 (301 × 301 mm) is larger than the xTool S1's 290 × 290 mm working area — scale it down or use a bigger board"`. Use the board size and margin from the profile.
++- **Tests:**
++  - 310 alone → 1 sheet with a warning;
++  - 301 + 100 → 2 sheets, the 100 on its own sheet, no overlap;
++  - 299 alone → a warning (299 > 290).
++
++### 2 · Too slow on real parts: the castle doesn't finish
++
++Nesting the castle kit (11 parts read from `samples/3D/castle/castle_5.webp`, hundreds of loops each, about 20k edges per part) ran **more than 200 s** without finishing.
++
++**Cause:** `rasterize` tests every cell with `insideEvenOdd` *and* `distToLoops` over every edge: O(cells × edges). A 300 mm part is 84k cells × 20k edges × 4 rotations × 11 parts.
++
++**Fix:**
++
++- **Fill by scanline:** per row, intersect the row's centre line with all edges once, sort the crossings, and fill between pairs (even-odd). That's O(rows × edges + cells).
++- **Dilate on the grid:** fill the cells the edges pass through, then dilate by `ceil(dil / cell)` cells: a square or diamond structuring element, or a chamfer distance transform. No per-cell distance to every edge.
++- **Rotate the raster, don't recompute:** rotate 90° steps by index arithmetic. Only 45° steps need a re-raster.
++- **No spreads on big arrays:** replace `Math.min(...xs)` with a loop (big arrays overflow the stack).
++- **Target:** the castle (load it the way `domain/layering.spec.ts`'s readPlan test does, then `migrateV1` with a `plan` snapshot, then `planCut(…, { layout: 'nest' })`) in **under 3 s**, and 50 earrings stays under 0.5 s (it's 0.28 s now).
++
++**Tests:**
++
++- a 280 mm part with 2,000 small square holes (a grid) rasterises in under 200 ms, with the same occupancy as the brute-force version on a small case (compare cell sets on a 40 × 40 part with 3 holes);
++- the castle nest finishes in under 3 s (timeout 10 s), and every sheet has a warning or fits.

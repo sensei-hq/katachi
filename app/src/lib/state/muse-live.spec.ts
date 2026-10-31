@@ -3,7 +3,7 @@ import { MuseAgents } from './muse.svelte';
 
 afterEach(() => vi.unstubAllGlobals());
 const stub = (handler: (url: string, body: any) => unknown) => vi.stubGlobal('fetch', vi.fn(async (url: string, init: any) => ({ ok: true, json: async () => handler(String(url), JSON.parse(init.body)) })));
-const brief = { subject: 'circular layered wooden sunset', class: 'layered', likelyMaterial: 'wood', subjectPrompt: 'layered wooden wall art', regions: [{ id: 'sun', label: 'Sun', samPrompt: 'round sun', likelyBought: false, note: '' }], colourGroupsHint: 6, reference: null, topDownConfidence: 0.9, notes: '' };
+const brief = { subject: 'circular layered wooden sunset', class: 'layered', likelyMaterial: 'wood', subjectPrompt: 'layered wooden wall art', regions: [{ id: 'sun', label: 'Sun', samPrompt: 'round sun', likelyBought: false, note: '' }], items: [], colourGroupsHint: 6, reference: null, topDownConfidence: 0.9, notes: '' };
 
 describe('MuseAgents wired to the server routes (live shapes, labelled by source)', () => {
   it('describe -> cutout -> segment -> plan -> render carry live results into the live shapes', async () => {

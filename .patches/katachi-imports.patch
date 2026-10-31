@@ -1,0 +1,30 @@
+diff --git a/app/src/lib/state/muse.svelte.ts b/app/src/lib/state/muse.svelte.ts
+index 5e19509..3f51a58 100644
+--- a/app/src/lib/state/muse.svelte.ts
++++ b/app/src/lib/state/muse.svelte.ts
+@@ -7,7 +7,7 @@ import type { ImageBrief } from '../domain/schemas';
+ import type { Layer } from '../content/layers';
+ import { loadPixels } from './photo';
+ import { measureLayers, measureRefine, measureSubject } from './measure';
+-import { parseLayerOp } from '../domain/layering';
++import { parseLayerOp, rasterisePaths, readPlan, woodPiece } from '../domain/layering';
+ import { cutLength, pathsToSvg, scalePaths } from '../domain/vector';
+ 
+ type Live<T> = { result: T; summary: string; source?: 'live' | 'fixture'; costUsd?: number; /** who actually did it, when not the job's usual model (code measured it) */ model?: import('../content/agents').AgentModel };
+@@ -196,7 +196,6 @@ export class MuseAgents {
+         const ipx = laser ? await this.pixels(opts.imageDataUrl, 1600) : null;
+         if (ipx) {
+           const extra: Region[] = [];
+-          const { woodPiece, rasterisePaths } = await import('../domain/layering');
+           for (const r of found) {
+             if (!r.paths?.length) continue;
+             r.role = 'cut';
+@@ -303,8 +302,6 @@ export class MuseAgents {
+    *  lines close off) and its engraving. A low-resolution picture gives approximate outlines. */
+   readCutPlan(craftId: string, url: string | undefined) {
+     return this.run('layers.readPlan', craftId, async () => {
+-      const { readPlan } = await import('../domain/layering');
+-      const { loadPixels } = await import('./photo');
+       const img = await loadPixels(url, 1600);
+       const sheets = img ? readPlan(img) : [];
+       const pieces = sheets.reduce((a, s) => a + s.pieces, 0);

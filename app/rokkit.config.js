@@ -63,5 +63,5 @@ export default {
   shape: { radius: { sm: '4px', md: '6px', lg: '10px', xl: '12px', full: '9999px' } },
   icons: { solar: '@iconify-json/solar/icons.json', overrides: {} },
   switcher: 'manual',
-  storageKey: 'snap-to-make-theme'
+  storageKey: 'katachi-theme'
 };

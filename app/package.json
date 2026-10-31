@@ -1,5 +1,5 @@
 {
-  "name": "snap-to-make",
+  "name": "katachi",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -21,6 +21,7 @@
     "test:unit:watch": "vitest --config vitest.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "test:e2e": "playwright test",
+    "film": "playwright test -c playwright.film.config.ts",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report",
     "test:arch": "node scripts/check-arch.mjs",
@@ -32,6 +33,8 @@
     "db:import": "cd ../database && dbd import -d $DATABASE_URL --scope snap",
     "deploy:dry": "bun run build:cf && wrangler deploy --dry-run",
     "deploy": "bun run build:cf && wrangler deploy",
+    "bump": "bumpp",
+    "version:show": "node -e \"console.log(require('./package.json').version)\"",
     "types": "wrangler types",
     "build:cf": "WORKERS_CI=1 vite build"
   },
@@ -48,6 +51,7 @@
     "@types/node": "^25.9.3",
     "@unocss/reset": "^66.6.8",
     "@vitest/coverage-v8": "^4",
+    "bumpp": "12.3.0",
     "eslint": "^10.13.0",
     "eslint-plugin-svelte": "^3.23.1",
     "globals": "^17.13.0",
@@ -78,6 +82,8 @@
     "@rokkit/ui": "^1.9.0",
     "@rokkit/unocss": "^1.9.0",
     "@supabase/supabase-js": "^2.99.1",
+    "clipper2-js": "1.2.4",
+    "fflate": "^0.8.3",
     "openai": "^4.77.0",
     "zod": "^3.24.0"
   }

@@ -36,7 +36,7 @@ describe('invite + budget guard (R-PL-2/4/7)', () => {
     expect(await verifySession(undefined, 's1')).toBeNull();
   });
   it('only the gate, its API and static files are public', () => {
-    for (const p of ['/', '/api/gate', '/_app/immutable/x.js', '/favicon.svg', '/manifest.webmanifest', '/service-worker.js']) expect(isPublicPath(p)).toBe(true);
+    for (const p of ['/', '/api/gate', '/api/version', '/_app/immutable/x.js', '/favicon.svg', '/manifest.webmanifest', '/service-worker.js']) expect(isPublicPath(p)).toBe(true);
     for (const p of ['/workshop', '/make/layers', '/api/scene', '/capture']) expect(isPublicPath(p)).toBe(false);
   });
 });

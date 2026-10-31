@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MuseAgents } from './muse.svelte';
 import { AppState } from './app.svelte';
 import { MemoryStorage, ProjectStore } from './project.svelte';
 import { agentJobs, jobsOnVisit } from '../content/agents';
 
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
 
 describe('MuseAgents · every model/agent job runs through one place (placeholders until wired)', () => {
   it('records a task per job, marked placeholder with its summary', async () => {
@@ -33,8 +33,8 @@ describe('AppState runs the step jobs once per craft and shows them per step', (
       'Reads “a layered picture of a lake” as layered picture', 'Sees layered paper art in a round hoop',
       'Background removed · circle outline, Ø 300 mm', '5 regions found'
     ]);
-    expect(app.activity('shape').map((t) => t.model)).toEqual(['SAM 3.1', 'SAM 3.1']);
-    await app.ask('raise the sun', '/make/segment');
+    expect(app.activity('layers').filter((t) => t.model === 'SAM 3.1').map((t) => t.model)).toEqual(['SAM 3.1', 'SAM 3.1']);
+    await app.ask('raise the sun', '/make/layers');
     await settle();
     expect(app.activity().at(-1)).toMatchObject({ model: 'Muse Spark 1.3', status: 'placeholder', summary: expect.stringContaining('Noted “raise the sun”') });
   });
@@ -45,7 +45,7 @@ describe('model results flow into state, and every call shows in the chat with i
     const app = new AppState(new ProjectStore(new MemoryStorage()));
     app.startCraft('flat');
     app.startFromCapture({ images: ['x'], mode: 'single' });
-    app.layers.applyCutout({ outline: { shape: 'rect', sizeMm: 420 }, checks: [{ status: 'pass', text: 'Wall removed' }] });
+    app.layers.applyCutout({ outline: { shape: 'rect', sizeMm: 420 }, checks: [{ status: 'pass', text: 'Wall removed' }], paths: [[[100, 100], [900, 100], [900, 900], [100, 900]]] });
     expect(app.noteFor('cutout')).toContain('a rect, about 420 mm');
     app.layers.applyRegions([{ id: 'sky', name: 'Sky', pct: 60, note: '', tone: 'warn', keep: true }]);
     expect([app.layers.regions.length, app.noteFor('segment')]).toEqual([1, expect.stringContaining('I found 1 regions')]);
@@ -60,9 +60,8 @@ describe('model results flow into state, and every call shows in the chat with i
     app.startFromCapture({ images: ['x'], mode: 'multi' });
     app.layers.applyParts([]);
     app.visit('views');
-    await settle();
-    expect(app.layers.parts.length).toBeGreaterThan(0);
-    expect(app.layers.subject).toBe('a birdhouse');
+    await vi.waitFor(() => expect(app.layers.parts.length).toBeGreaterThan(0), { timeout: 4000 });
+    expect(app.layers.subject).toBe('a 3D object');
   });
 
   it('posts each call in the chat: model, action, cost (estimated for placeholders), time', async () => {

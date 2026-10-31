@@ -28,6 +28,15 @@ export class MetaClient {
     const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
     return { data: JSON.parse(s >= 0 ? raw.slice(s, e + 1) : raw), costUsd: costFor('muse-spark-1.3', { inputTokens: out.usage?.input_tokens ?? 6000, outputTokens: out.usage?.output_tokens ?? 800 }), latencyMs: Date.now() - t0 };
   }
+  /** Spark vision on several pictures at once (views of one object) */
+  async sparkVisionMany(system: string, text: string, images: string[], schema?: Record<string, unknown>, name = 'Vision'): Promise<{ data: any; costUsd: number; latencyMs: number }> {
+    const t0 = Date.now();
+    const content: unknown[] = [{ type: 'input_text', text }, ...images.flatMap((url, i) => [{ type: 'input_text', text: `Picture ${i + 1}:` }, { type: 'input_image', image_url: url }])];
+    const out = await this.post('/responses', { model: 'muse-spark-1.3', instructions: system, input: [{ role: 'user', content }], ...(schema ? { text: { format: { type: 'json_schema', name, strict: true, schema } } } : {}) });
+    const raw: string = out.output?.find((o: any) => o.type === 'message')?.content?.find((c: any) => c.type === 'output_text')?.text ?? '{}';
+    const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
+    return { data: JSON.parse(s >= 0 ? raw.slice(s, e + 1) : raw), costUsd: costFor('muse-spark-1.3', { inputTokens: out.usage?.input_tokens ?? 6000 * images.length, outputTokens: out.usage?.output_tokens ?? 800 }), latencyMs: Date.now() - t0 };
+  }
   async samText(imageDataUrl: string, prompt: string): Promise<string> {
     const out = await this.post('/responses', { model: 'sam-3.1', input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageDataUrl }] }], metadata: { mask_encoding: 'one_bit' } });
     return out.output?.find((o: any) => o.type === 'message')?.content?.find((c: any) => c.type === 'output_text')?.text ?? '';

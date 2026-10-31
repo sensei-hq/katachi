@@ -1,0 +1,369 @@
+diff --git a/app/src/lib/components/save-file.ts b/app/src/lib/components/save-file.ts
+new file mode 100644
+index 0000000..4a09030
+--- /dev/null
++++ b/app/src/lib/components/save-file.ts
+@@ -0,0 +1,9 @@
++// Hands a file the app made (a sheet's SVG or DXF, a zip of them) to the browser's download. Presentation only:
++// the bytes come from state; nothing is fetched.
++export function saveFile(name: string, mime: string, data: string | Uint8Array) {
++  const blob = new Blob([typeof data === 'string' ? data : new Uint8Array(data)], { type: mime });
++  const url = URL.createObjectURL(blob), a = document.createElement('a');
++  a.href = url; a.download = name; a.rel = 'noopener';
++  document.body.appendChild(a); a.click(); a.remove();
++  setTimeout(() => URL.revokeObjectURL(url), 2000);
++}
+diff --git a/app/src/lib/domain/files/bundle.ts b/app/src/lib/domain/files/bundle.ts
+new file mode 100644
+index 0000000..d722020
+--- /dev/null
++++ b/app/src/lib/domain/files/bundle.ts
+@@ -0,0 +1,22 @@
++// All of a cut plan's sheets as one download: an SVG and a DXF per sheet, zipped (design/15 §5). Pure.
++import { strToU8, zipSync } from 'fflate';
++import type { CutPlan } from '../cutplan/types';
++import { sheetToSvg } from './svg';
++import { sheetToDxf } from './dxf';
++
++/** a file name a maker's computer accepts: no slashes, no odd characters */
++export const fileName = (s: string) => s.replace(/[^\p{L}\p{N} ._-]+/gu, '-').replace(/\s+/g, ' ').trim().slice(0, 80) || 'sheet';
++
++export function sheetFile(plan: CutPlan, n: number, format: 'svg' | 'dxf'): { name: string; mime: string; text: string } | null {
++  const sheet = plan.sheets.find((s) => s.n === n);
++  if (!sheet) return null;
++  const base = `${String(n).padStart(2, '0')} ${fileName(sheet.name)}`;
++  return format === 'svg' ? { name: `${base}.svg`, mime: 'image/svg+xml', text: sheetToSvg(sheet) } : { name: `${base}.dxf`, mime: 'application/dxf', text: sheetToDxf(sheet) };
++}
++
++/** every sheet as SVG + DXF, in one zip */
++export function planZip(plan: CutPlan, craftName: string): { name: string; bytes: Uint8Array } {
++  const files: Record<string, Uint8Array> = {};
++  for (const s of plan.sheets) for (const f of ['svg', 'dxf'] as const) { const x = sheetFile(plan, s.n, f)!; files[`${f}/${x.name}`] = strToU8(x.text); }
++  return { name: `${fileName(craftName || 'katachi')} sheets.zip`, bytes: zipSync(files, { level: 6 }) };
++}
+diff --git a/app/src/lib/state/app.svelte.ts b/app/src/lib/state/app.svelte.ts
+index 9324e73..61ecd08 100644
+--- a/app/src/lib/state/app.svelte.ts
++++ b/app/src/lib/state/app.svelte.ts
+@@ -25,6 +25,9 @@ import type { ActionCtx, ActionId } from '../domain/actions/types';
+ import { planCut } from '../domain/cutplan/plan';
+ import { profileFor } from '../domain/cutplan/profiles';
+ import { toQueueInput } from '../domain/cutplan/queue';
++import type { CutPlan, CutProfile } from '../domain/cutplan/types';
++import { planZip, sheetFile } from '../domain/files/bundle';
++import { svgToCraft } from '../domain/files/svg';
+ import { loadPixels } from './photo';
+ 
+ /** what the layer toolbar asks for; every one is said in the chat first, then applied */
+@@ -145,6 +148,8 @@ export class AppState {
+   syncCraft(label?: string, { fresh = false } = {}) {
+     const p = this.project;
+     if (!p) return;
++    // an imported file is exact: the craft is its own source, never re-read from the photo-based state
++    if (this.craft.doc.id === p.id && this.craft.doc.sources.some((s) => s.id === 'svg-import')) return;
+     // only what the craft is read from (a whole snapshot copies every traced path, sheet and cutout too)
+     const f = this.layers;
+     const snap = { subject: f.subject, build: f.build, aspect: f.aspect, widthMm: f.widthMm, sizeBasis: f.sizeBasis, stack: $state.snapshot(f.stack), regionList: $state.snapshot(f.regionList), plan: $state.snapshot(f.plan) } as unknown as V1Snapshot;
+@@ -431,7 +436,7 @@ export class AppState {
+     return this.muse.readCutPlan(craft, url).then((r) => {
+       if (this.project?.id !== craft) return;
+       if (!r.sheets.length) { c.fail(key, 'I couldn’t find the sheets in the plan', 'Stitching your views instead.'); return this.stitch(craft); }
+-      f.applyPlan(r.sheets); this.save();
++      f.applyPlan(r.sheets); this.syncCraft(undefined, { fresh: true }); this.save();
+       const pieces = r.sheets.reduce((a, s) => a + s.pieces, 0), size = r.sheets[0].sizeMm;
+       c.done(key, `Read ${r.sheets.length} sheets from your cut plan`, { detail: `${r.sheets.map((s) => s.name).join(' · ')} · about ${pieces} pieces · each sheet ${size[0]} × ${size[1]} mm (assumed)${Math.max(r.w, r.h) < 2500 ? ` · the picture is ${r.w} × ${r.h} px, so outlines are approximate — import the original SVG or DXF to cut precisely` : ''}` });
+     });
+@@ -613,28 +618,99 @@ export class AppState {
+   /** Add the craft's sheets (all, in cutting order, or some layers) to the cut queue — said in the chat. */
+   queueSheets(only?: number[]) {
+     const f = this.layers, p = this.project, c = this.flow.conversation;
+-    if (!p || !f.layers.length) return 0;
++    if (!p || (!f.layers.length && !this.craft.doc.items.length)) return 0;
+     const ns = (only ?? f.passOrder).filter((n) => f.layers[n - 1]);
+     const machine = f.machine;
+     // the hand-off (design/15 §5): the craft becomes sheets for this device — a part's engraving and its cut on
+     // one sheet, engraving first, holes before outlines
+-    const planned = this.engineOn ? this.plannedSheets(only) : null;
++    const planned = this.craft.doc.items.length ? this.plannedSheets(only) : null;
+     const added = planned ? this.queue.add(planned) : this.queue.add(ns.map((n) => {
+       const l = f.layers[n - 1];
+       return { craftId: p.id, craftName: p.name || this.title, layer: n, name: l.name, material: l.material, op: f.opFor(n), colour: l.colour, machine,
+         ...((pc) => ({ cut: pc.d, shapes: pc.shapes, sheetMm: pc.sheetMm }))(f.pieceFor(n)) };
+     }));
+-    c.ingestTranscript(only?.length === 1 ? `Add ${f.layers[only[0] - 1].name} to the cut queue` : 'Add the sheets to the cut queue');
++    c.ingestTranscript(only?.length === 1 && f.layers[only[0] - 1] ? `Add ${f.layers[only[0] - 1].name} to the cut queue` : 'Add the sheets to the cut queue');
+     c.done(`${p.id}:queue:${c.log.length}`, added ? `Added ${added} sheet${added === 1 ? '' : 's'} to the cut queue` : 'Already in the cut queue',
+       { detail: `${this.queue.waiting.length} waiting · you feed each sheet, send it and check it before the next` });
+     c.log = c.log.map((e, i) => (i === c.log.length - 1 ? { ...e, actions: [{ label: 'Open the cut queue', href: '/queue' }] } : e));
+     return added;
+   }
++  // ── The hand-off (design/15 §5): the craft as sheets for this device, laid out the way chosen on Cut
++  get cutProfile() { return { ...profileFor(this.layers.device, rowsOf(this.craft.doc)[0]?.part.material ?? ''), layout: this.layers.cutLayout }; }
++  private planMemo: { key: string; plan: CutPlan } | null = null;
++  /** the cut plan, kept until the craft, the device or the layout changes (fit to board takes a moment on big kits) */
++  get cutPlan(): CutPlan | null {
++    const doc = this.craft.doc;
++    if (!doc.items.length) return null;
++    const p = this.cutProfile, key = `${doc.id}:${doc.rev}:${p.device}:${p.layout}`;
++    if (this.planMemo?.key === key) return this.planMemo.plan;
++    let plan: CutPlan;
++    try { plan = planCut(doc, p); } catch { plan = planCut(doc, { ...p, layout: 'one-part-per-sheet' }); }
++    this.planMemo = { key, plan };
++    return plan;
++  }
++  /** the layouts that make sense for this craft */
++  get cutLayouts(): { value: CutProfile['layout']; label: string; hint: string }[] {
++    const doc = this.craft.doc, kit = doc.items.some((i) => i.build === 'assembly'), groups = doc.groups.length > 0;
++    return [
++      { value: 'one-part-per-sheet', label: 'One per sheet', hint: 'Each layer or piece on its own sheet, upright.' },
++      ...(groups ? [{ value: 'groups-together' as const, label: 'Pairs together', hint: 'Pairs (left and right) and sets go on the same sheet.' }] : []),
++      { value: 'nest', label: 'Fit to board', hint: 'Packs the pieces onto as few boards as possible — small ones even inside others’ holes.' },
++      ...(kit && doc.sources.some((s) => s.id === 'svg-import') ? [{ value: 'one-item-per-sheet' as const, label: 'As drawn', hint: 'Your file’s drawing on one sheet, exactly as it is.' }] : []),
++      ...(kit && !doc.sources.some((s) => s.id === 'svg-import') ? [{ value: 'given' as const, label: 'As the kit draws it', hint: 'Each kit sheet exactly as its layout shows it.' }] : [])
++    ];
++  }
++  /** Cut · choose how the parts go on sheets — said in the chat, with anything too big for the board */
++  setCutLayout(layout: CutProfile['layout']) {
++    const f = this.layers, c = this.flow.conversation, opt = this.cutLayouts.find((o) => o.value === layout);
++    if (!opt || f.cutLayout === layout) return;
++    f.cutLayout = layout; this.save();
++    const plan = this.cutPlan, warnings = plan?.sheets.flatMap((s) => s.warnings ?? []) ?? [];
++    c.ingestTranscript(`Lay it out: ${opt.label.toLowerCase()}`);
++    c.done(`${this.project?.id ?? 'craft'}:layout:${c.log.length}`, `${opt.label}: ${plan?.sheets.length ?? 0} sheet${plan?.sheets.length === 1 ? '' : 's'} on the ${this.cutProfile.board.wMm} × ${this.cutProfile.board.hMm} mm ${f.currentDevice.label}`,
++      { detail: warnings.length ? `${warnings.length} need attention: ${warnings.slice(0, 2).join(' · ')}${warnings.length > 2 ? ' · …' : ''}` : opt.hint });
++  }
++  /** Home · a maker's own kit file (SVG): exact pieces, straight to Cut (no photo, no tracing) — design/15 §5 */
++  async importKitFile(file: { name: string; text(): Promise<string> }): Promise<string | null> {
++    const text = await file.text(), name = file.name.replace(/\.svg$/i, '') || 'Kit file';
++    let doc: CraftDoc;
++    try { doc = svgToCraft(text, { name, newId: () => `i${(this.narrated++).toString(36)}${Math.random().toString(36).slice(2, 6)}` }); }
++    catch (e) { this.flow.conversation.say(`I couldn’t read ${file.name} as a cut file: ${e instanceof Error ? e.message : 'not an SVG'}.`); return null; }
++    this.newProject();
++    const p = this.project!, f = this.layers, at = steps.findIndex((s) => s.id === 'layers');
++    this.craft.load({ ...doc, id: p.id, name, createdAt: p.createdAt, updatedAt: p.updatedAt });
++    // the screens read the craft through the bridge; the file's own drawing is the sheet
++    const v = craftToFlow(this.craft.doc), it = this.craft.doc.items[0];
++    f.regionList = v.regionList as unknown as typeof f.regionList;
++    f.stack = v.stack as unknown as typeof f.stack;
++    if (it) { f.widthMm = it.frame.size[0] / it.frame.pxPerMm; f.aspect = it.frame.size[0] / it.frame.size[1]; }
++    f.cutLayout = 'one-item-per-sheet';
++    this.project = { ...p, name, reached: Math.max(p.reached, at), path: flowPath('output') };
++    this.save();
++    const pieces = it?.parts.length ?? 0, c = this.flow.conversation;
++    c.ingestTranscript(`Import ${file.name}`);
++    c.done(`${p.id}:import:${c.log.length}`, `Imported ${name}: ${pieces} piece${pieces === 1 ? '' : 's'}, exact from your file`,
++      { detail: `${it ? `${Math.round(it.frame.size[0] / it.frame.pxPerMm)} × ${Math.round(it.frame.size[1] / it.frame.pxPerMm)} mm · ` : ''}red cuts, blue scores, black engraving · laid out as drawn — choose “Fit to board” on Cut to pack the pieces` });
++    return '/make/output';
++  }
++  /** one sheet's file (SVG or DXF) for the maker's own software */
++  sheetDownload(layer: number, format: 'svg' | 'dxf') {
++    // the plan's sheet that holds this layer's part (rows and sheets differ: a bookmark's engraving shares its sheet)
++    const plan = this.cutPlan, pid = rowsOf(this.craft.doc)[layer - 1]?.part.id;
++    if (!plan?.sheets.length) return null;
++    const sheet = plan.sheets.find((s) => s.placements.some((p) => p.partId === pid)) ?? plan.sheets[0];
++    return sheetFile(plan, sheet.n, format);
++  }
++  /** every sheet as SVG + DXF in one zip — said in the chat */
++  sheetsZip() {
++    const plan = this.cutPlan; if (!plan) return null;
++    const z = planZip(plan, this.project?.name || this.title), c = this.flow.conversation;
++    c.done(`${this.project?.id ?? 'craft'}:zip:${c.log.length}`, `Downloaded ${plan.sheets.length} sheets as SVG and DXF`, { detail: `${z.name} · ${this.cutProfile.label} layout “${this.cutLayouts.find((o) => o.value === this.layers.cutLayout)?.label ?? 'One per sheet'}” · cut red, score blue, engrave black` });
++    return z;
++  }
+   /** the cut plan's sheets as queue items (all, or the sheets holding the given rows) */
+   private plannedSheets(only?: number[]) {
+-    const doc = this.craft.toJSON(), rows = rowsOf(doc);
+-    const profile = profileFor(this.layers.device, rows[0]?.part.material ?? '');
+-    const plan = planCut(doc, profile);
++    const doc = this.craft.toJSON(), rows = rowsOf(doc), plan = this.cutPlan!, profile = this.cutProfile;
+     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a lookup built per call, not reactive state
+     const parts = only ? new Set(only.map((n) => rows[n - 1]?.part.id).filter(Boolean)) : null;
+     return plan.sheets.filter((s) => !parts || s.placements.some((pl) => parts.has(pl.partId))).map((s) => ({ ...toQueueInput(s, doc, profile), craftName: doc.name || this.title }));
+diff --git a/app/src/lib/state/cut-plan.spec.ts b/app/src/lib/state/cut-plan.spec.ts
+new file mode 100644
+index 0000000..41fa0c6
+--- /dev/null
++++ b/app/src/lib/state/cut-plan.spec.ts
+@@ -0,0 +1,84 @@
++// The hand-off on Cut (design/15 §5): the craft laid out for the device, the layout said in the chat, the sheets as
++// SVG / DXF downloads and one zip, and a maker's own SVG imported as exact pieces.
++import { describe, expect, it } from 'vitest';
++import { unzipSync, strFromU8 } from 'fflate';
++import { AppState } from './app.svelte';
++import { MemoryStorage, ProjectStore } from './project.svelte';
++import { migrateV1 } from '../domain/craft/migrate';
++
++const rect = (x: number, y: number, w: number, h: number): [number, number][] => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
++function earrings() {
++  const app = new AppState(new ProjectStore(new MemoryStorage()));
++  app.startCraft('flat');
++  const p = app.project!;
++  const names = ['Swirl drop left', 'Swirl drop right', 'Leaf'];
++  const doc = migrateV1({ id: p.id, name: 'Earrings', createdAt: 1, updatedAt: 1, kind: 'flat' }, { aspect: 1, widthMm: 300,
++    regionList: names.map((n, i) => ({ id: `r${i}`, name: n, paths: [rect(100 + i * 250, 100, 120, 200)], holes: [rect(130 + i * 250, 150, 40, 40)] })),
++    stack: names.map((n, i) => ({ n: i + 1, name: `${n} · cut`, colour: '#C89B6A', material: 'birch', visiblePct: 3, hiddenPct: 0, regionId: `r${i}`, itemName: n, role: 'cut' as const })) }, (() => { let k = 0; return () => `x${++k}`; })());
++  app.craft.load(doc);
++  app.layers.setDevice('xtool');
++  return app;
++}
++const last = (app: AppState) => app.flow.conversation.log.at(-1)?.step;
++
++describe('the cut plan on Cut', () => {
++  it('layouts fit the craft; choosing one is said in the chat with its sheet count', () => {
++    const app = earrings();
++    expect(app.cutLayouts.map((o) => o.label)).toEqual(['One per sheet', 'Pairs together', 'Fit to board']);
++    expect(app.cutPlan!.sheets).toHaveLength(3);
++    app.setCutLayout('nest');
++    expect(app.layers.cutLayout).toBe('nest');
++    expect(app.cutPlan!.sheets).toHaveLength(1);
++    expect(last(app)?.title).toBe('Fit to board: 1 sheet on the 300 × 300 mm xTool S1 laser');
++    app.setCutLayout('groups-together');
++    expect(app.cutPlan!.sheets.length).toBe(2);
++    // the plan is kept until something changes (fit to board takes a moment on a big kit)
++    expect(app.cutPlan).toBe(app.cutPlan);
++  });
++  it('too big for the board: the warning is said; the queue takes the plan’s sheets', () => {
++    const app = earrings();
++    return Promise.resolve().then(async () => {
++      await app.actions.perform('resize', [{ item: 'Leaf' }], { hMm: 400 });
++      app.setCutLayout('nest');
++      expect(last(app)?.detail).toMatch(/need attention: .*larger than the xTool S1/);
++      app.queue.items = [];
++      expect(app.queueSheets()).toBe(app.cutPlan!.sheets.length);
++    });
++  });
++  it('downloads: one sheet as SVG or DXF, every sheet in one zip (said in the chat)', () => {
++    const app = earrings();
++    const svg = app.sheetDownload(2, 'svg')!, dxf = app.sheetDownload(2, 'dxf')!;
++    expect(svg.name).toBe('02 Swirl drop right.svg');
++    expect(svg.text).toMatch(/^<\?xml/);
++    expect(svg.text).toContain('stroke="#FF0000"');
++    expect(dxf.name).toBe('02 Swirl drop right.dxf');
++    expect(dxf.text).toMatch(/^0\r?\nSECTION/);
++    const z = app.sheetsZip()!;
++    const files = unzipSync(z.bytes);
++    expect(Object.keys(files).sort()).toEqual(['dxf/01 Swirl drop left.dxf', 'dxf/02 Swirl drop right.dxf', 'dxf/03 Leaf.dxf', 'svg/01 Swirl drop left.svg', 'svg/02 Swirl drop right.svg', 'svg/03 Leaf.svg']);
++    expect(strFromU8(files['svg/03 Leaf.svg'])).toContain('<svg');
++    expect(last(app)?.title).toBe('Downloaded 3 sheets as SVG and DXF');
++  });
++  it('a maker’s SVG: imported as exact pieces, straight to Cut, laid out as drawn — and never re-read from the photo state', async () => {
++    const src = earrings();
++    const svg = src.sheetDownload(1, 'svg')!.text;
++    const app = new AppState(new ProjectStore(new MemoryStorage()));
++    const to = await app.importKitFile({ name: 'my-earring.svg', text: async () => svg });
++    expect(to).toBe('/make/output');
++    expect(app.project!.name).toBe('my-earring');
++    expect(app.canVisit('output')).toBe(true);
++    expect(last(app)?.title).toMatch(/^Imported my-earring: 1 piece, exact from your file/);
++    expect(app.cutLayouts.map((o) => o.label)).toContain('As drawn');
++    expect(app.layers.cutLayout).toBe('one-item-per-sheet');
++    const before = JSON.stringify(app.craft.doc.items);
++    app.syncCraft();
++    expect(JSON.stringify(app.craft.doc.items)).toBe(before);
++    // the cut comes back the size it was drawn (a 120 × 200 photo-unit earring on a 300 mm photo: 36 × 60 mm)
++    const sheet = app.cutPlan!.sheets[0], xs = sheet.passes.flatMap((p) => p.shapesMm.flat().map((q) => q[0]));
++    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(36, 0);
++    // not a cut file: said plainly, nothing created
++    const bad = new AppState(new ProjectStore(new MemoryStorage()));
++    expect(await bad.importKitFile({ name: 'x.svg', text: async () => 'not xml' })).toBeNull();
++    expect(bad.flow.conversation.log.at(-1)?.text).toMatch(/couldn’t read x.svg/);
++  });
++});
+diff --git a/app/src/lib/state/layer-flow.svelte.ts b/app/src/lib/state/layer-flow.svelte.ts
+index e6b8d06..7274a39 100644
+--- a/app/src/lib/state/layer-flow.svelte.ts
++++ b/app/src/lib/state/layer-flow.svelte.ts
+@@ -294,6 +294,8 @@ export class LayerFlowState {
+   history = $state<{ label: string; at: Record<string, unknown> }[]>([]);
+   private static readonly UNDOABLE = ['stack', 'regionList', 'keep', 'sheetPaths', 'overrides', 'hiddenLayers', 'sel', 'plan', 'view'] as const;
+   /** remember the craft as it is now, before `label` changes it */
++  /** how the cut plan lays parts on sheets (design/15 §5): one per sheet, pairs together, fit to board, as the kit draws it */
++  cutLayout = $state<import('../domain/cutplan/types').CutProfile['layout']>('one-part-per-sheet');
+   /** told about every edit just before it lands (the app records it in the craft's history) */
+   onEdit: ((label: string) => void) | null = null;
+   checkpoint(label: string) {
+@@ -467,7 +469,7 @@ export class LayerFlowState {
+   toggleAssembled(i: number) { this.assembled = this.assembled.includes(i) ? this.assembled.filter((x) => x !== i) : [...this.assembled, i]; }
+ 
+   // project save / reopen: every choice above, as plain data
+-  private static readonly SAVED = ['removeBackdrop', 'subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths', 'subjectPaths', 'hiddenLayers', 'showStack', 'view', 'build', 'aspect', 'widthMm', 'sizeBasis', 'pictures', 'objectSpec', 'plan'] as const;
++  private static readonly SAVED = ['cutLayout', 'removeBackdrop', 'subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths', 'subjectPaths', 'hiddenLayers', 'showStack', 'view', 'build', 'aspect', 'widthMm', 'sizeBasis', 'pictures', 'objectSpec', 'plan'] as const;
+   /** a fresh flow's choices (New starts from these) */
+   static defaults() { return new LayerFlowState().snapshot(); }
+   snapshot(): Record<string, unknown> {
+diff --git a/app/src/routes/(studio)/make/output/+page.svelte b/app/src/routes/(studio)/make/output/+page.svelte
+index 90a48a8..4ac43e6 100644
+--- a/app/src/routes/(studio)/make/output/+page.svelte
++++ b/app/src/routes/(studio)/make/output/+page.svelte
+@@ -9,6 +9,7 @@ import LayerSwatch from '$lib/components/illustrations/LayerSwatch.svelte';
+ import { copy, gapRules, guide, type GapRule } from '$lib/content/layers';
+ import { useApp } from '$lib/state/context';
+ import { stepContext } from '$lib/state/step-context.svelte';
++import { saveFile } from '$lib/components/save-file';
+ // D6 · Output + device (studio) · 07 · Stack & cut (phone). Cutters take one sheet at a time:
+ // feed the sheet's material, send it, watch it cut, check it, then the next sheet.
+ const app = useApp();
+@@ -23,10 +24,23 @@ const statusText = { cut: 'cut', current: 'next', waiting: '' } as const;
+ const gapRuleOptions = gapRules.map((g) => ({ label: g.label, value: g.id }));
+ // the virtual run of the pass on the bed: blank sheet → engraving → cut → extra pieces vanish
+ const preview = $derived(f.previewFor(f.jobLayer.n));
++// the hand-off: the craft laid out on sheets for this device (design/15 §5)
++const plan = $derived(app.cutPlan);
++const layouts = $derived(app.cutLayouts);
++const warnings = $derived(plan?.sheets.flatMap((s) => s.warnings ?? []) ?? []);
++function downloadAll() { const z = app.sheetsZip(); if (z) saveFile(z.name, 'application/zip', z.bytes); else app.exportSheets(); }
++function downloadSheet(format: 'svg' | 'dxf') { const x = app.sheetDownload(f.jobLayer.n, format); if (x) saveFile(x.name, x.mime, x.text); }
+ </script>
+ {#snippet output()}
+   <div class="flex flex-col gap-3">
+     <InputField type="radio" name="device" label="Send to" options={app.devices} value={f.currentDevice} onchange={(d: any) => f.setDevice(d.id)} />
++    {#if plan}
++      <p class="eyebrow mt-1">Sheets</p>
++      <Toggle options={layouts} value={f.cutLayout} label="How the parts go on sheets" class="chips" onchange={(v) => app.setCutLayout(v as typeof f.cutLayout)} />
++      <p class="meta leading-snug" data-cut-plan data-sheets={plan.sheets.length}>{plan.sheets.length} sheet{plan.sheets.length === 1 ? '' : 's'} · {layouts.find((o) => o.value === f.cutLayout)?.hint}</p>
++      {#if warnings.length}<ul class="meta text-warning-ink leading-snug list-disc pl-4" aria-label="Sheets that need attention">{#each warnings.slice(0, 3) as w (w)}<li>{w}</li>{/each}{#if warnings.length > 3}<li>and {warnings.length - 3} more</li>{/if}</ul>{/if}
++      <div class="flex gap-2"><Button size="sm" style="outline" icon="i-solar:file-download-linear" label="This sheet · SVG" onclick={() => downloadSheet('svg')} /><Button size="sm" style="outline" label="DXF" onclick={() => downloadSheet('dxf')} /></div>
++    {/if}
+     <Card><dl class="divide-y divide-paper-edge -my-1">{#each rows as [k, v] (k)}<div class="flex justify-between gap-3 min-h-11 items-center"><dt>{k}</dt><dd class="readout text-ink text-right">{v}</dd></div>{/each}</dl></Card>
+     {#if f.kind !== '3d'}
+       <p class="eyebrow mt-1">Hidden parts</p>
+@@ -37,7 +51,7 @@ const preview = $derived(f.previewFor(f.jobLayer.n));
+   </div>
+ {/snippet}
+ {#snippet actions()}
+-  <span class="flex-1 grid md:flex-none"><Button style="outline" size="lg" icon="i-solar:download-linear" label={ctx.wide ? 'Download .zip' : copy.output.export} onclick={() => app.exportSheets()} /></span>
++  <span class="flex-1 grid md:flex-none"><Button style="outline" size="lg" icon="i-solar:download-linear" label={ctx.wide ? 'Download .zip' : copy.output.export} onclick={downloadAll} /></span>
+   <span class="flex-[1.3] grid md:flex-none"><Button variant="primary" size="lg" icon="i-solar:checklist-minimalistic-linear" label="Send to the cut queue" onclick={() => app.queueSheets()} /></span>
+ {/snippet}
+ <svelte:head><title>Katachi · Cut</title></svelte:head>
+diff --git a/app/src/routes/(studio)/workshop/+page.svelte b/app/src/routes/(studio)/workshop/+page.svelte
+index 3c77085..1f8806a 100644
+--- a/app/src/routes/(studio)/workshop/+page.svelte
++++ b/app/src/routes/(studio)/workshop/+page.svelte
+@@ -11,6 +11,9 @@ const app = useApp();
+ $effect(() => app.setScreen('Home', 'start a craft or pick one up'));
+ const go = (path: string) => void goto(resolve(path as '/workshop'));
+ let files = $state<HTMLInputElement | null>(null);
++let kitFile = $state<HTMLInputElement | null>(null);
++// a maker's own kit file (SVG): exact pieces, straight to Cut
++async function importKit(list: FileList | null) { const file = list?.[0]; if (!file) return; const to = await app.importKitFile(file); if (to) go(to); }
+ // Upload: pick the pictures, then Capture shows them (one, or several views of an object) ready to Analyze
+ async function upload(list: FileList | null) {
+   if (!list?.length) return;
+@@ -33,6 +36,7 @@ const sample = layerSets.paper.layers;
+ </script>
+ <svelte:head><title>Katachi · Home</title></svelte:head>
+ <input bind:this={files} type="file" accept="image/*" multiple class="hidden" aria-label="Upload pictures" onchange={(e) => void upload(e.currentTarget.files)} />
++<input bind:this={kitFile} type="file" accept=".svg,image/svg+xml" class="hidden" aria-label="Import a kit file (SVG)" onchange={(e) => void importKit(e.currentTarget.files)} />
+ <div class="mx-auto w-full max-w-[1180px] px-4 py-5 md:px-8 md:py-8 flex flex-col gap-8">
+   <section aria-label="Start a craft" class="flex flex-col gap-4">
+     <div><p class="eyebrow">New craft</p><h2 class="font-heading text-title md:text-head font-normal tracking-display mt-1">What are we making today?</h2>
+@@ -45,7 +49,7 @@ const sample = layerSets.paper.layers;
+         <span class="flex flex-col items-center gap-2"><span class="i-solar:camera-linear text-head text-accent" aria-hidden="true"></span><span class="text-body text-ink font-medium">Camera</span><span class="meta">snap it now</span></span>
+       </button>
+     </div>
+-    <p class="text-ui text-ink-mute">or <button type="button" class="text-accent underline-offset-2 hover:underline cursor-pointer" onclick={sketch}>sketch it</button> · or tell Katachi in the chat</p>
++    <p class="text-ui text-ink-mute">or <button type="button" class="text-accent underline-offset-2 hover:underline cursor-pointer" onclick={sketch}>sketch it</button> · <button type="button" class="text-accent underline-offset-2 hover:underline cursor-pointer" onclick={() => kitFile?.click()}>import a kit file (SVG)</button> · or tell Katachi in the chat</p>
+   </section>
+ 
+   <section aria-label="Your crafts" class="flex flex-col gap-3">

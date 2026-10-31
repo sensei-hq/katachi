@@ -5,6 +5,7 @@ import { ThemeSwitcherToggle } from '@rokkit/app';
 import { ADAPTERS } from '$lib/devices/registry';
 import type { DeviceId } from '$lib/content/layers';
 import { useApp } from '$lib/state/context';
+import { appVersion, appCommit, versionDetail } from '$lib/content/version';
 // Settings (docs/design/07 G19): my machines with status and a default (Sheets sends there), the adapters
 // Katachi supports, and the workspace (density, theme).
 const app = useApp();
@@ -52,5 +53,11 @@ const tone = (s: string) => (s === 'offline' ? 'text-ink-faint' : 'text-success'
     <Toggle options={densities} value={vibe.density} showLabels onchange={(v) => app.setDensity(v as 'comfortable' | 'compact')} />
     <p class="eyebrow">Theme</p>
     <ThemeSwitcherToggle variant="triad" />
+  </section>
+
+  <section aria-label="About" class="flex flex-col gap-2">
+    <h2 class="panel-title">About</h2>
+    <p class="text-ui">Katachi <strong data-app-version>v{appVersion}</strong> <span class="meta">· build {appCommit}</span></p>
+    <p class="meta">{versionDetail()}</p>
   </section>
 </div>

@@ -9,7 +9,7 @@ test.describe('phone layout below 1024 px', () => {
     await expect(nav).toBeVisible();
     const box = await nav.boundingBox();
     expect(box && box.y + box.height).toBeGreaterThan(800);
-    await expect(nav.getByRole('link', { name: 'Burn Watch' })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Home' })).toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Studio sections' })).toBeHidden();
     await expect(page.getByRole('complementary', { name: 'Katachi chat' })).toBeHidden();
     await nav.getByRole('button', { name: 'Open Katachi chat' }).click();
@@ -32,18 +32,18 @@ test.describe('studio layout at 1024 px and up (tablet landscape, desktop)', () 
     const assistant = page.getByRole('complementary', { name: 'Katachi chat' });
     await assistant.getByRole('textbox').fill('what is on my bench');
     await assistant.getByRole('button', { name: 'Send' }).click();
-    const pill = page.getByRole('link', { name: /\$0\.0[1-9] · 1 models/ });
+    const pill = page.getByRole('link', { name: /\$0\.0[1-9] · 1 models?/ });
     await expect(pill).toBeVisible();
     await page.waitForLoadState('networkidle');
     const cost = await pill.innerText();
-    await page.getByRole('navigation', { name: 'Studio sections' }).getByRole('link', { name: 'Burn Watch' }).click();
-    await expect(page.getByRole('heading', { name: 'Burn Watch' })).toBeVisible();
+    await page.getByRole('navigation', { name: 'Studio sections' }).getByRole('link', { name: 'Settings' }).click();
+    await expect(page).toHaveURL(/\/settings$/);
     await page.getByRole('navigation', { name: 'Studio sections' }).getByRole('link', { name: 'Home', exact: true }).click();
     await expect(page.getByRole('link', { name: cost })).toBeVisible();
   });
 
   test('every page has a Katachi title', async ({ page }) => {
-    for (const [path, title] of [['/workshop', 'Katachi · Home'], ['/crafts', 'Katachi · Crafts'], ['/watch', 'Katachi · Burn Watch']]) {
+    for (const [path, title] of [['/workshop', 'Katachi · Home'], ['/crafts', 'Katachi · Home'], ['/watch', 'Katachi · Burn Watch']]) {
       await page.goto(path);
       await expect(page).toHaveTitle(title);
     }
@@ -62,7 +62,9 @@ test('signed in, the landing stays reachable and offers the workshop; old /snap 
   await page.goto('/snap/layers/layers');
   await expect(page).toHaveURL(/\/make\/layers$/);
   await page.goto('/snap/convert');
-  await expect(page).toHaveURL(/\/make\/import$/);
+  await expect(page).toHaveURL(/\/make\/layers$/);
+  await page.goto('/make/segment');
+  await expect(page).toHaveURL(/\/make\/layers$/);
 });
 
 test.describe('the studio frame is pinned to the viewport', () => {

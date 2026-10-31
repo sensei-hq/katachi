@@ -19,11 +19,13 @@ export class CaptureState {
     return base.map((s) => ({ ...s, ...(this.shots[s.id] ?? {}) }));
   }
   get current() { return this.slots.find((s) => s.id === this.target && !s.url) ?? this.slots.find((s) => !s.url) ?? null; }
-  get done() { return this.slots.every((s) => s.url); }
+  /** ready to analyze: the photo; or, for an object, at least two views (any of them — Muse sorts out which is which) */
+  get done() { return this.mode === 'single' ? this.slots.every((s) => s.url) : this.media.length >= 2; }
   get prompt() {
     const c = this.current;
     if (!c) return this.mode === 'single' ? 'Photo captured' : 'All 6 sides captured';
     if (this.mode === 'single') return 'Frame the whole piece';
+    if (this.done && this.source !== 'camera') return `${this.media.length} views in — add more, or analyze: Katachi works out which side each one shows`;
     return `Shoot the ${c.label.toLowerCase()} · ${this.slots.findIndex((s) => s.id === c.id) + 1} of ${this.slots.length}`;
   }
   get viewing() { return this.slots.find((s) => s.id === this.viewingId && s.url) ?? null; }
@@ -48,8 +50,9 @@ export class CaptureState {
     this.target = null; this.viewingId = null;
   }
   upload(urls: string[]) { for (const url of urls) this.capture(url, 'upload'); }
-  /** read picked files into the slots (browser only) */
+  /** read picked files into the slots (browser only); several files are several views of one object */
   async uploadFiles(files: File[]) {
+    if (files.length > 1 && this.mode === 'single' && !this.media.length) this.setMode('multi');
     const urls = await Promise.all(files.map((f) => new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.readAsDataURL(f); })));
     this.upload(urls);
   }
@@ -59,6 +62,12 @@ export class CaptureState {
     this.shots = rest; this.target = id; this.viewingId = null;
   }
   view(id: Slot['id'] | null) { this.viewingId = id; }
+  /** a reopened craft: its saved photos back in their slots */
+  hydrate(media: { id: string; url: string; source: CaptureSource }[], mode: CaptureMode) {
+    this.mode = mode;
+    this.shots = Object.fromEntries(media.map((m) => [m.id, { url: m.url, source: m.source }])) as CaptureState['shots'];
+    this.target = null; this.viewingId = null;
+  }
 }
 
 /** A small copy of an image for the saved craft (Home and Crafts show it); the original if it can't be decoded. */

@@ -10,7 +10,7 @@ export const captureSources: { label: string; value: CaptureSource; icon: string
 ];
 export const captureModes: { label: string; value: CaptureMode }[] = [
   { label: 'Single shot', value: 'single' },
-  { label: '6 sides', value: 'multi' }
+  { label: 'Several views', value: 'multi' }
 ];
 export const sides: { id: SideId; label: string }[] = [
   { id: 'front', label: 'Front' }, { id: 'right', label: 'Right' }, { id: 'back', label: 'Back' },

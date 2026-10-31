@@ -18,7 +18,8 @@ const graph = (pct, size) => ({
 
 export default defineConfig({
   presets: [presetRokkit(config)],
-  preflights: [{ getCSS: () => reducedMotion }],
+  // the cut queue badge pulses when sheets were just sent to it (3 rings, then still)
+  preflights: [{ getCSS: () => `@keyframes katachi-badge { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 70%, transparent) } 100% { box-shadow: 0 0 0 10px transparent } } .animate-ping-once { animation: katachi-badge 1s ease-out 3 }\n${reducedMotion}` }],
   // lib/content/*.ts carries icon class names (the section list), so UnoCSS must scan it too.
   content: { pipeline: { include: [/\.(svelte|html)($|\?)/, /src\/lib\/content\/.*\.(js|ts)($|\?)/] } },
   theme: {

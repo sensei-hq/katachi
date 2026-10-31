@@ -19,14 +19,14 @@ let pad = $state<{ grab: () => string | null; clear: () => void } | null>(null);
 let inked = $state(false);
 const strip = journeyStrip('/capture');
 let files = $state<HTMLInputElement | null>(null);
-let firstName = $state<string | undefined>(undefined);
+let firstName = $state<string | undefined>(app.fileName);
 
 function useSketch() { const url = pad?.grab(); if (!url) return; c.capture(url, 'sketch'); pad?.clear(); announce(); }
 function shoot() { const side = c.current?.label ?? 'photo'; c.capture(camera?.grab() ?? demoFrame(side.toLowerCase()), 'camera'); announce(); }
 async function readAll(list: FileList | null) { firstName ??= list?.[0]?.name; await c.uploadFiles([...(list ?? [])]); announce(); }
 function announce() {
   if (!c.done) return;
-  app.flow.conversation.say(c.mode === 'single' ? (c.source === 'sketch' ? 'Nice sketch. Continue and I’ll find the shapes and turn them into layers.' : 'Got the photo. Continue and I’ll find the outline and the parts.') : 'All six sides are in. I can unfold it into flat parts now.');
+  app.flow.conversation.say(c.mode === 'single' ? (c.source === 'sketch' ? 'Nice sketch. Analyze it and I’ll find the shapes and turn them into layers.' : 'Got the photo. Analyze it and I’ll remove the background, find the items and split each into layers.') : `${c.media.length} views in. Analyze them and I’ll work out which side each shows, then unfold it into flat parts.`);
 }
 async function useThese() {
   await app.startFromCaptureMedia(firstName);
@@ -55,10 +55,10 @@ async function useThese() {
     {#if c.source === 'sketch' && !c.done}
       <Button size="lg" style="outline" icon="i-solar:check-circle-linear" label={c.mode === 'single' ? 'Use this sketch' : `Use as ${c.current?.label.toLowerCase() ?? 'view'}`} disabled={!inked} onclick={useSketch} />
     {/if}
-    {#if c.source === 'camera' && !c.done}
+    {#if c.source === 'camera' && c.current}
       <button type="button" aria-label="Take photo" class="w-16 h-16 grid place-items-center rounded-full ring-3 ring-ink" onclick={shoot}><span class="w-12 h-12 rounded-full bg-ink"></span></button>
     {/if}
-    {#if c.media.length}<Button variant="primary" size="lg" disabled={!c.done} iconRight="i-solar:arrow-right-linear" label={c.mode === 'single' ? 'Continue' : 'Unfold into parts'} onclick={() => void useThese()} />{/if}
+    {#if c.media.length}<Button variant="primary" size="lg" disabled={!c.done} icon="i-solar:magic-stick-3-linear" label={c.mode === 'single' ? (app.project?.kind === 'ref' ? 'Continue' : 'Analyze') : `Analyze ${c.media.length} views`} onclick={() => void useThese()} />{/if}
   </div>
   <footer class="shrink-0 hair-t pt-2">
     <SlotStrip slots={c.slots} selected={c.viewingId} currentId={c.current?.id ?? null} onSelect={(id) => c.view(c.slots.find((s) => s.id === id)?.url ? id : null)} onRetake={(id) => c.retake(id)} />

@@ -34,7 +34,7 @@ export async function verifySession(token: string | undefined, secret: string): 
 
 /** Reachable without a session: the gate page, its API and the static shell. */
 export function isPublicPath(path: string): boolean {
-  return path === '/' || path === '/api/gate' || path.startsWith('/_app/') || /^\/(favicon\.svg|manifest\.webmanifest|service-worker\.js|robots\.txt)$/.test(path);
+  return path === '/' || path === '/api/gate' || path === '/api/version' || path.startsWith('/_app/') || /^\/(favicon\.svg|manifest\.webmanifest|service-worker\.js|robots\.txt)$/.test(path);
 }
 export class BudgetGuard {
   spentSession = 0; spentDay = 0;

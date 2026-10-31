@@ -22,7 +22,7 @@ describe('DesignSpec strict schema (R-DS-1)', () => {
 describe('ImageBrief strict schema (design/01 S2)', () => {
   const valid = {
     subject: 'circular layered wooden wall art of a mountain sunset over a lake',
-    class: 'layered', arrangement: 'stacked', likelyMaterial: 'wood', subjectPrompt: 'layered wooden wall art',
+    class: 'layered', arrangement: 'stacked', likelyMaterial: 'wood', subjectPrompt: 'layered wooden wall art', items: [],
     regions: [{ id: 'r1', label: 'sun', samPrompt: 'light orange round sun', likelyBought: false, note: 'small disc' }],
     colourGroupsHint: 6,
     reference: null, topDownConfidence: 0.9, notes: ''
@@ -42,7 +42,7 @@ describe('ImageBrief strict schema (design/01 S2)', () => {
 describe('ImageBrief arrangement (stacked vs multiple separate items)', () => {
   it('accepts multiple-items and rejects missing arrangement', async () => {
     const { ImageBriefSchema } = await import('./schemas');
-    const base = { subject: 'five wooden bookmarks', class: 'pattern-shape', likelyMaterial: 'wood', subjectPrompt: 'wooden bookmarks', regions: [], colourGroupsHint: 1, reference: null, topDownConfidence: 0.4, notes: '' };
+    const base = { subject: 'five wooden bookmarks', class: 'pattern-shape', likelyMaterial: 'wood', subjectPrompt: 'wooden bookmarks', regions: [], items: [], colourGroupsHint: 1, reference: null, topDownConfidence: 0.4, notes: '' };
     expect(ImageBriefSchema.safeParse({ ...base, arrangement: 'multiple-items' }).success).toBe(true);
     expect(ImageBriefSchema.safeParse(base).success).toBe(false);
   });

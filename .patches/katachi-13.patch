@@ -1,0 +1,1672 @@
+diff --git a/app/src/lib/components/illustrations/StackStage.svelte b/app/src/lib/components/illustrations/StackStage.svelte
+index 5f0c0a1..45b476c 100644
+--- a/app/src/lib/components/illustrations/StackStage.svelte
++++ b/app/src/lib/components/illustrations/StackStage.svelte
+@@ -1,36 +1,43 @@
+ <script lang="ts">
+-// Assemble's stage (design/12): the empty outline of the piece, then each cut sheet in its own colour stacked
+-// back to front as it is placed; the finished photo fades in at the end. Sheets are SVG paths in 0-1000 photo
+-// units. Presentation only: the page says how many are placed and which one is still in the air.
+-let { sheets, placed, settle = 1, hidden = -1, finale = 0, photo = '', aspect = 1, label }: {
+-  sheets: { d: string; colour: string }[]; placed: number; settle?: number; hidden?: number; finale?: number; photo?: string; aspect?: number; label: string;
++// Assemble's stage (design/12): the empty outline of the piece, then each cut sheet in its own colour placed as it
++// lands — stacked back to front for layered art (the finished piece is that stack, with its depth), or one item
++// per cell for separate items (each engraving lands on its item). Sheets are SVG paths in 0-1000 units of their
++// frame. Presentation only: the page says how many are placed and which one is still in the air.
++type Sheet = { d: string; colour: string; /** separate items: which cell it belongs to, and that sheet's width ÷ height */ cell?: number; aspect?: number; engrave?: boolean };
++let { sheets, placed, settle = 1, hidden = -1, finale = 0, aspect = 1, label }: {
++  sheets: Sheet[]; placed: number; settle?: number; hidden?: number; finale?: number; aspect?: number; label: string;
+ } = $props();
+ let canvas = $state<HTMLCanvasElement | null>(null);
+ let box = $state({ w: 0, h: 0 });
+-let img = $state<HTMLImageElement | null>(null);
+-$effect(() => { if (!photo) { img = null; return; } const im = new Image(); im.onload = () => (img = im); im.src = photo; });
+-function geometry() { const side = Math.min(box.w, box.h * aspect) * 0.84; return { side, ox: (box.w - side) / 2, oy: (box.h - side / aspect) / 2 }; }
++const cells = $derived(sheets.some((s) => s.cell !== undefined) ? Math.max(...sheets.map((s) => s.cell ?? 0)) + 1 : 0);
++/** the frame a sheet is drawn in (stage px) */
++function frameOf(k: number) {
++  const s = sheets[k];
++  if (!cells) { const side = Math.min(box.w, box.h * aspect) * 0.84; return { x: (box.w - side) / 2, y: (box.h - side / aspect) / 2, w: side, h: side / aspect }; }
++  const cols = Math.min(cells, 5), rows = Math.ceil(cells / cols), cw = box.w / cols, ch = box.h / rows, c = s?.cell ?? 0;
++  const a = s?.aspect ?? 1, fw = Math.min(cw * 0.8, ch * 0.8 * a), fh = fw / a;
++  return { x: (c % cols) * cw + (cw - fw) / 2, y: Math.floor(c / cols) * ch + (ch - fh) / 2, w: fw, h: fh };
++}
+ function draw() {
+   const c = canvas; if (!c || !box.w) return;
+   const d = devicePixelRatio || 1; c.width = box.w * d; c.height = box.h * d;
+   const g = c.getContext('2d'); if (!g) return;
+   g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, box.w, box.h);
+-  const { side, ox, oy } = geometry();
+-  const at = (k: number) => { g.save(); g.translate(ox, oy); g.scale(side / 1000, side / aspect / 1000); return new Path2D(sheets[k].d); };
+-  // the placeholder: where the piece will be
+-  if (sheets[0]?.d) { const p = at(0); g.setLineDash([6, 6]); g.strokeStyle = 'rgba(128,120,110,0.8)'; g.lineWidth = 1.2 * 1000 / side; g.stroke(p); g.restore(); }
++  const path = (k: number) => { const f = frameOf(k); g.save(); g.translate(f.x, f.y); g.scale(f.w / 1000, f.h / 1000); return { p: new Path2D(sheets[k].d), unit: 1000 / f.w }; };
++  // the placeholders: where each piece will go
++  sheets.forEach((s, k) => { if (!s.d || s.engrave || (!cells && k > 0)) return; const { p, unit } = path(k); g.setLineDash([6 * unit, 6 * unit]); g.strokeStyle = 'rgba(128,120,110,0.8)'; g.lineWidth = 1.2 * unit; g.stroke(p); g.restore(); });
+   for (let k = 0; k < Math.min(placed, sheets.length); k++) {
+     if (k === hidden || !sheets[k].d) continue;
+-    const s = k === placed - 1 ? settle : 1;
+-    const p = at(k);
+-    g.shadowColor = 'rgba(0,0,0,0.35)'; g.shadowBlur = 4 + 8 * (1 - s); g.shadowOffsetY = (3 + 3 * (1 - s)) * 1000 / side;
+-    g.fillStyle = sheets[k].colour; g.fill(p, 'evenodd'); g.restore();
++    const s = k === placed - 1 ? settle : 1, { p, unit } = path(k);
++    // finished: the stack's depth shows (each layer lifted a little more than the one behind it)
++    const depth = finale * (cells ? 1 : k + 1);
++    g.shadowColor = 'rgba(0,0,0,0.35)'; g.shadowBlur = 4 + 8 * (1 - s) + depth * 2; g.shadowOffsetY = (3 + 3 * (1 - s) + depth) * unit / unit;
++    g.fillStyle = sheets[k].colour; if (sheets[k].engrave) g.globalAlpha = 0.85; g.fill(p, 'evenodd'); g.restore();
+   }
+-  if (finale > 0 && img) { g.save(); g.globalAlpha = finale; g.drawImage(img, ox - side * 0.06, oy - side * 0.06 / aspect, side * 1.12, side * 1.12 / aspect); g.restore(); }
+ }
+-$effect(() => { void [sheets, placed, settle, hidden, finale, img, box.w, box.h, aspect]; draw(); });
+-/** where a sheet lands on screen right now (the page flies the next one there) */
+-export function target() { if (!canvas) return null; const r = canvas.getBoundingClientRect(); const { side, ox, oy } = geometry(); return { x: r.left + ox, y: r.top + oy, w: side, h: side / aspect }; }
++$effect(() => { void [sheets, placed, settle, hidden, finale, box.w, box.h, aspect, cells]; draw(); });
++/** where sheet k lands on screen right now (the page flies it there) */
++export function target(k = 0) { if (!canvas) return null; const r = canvas.getBoundingClientRect(); const f = frameOf(k); return { x: r.left + f.x, y: r.top + f.y, w: f.w, h: f.h }; }
+ </script>
+ <div class="absolute inset-0" bind:clientWidth={box.w} bind:clientHeight={box.h} role="img" aria-label={label} data-stack-stage data-placed={placed}>
+   <canvas bind:this={canvas} class="block w-full h-full" aria-hidden="true"></canvas>
+diff --git a/app/src/lib/content/agents.ts b/app/src/lib/content/agents.ts
+index 777072f..8a4bdb2 100644
+--- a/app/src/lib/content/agents.ts
++++ b/app/src/lib/content/agents.ts
+@@ -7,7 +7,7 @@ import type { JourneyId } from './journey';
+ export type AgentModel = 'Muse Spark 1.3' | 'SAM 3.1' | 'Muse Image' | 'Muse Voice Transcribe' | 'Muse Wonder' | 'Code';
+ export type AgentJobId =
+   | 'intent.classify' | 'capture.describe' | 'shape.cleanSketch' | 'shape.cutout' | 'shape.segment'
+-  | 'layers.plan' | 'layers.imagineGaps' | 'layers.unfold' | 'layers.refine' | 'sheets.vectorise'
++  | 'layers.plan' | 'layers.imagineGaps' | 'layers.unfold' | 'layers.readPlan' | 'layers.refine' | 'sheets.vectorise'
+   | 'assemble.instructions' | 'assemble.render';
+ 
+ export interface AgentJob { id: AgentJobId; model: AgentModel; step: JourneyId | 'home'; label: string; route: string; status: 'live' | 'placeholder'; /** typical cost of one call (PRD 04 §4.5); placeholders show it as an estimate */ estUsd: number }
+@@ -21,6 +21,7 @@ export const agentJobs: Record<AgentJobId, AgentJob> = {
+   'layers.plan': { id: 'layers.plan', model: 'Muse Spark 1.3', step: 'layers', label: 'Groups regions into layers, back to front', route: '/api/convert', status: 'live', estUsd: 0.02 },
+   'layers.imagineGaps': { id: 'layers.imagineGaps', model: 'Muse Image', step: 'layers', label: 'Imagines what hides behind each layer', route: '/api/art', status: 'live', estUsd: 0.01 },
+   'layers.unfold': { id: 'layers.unfold', model: 'Code', step: 'layers', label: 'Stitches six views into panels with a join table', route: 'domain/stitch', status: 'live', estUsd: 0.02 },
++  'layers.readPlan': { id: 'layers.readPlan', model: 'Code', step: 'layers', label: 'Reads the sheets and pieces from a cut-plan picture', route: 'domain/layering', status: 'live', estUsd: 0 },
+   'layers.refine': { id: 'layers.refine', model: 'Muse Spark 1.3', step: 'layers', label: 'Turns what you said into an edit on the layer', route: '/api/layer-op', status: 'live', estUsd: 0.002 },
+   'sheets.vectorise': { id: 'sheets.vectorise', model: 'Code', step: 'cut', label: 'Traces each layer into cut paths and nests the sheets', route: 'lib/domain/vector', status: 'live', estUsd: 0 },
+   'assemble.instructions': { id: 'assemble.instructions', model: 'Muse Spark 1.3', step: 'assemble', label: 'Writes the assembly steps', route: '/api/design', status: 'placeholder', estUsd: 0.01 },
+diff --git a/app/src/lib/content/layers.ts b/app/src/lib/content/layers.ts
+index 9451f31..1ca5c91 100644
+--- a/app/src/lib/content/layers.ts
++++ b/app/src/lib/content/layers.ts
+@@ -6,7 +6,7 @@
+ export type LayerSetId = 'paper' | 'wood';
+ export type LayerShape = 'sky' | 'sun' | 'far' | 'ridge' | 'hills' | 'pines';
+ /** One cut layer: one or more shapes (islands) in one colour and material. A merged layer keeps its parts so Split can restore them. */
+-export interface Layer { n: number; name: string; shapes: LayerShape[]; colour: string; visiblePct: number; hiddenPct: number; material: string; flag?: string; parts?: Layer[]; /** the SAM region this layer was built from (its traced paths + photo colour) */ regionId?: string; /** owning item in a multiple-items photo (bookmarks etc.) */ itemName?: string; /** the layer's sliders (detail 1 blocky … 5 fine, weight -3 … +3) once moved */ tune?: { detail: number; weight: number }; /** separate items: cut through, or engraved (engraving runs first) */ role?: 'cut' | 'engrave' }
++export interface Layer { n: number; name: string; shapes: LayerShape[]; colour: string; visiblePct: number; hiddenPct: number; material: string; flag?: string; parts?: Layer[]; /** the SAM region this layer was built from (its traced paths + photo colour) */ regionId?: string; /** owning item in a multiple-items photo (bookmarks etc.) */ itemName?: string; /** the layer's sliders (detail 1 blocky … 5 fine, weight -3 … +3) once moved */ tune?: { detail: number; weight: number }; /** separate items: cut through, or engraved (engraving runs first) */ role?: 'cut' | 'engrave'; /** a sheet read from a cut plan (3D kits): its index in the plan */ planSheet?: number }
+ /** a layer's name without a model's own numbering ("Layer 4 - Gold Vine Skeleton" → "Gold Vine Skeleton"): the
+  *  stack order is the position, so the name never carries a number */
+ export function cleanLayerName(name: string): string { return name.replace(/^\s*layer\s*\d+\s*(\((back|mid|front)\))?\s*[-–—:·.)]?\s*/i, '').trim() || name; }
+diff --git a/app/src/lib/domain/layering.spec.ts b/app/src/lib/domain/layering.spec.ts
+index deb349a..ea08f3e 100644
+--- a/app/src/lib/domain/layering.spec.ts
++++ b/app/src/lib/domain/layering.spec.ts
+@@ -136,6 +136,47 @@ describe('one-layer corrections from the chat', async () => {
+     expect(traceFor(1).tolerance).toBeGreaterThan(traceFor(5).tolerance);
+     expect(parseLayerOp('reduce the jitter')).toEqual({ kind: 'smoother' });
+     expect(parseLayerOp('it should be one solid piece')).toEqual({ kind: 'fill' });
++    expect(parseLayerOp('complete the hidden edges of the fox bookmark')).toEqual({ kind: 'complete' });
++    expect(parseLayerOp('the corner is covered by the owl, the edges are cut off')).toEqual({ kind: 'complete' });
+     expect(parseLayerOp('just a full outline, inner sections merged')).toEqual({ kind: 'fill' });
+   });
++  it('completes an outline a neighbour bit into (its convex hull comes back)', () => {
++    const img = photo(); const subject = subjectMask(img).bits;
++    // a square with a bite taken out of one corner
++    const bitten: [number, number][][] = [[[200, 200], [800, 200], [800, 500], [500, 500], [500, 800], [200, 800]]];
++    const r = refineLayer(img, subject, { colours: ['#000000'], index: 0, current: bitten, front: [], op: { kind: 'complete' } });
++    expect(r.describe).toContain('completed the hidden edges');
++    expect(r.visiblePct).toBeGreaterThan(0);
++  });
++});
++
++describe('readPlan · a cut plan from its picture (the castle kit, samples/3D/castle/castle_5.webp)', () => {
++  it('finds the 11 framed sheets, named as the plan groups them (A1–A4, B1–B7), with pieces and engraving', async () => {
++    const sharp = (await import('sharp')).default;
++    const { readPlan } = await import('./layering');
++    const { data, info } = await sharp(`${process.cwd()}/../samples/3D/castle/castle_5.webp`).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
++    const sheets = readPlan({ w: info.width, h: info.height, data: new Uint8ClampedArray(data) });
++    expect(sheets.map((s) => s.name)).toEqual(['A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7']);
++    for (const s of sheets) { expect(s.pieces).toBeGreaterThan(5); expect(s.cut.length).toBeGreaterThan(5); expect(s.sizeMm[0]).toBe(300); }
++    expect(sheets.reduce((a, s) => a + s.pieces, 0)).toBeGreaterThan(150);
++  }, 20_000);
++});
++
++describe('woodPiece · fretwork: holes cut through, thin lines engraved', () => {
++  it('a dark blob inside the item is a hole; thin dark lines are engraving', async () => {
++    const { woodPiece, rasterisePaths } = await import('./layering');
++    const w = 100, h = 100, data = new Uint8ClampedArray(w * h * 4);
++    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
++      const i = (y * w + x) * 4, hole = Math.hypot(x - 50, y - 35) < 10, line = y > 60 && y < 85 && x > 25 && x < 75 && y % 6 === 0, outside = x < 20 || x >= 80 || y < 10 || y >= 90;
++      // a dark surface around the item: the hole shows it
++      const c = outside || hole ? [30, 22, 18] : line ? [80, 50, 25] : [210, 170, 120];
++      data[i] = c[0]; data[i + 1] = c[1]; data[i + 2] = c[2]; data[i + 3] = 255;
++    }
++    const item = rasterisePaths([[[200, 100], [800, 100], [800, 900], [200, 900]]], w, h);
++    const r = woodPiece({ w, h, data }, item);
++    expect(r.holesPct).toBeGreaterThan(5); expect(r.holesPct).toBeLessThan(10);
++    expect(r.engravePct).toBeGreaterThan(1);
++    expect(r.holePaths.length).toBe(1);
++    expect(r.cutPaths.length).toBe(2);
++  });
+ });
+diff --git a/app/src/lib/domain/layering.ts b/app/src/lib/domain/layering.ts
+index 2edfc23..f209388 100644
+--- a/app/src/lib/domain/layering.ts
++++ b/app/src/lib/domain/layering.ts
+@@ -4,6 +4,7 @@
+ // wood piece are *colour groups*, so each layer's mask comes from the photo's pixels, not from a phrase.
+ // Pure functions on RGBA pixel arrays; no DOM. Paths come back in 0-1000 image coordinates.
+ import { traceMask, type Mask } from './vector';
++import { hullOf } from './toolpath';
+ import type { PixelImage } from './colour';
+ 
+ export type Lab = [number, number, number];
+@@ -324,7 +325,9 @@ export type LayerOp =
+   /** smooth the edges inside a selected area; strength 1 (smooth) … 3 (reduce jitter) */
+   | { kind: 'smoothArea'; box: Box; strength: number }
+   /** one solid outline: the inner sections filled in ("the base would just be a full outline") */
+-  | { kind: 'fill' };
++  | { kind: 'fill' }
++  /** complete the hidden edges: an item partly covered by its neighbour in the photo gets its full outline back */
++  | { kind: 'complete' };
+ 
+ /** the detail slider's trace settings: finer = less simplification and rounding */
+ export const traceFor = (detail: number) => ({ tolerance: 0.5 + (5 - detail) * 0.45, smooth: detail >= 4 ? 2 : 3 });
+@@ -365,6 +368,7 @@ export function parseLayerOp(text: string): LayerOp | null {
+   if (removing && /\b(background|backdrop|wall|shadows?|texture)\b/.test(t)) return { kind: 'remove', backdrop: true };
+   if (colourWord && (removing || /\bnot\b/.test(t))) return { kind: 'remove', colour: hexToLab(NAMED[colourWord])!, word: colourWord };
+   if (colourWord && /\b(add|include|keep|with|also|merge|missing)\b/.test(t)) return { kind: 'add', colour: hexToLab(NAMED[colourWord])!, word: colourWord };
++  if (/\b(complete|restore|recover|rebuild)\b.*\b(hidden|edges?|corners?|outline|shape|parts?)\b|\b(hidden|covered|overlapp(ed|ing)|cut off|chopped)\b.*\b(edges?|corners?|parts?|bits?)\b|\bstraight(en)? (the )?edges\b/.test(t)) return { kind: 'complete' };
+   if (/\b(full|solid|whole|filled|enclosing|outer) (outline|silhouette|shape|piece|backing)\b|\b(completely |fully )?filled\b|\bfill(ed)? (it|in|up|out)?\s*(the )?(holes|gaps|inner|inside|middle|shape|outline|whole)?\b|\binner (sections?|parts?|holes?)\b|\bno (holes|gaps)\b|\bone (solid )?piece\b/.test(t)) return { kind: 'fill' };
+   if (/\b(whiskers?|hairs?|fur|fine|details?|thin lines|strokes|lost|missing|sharper|crisper)\b/.test(t)) return { kind: 'detail' };
+   if (/\b(bolder|thicker|wider|fatter|heavier|grow)\b/.test(t)) return { kind: 'bolder' };
+@@ -421,6 +425,14 @@ export function refineLayer(img: PixelImage, subject: Uint8Array, opts: { colour
+     for (let y = y1; y <= y2; y++) for (let x = x1; x <= x2; x++) bits[y * w + x] = smooth[y * w + x];
+     trace = s >= 3 ? { tolerance: 1.6, smooth: 3 } : {};
+     describe = s >= 3 ? 'reduced the jitter in the selected area' : 'smoothed the curves in the selected area';
++  } else if (op.kind === 'complete') {
++    // the outline's convex hull: what a neighbour lying over it hid comes back as straight edges
++    const pts: [number, number][] = [];
++    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * w + x; if (bits[i] && (x === 0 || y === 0 || x === w - 1 || y === h - 1 || !bits[i - 1] || !bits[i + 1] || !bits[i - w] || !bits[i + w])) pts.push([((x + 0.5) / w) * 1000, ((y + 0.5) / h) * 1000]); }
++    const before = bits.reduce((a, v) => a + v, 0);
++    // only the bitten-off part is filled (solid); the piece's own holes and cut-outs stay as they are
++    if (pts.length > 2) { const hull = rasterisePaths([hullOf(pts)], w, h), whole = fillHoles(bits, w, h); for (let i = 0; i < w * h; i++) if (hull[i] && !whole[i]) bits[i] = 1; }
++    describe = `completed the hidden edges (${Math.round(((bits.reduce((a, v) => a + v, 0) - before) / (w * h)) * 1000) / 10}% of the photo added back)`;
+   } else if (op.kind === 'fill') {
+     const before = bits.reduce((a, v) => a + v, 0);
+     // the enclosing shape: close the small gaps along the edge, then fill everything inside it
+@@ -437,3 +449,153 @@ export function refineLayer(img: PixelImage, subject: Uint8Array, opts: { colour
+   if (op.kind === 'fill') { const filled = fillHoles(sheet, w, h); sheetN = 0; for (let i = 0; i < w * h; i++) { sheet[i] = filled[i]; sheetN += filled[i]; } }
+   return { visiblePaths: maskToPaths(bits, w, h, trace), sheetPaths: maskToPaths(opts.index === 0 ? fillHoles(sheet, w, h) : sheet, w, h, trace), visiblePct: Math.round((vis / Math.max(1, total)) * 1000) / 10, hiddenPct: Math.round(((sheetN - vis) / Math.max(1, sheetN)) * 1000) / 10, describe };
+ }
++
++/**
++ * One flat item cut from wood or acrylic (a fretwork bookmark): inside its outline, the dark tone is either holes
++ * cut right through (blobs: the background shows) or engraving (thin lines burnt into the surface). Returns the piece
++ * to cut (the item minus its holes, which become inner cuts) and the engraving, as 0-1000 paths.
++ */
++type WoodPiece = { cutPaths: [number, number][][]; holePaths: [number, number][][]; engravePaths: [number, number][][]; holesPct: number; engravePct: number };
++export function woodPiece(img: PixelImage, item: Uint8Array): WoodPiece {
++  // work on the item's own box (plus a margin for its surroundings): a small item in a big photo stays fast
++  let x1 = img.w, y1 = img.h, x2 = -1, y2 = -1;
++  for (let y = 0; y < img.h; y++) for (let x = 0; x < img.w; x++) if (item[y * img.w + x]) { if (x < x1) x1 = x; if (x > x2) x2 = x; if (y < y1) y1 = y; if (y > y2) y2 = y; }
++  if (x2 < 0) return { cutPaths: [], holePaths: [], engravePaths: [], holesPct: 0, engravePct: 0 };
++  const m = 12; x1 = Math.max(0, x1 - m); y1 = Math.max(0, y1 - m); x2 = Math.min(img.w - 1, x2 + m); y2 = Math.min(img.h - 1, y2 + m);
++  const sw = x2 - x1 + 1, sh = y2 - y1 + 1;
++  if (sw === img.w && sh === img.h) return woodPieceIn(img, item);
++  const data = new Uint8ClampedArray(sw * sh * 4), sub = new Uint8Array(sw * sh);
++  const src = img.data;
++  for (let y = 0; y < sh; y++) { for (let k = 0; k < sw * 4; k++) data[y * sw * 4 + k] = src[((y + y1) * img.w + x1) * 4 + k]; sub.set(item.subarray((y + y1) * img.w + x1, (y + y1) * img.w + x2 + 1), y * sw); }
++  const r = woodPieceIn({ w: sw, h: sh, data }, sub);
++  const back = (paths: [number, number][][]) => paths.map((p) => p.map(([x, y]) => [Math.round(((x1 + (x / 1000) * sw) / img.w) * 10000) / 10, Math.round(((y1 + (y / 1000) * sh) / img.h) * 10000) / 10] as [number, number]));
++  return { ...r, cutPaths: back(r.cutPaths), holePaths: back(r.holePaths), engravePaths: back(r.engravePaths) };
++}
++function woodPieceIn(img: PixelImage, item: Uint8Array): WoodPiece {
++  const { w, h } = img, labs = labsOf(img);
++  const idx: number[] = []; for (let i = 0; i < w * h; i++) if (item[i]) idx.push(i);
++  if (idx.length < 20) return { cutPaths: [], holePaths: [], engravePaths: [], holesPct: 0, engravePct: 0 };
++  // what lies around the item (a ring just outside it): a hole shows that, whether it is dark marble or pale cloth
++  let near: Uint8Array = item; for (let k = 0; k < 2; k++) near = dilate(near, w, h);
++  let far: Uint8Array = near; for (let k = 0; k < 4; k++) far = dilate(far, w, h);
++  const ring: number[] = []; for (let i = 0; i < w * h; i++) if (far[i] && !near[i]) ring.push(i);
++  const bg: Lab = [0, 0, 0]; for (const i of ring) for (let c = 0; c < 3; c++) bg[c] += labs[i * 3 + c] / Math.max(1, ring.length);
++  // the wood: if one of two tones inside the item is the surroundings showing through, the other one; if neither
++  // is (no holes), the lighter one — engraving is burnt darker
++  const { centres } = kmeans(labs, idx, 2, [], 10);
++  const dc = (p: Lab, q: Lab) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
++  const [c0, c1] = centres, nearBg = dc(c0, bg) <= dc(c1, bg) ? 0 : 1;
++  const wood = ring.length && dc(centres[nearBg], bg) < 25 ? centres[1 - nearBg] : c0[0] >= c1[0] ? c0 : c1;
++  // too like the surroundings to tell a hole from the wood: no holes are judged
++  const axis = dc(bg, wood) > 15 ? dc(bg, wood) ** 2 : 0;
++  // see-through: nearer the surroundings than the wood; engraved: darker than the wood (burnt), not see-through
++  const through = new Uint8Array(w * h), dark = new Uint8Array(w * h);
++  for (const i of idx) {
++    // how far from the wood towards the surroundings (0 wood … 1 surroundings); a hole in shadow sits short of 1
++    if (ring.length && axis > 0 && ((labs[i * 3] - wood[0]) * (bg[0] - wood[0]) + (labs[i * 3 + 1] - wood[1]) * (bg[1] - wood[1]) + (labs[i * 3 + 2] - wood[2]) * (bg[2] - wood[2])) / axis > 0.4) through[i] = 1;
++    if (labs[i * 3] < wood[0] - 12) dark[i] = 1;
++  }
++  // holes are blobs (they survive an opening: erode then dilate twice); thin see-through slivers are shading
++  // (how hard depends on the item's size in the picture: a small earring's lattice holes are only a few pixels)
++  const open = idx.length > 25000 ? 2 : 1;
++  // a small hole in shadow looks dark, not like the surroundings: dark blobs are holes too (engraving is thin lines)
++  const either = new Uint8Array(w * h); for (const i of idx) if (through[i] || dark[i]) either[i] = 1;
++  let blobs: Uint8Array = either; for (let k = 0; k < open; k++) blobs = erode(blobs, w, h); for (let k = 0; k < open; k++) blobs = dilate(blobs, w, h);
++  const minHole = Math.max(4, Math.round(idx.length * 0.0008));
++  const holes = new Uint8Array(w * h);
++  for (const comp of components(blobs, w, h)) if (comp.length >= minHole) for (const i of comp) holes[i] = 1;
++  const piece = new Uint8Array(w * h), engr = new Uint8Array(w * h);
++  let nh = 0, ne = 0;
++  // dark right against a hole or the outer edge is the cut wall's shadow, not engraving
++  let wall: Uint8Array = holes; for (let k = 0; k < 2; k++) wall = dilate(wall, w, h);
++  let edge: Uint8Array = item; for (let k = 0; k < 2; k++) edge = erode(edge, w, h);
++  for (const i of idx) { if (holes[i]) { nh++; continue; } piece[i] = 1; if (dark[i] && !wall[i] && edge[i]) { engr[i] = 1; ne++; } }
++  const inHoles = new Uint8Array(w * h); for (const i of idx) if (holes[i]) inHoles[i] = 1;
++  return { cutPaths: maskToPaths(piece, w, h), holePaths: maskToPaths(inHoles, w, h), engravePaths: maskToPaths(engr, w, h), holesPct: Math.round((nh / idx.length) * 1000) / 10, engravePct: Math.round((ne / idx.length) * 1000) / 10 };
++}
++
++/**
++ * Read a cut plan from a picture of it (a parts layout: square sheets with coloured lines on a light page).
++ * Each sheet is found as a big framed block; inside it, blue/black lines are cuts and red/green marks are
++ * engraving. The pieces are the regions the cut lines close off (the scrap between them is what connects to the
++ * sheet's edge). A low-resolution picture gives approximate shapes: good for a preview and a count, not a precise
++ * cut file — the original file (SVG/DXF) is what to cut from.
++ */
++export interface PlanSheet { name: string; box: { x: number; y: number; w: number; h: number }; cut: [number, number][][]; engrave: [number, number][][]; pieces: number; sizeMm: [number, number] }
++export function readPlan(img: PixelImage, { sheetMm = 300 }: { sheetMm?: number } = {}): PlanSheet[] {
++  const { w, h, data } = img;
++  const px = (i: number) => [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]];
++  // the page colour: the most common light colour around the border
++  let br = 0, bg = 0, bb = 0, n = 0;
++  for (let x = 0; x < w; x += 3) for (const y of [0, h - 1]) { const [r, g, b] = px(y * w + x); br += r; bg += g; bb += b; n++; }
++  br /= n; bg /= n; bb /= n;
++  const ink = new Uint8Array(w * h), red = new Uint8Array(w * h), green = new Uint8Array(w * h);
++  for (let i = 0; i < w * h; i++) {
++    const [r, g, b] = px(i);
++    if (Math.abs(r - br) + Math.abs(g - bg) + Math.abs(b - bb) < 70) continue;
++    ink[i] = 1;
++    if (r > g + 50 && r > b + 50) red[i] = 1; else if (g > r + 25 && g > b + 10) green[i] = 1;
++  }
++  // sheets: big blocks of ink (lines merge into one block once thickened)
++  let grown: Uint8Array = ink; for (let k = 0; k < 3; k++) grown = dilate(grown, w, h);
++  const blocks = components(grown, w, h).map((c) => { let x1 = w, y1 = h, x2 = 0, y2 = 0; for (const i of c) { const x = i % w, y = (i / w) | 0; if (x < x1) x1 = x; if (x > x2) x2 = x; if (y < y1) y1 = y; if (y > y2) y2 = y; } return { x: x1, y: y1, w: x2 - x1 + 1, h: y2 - y1 + 1 }; })
++    .filter((b) => b.w > w * 0.08 && b.h > h * 0.08 && b.w / b.h > 0.5 && b.w / b.h < 2);
++  // plans group their sheets (A1–A4 on the left, B1–B7 on the right): a wide empty column splits the groups;
++  // within a group, sheets read row by row
++  const xs = [...blocks].sort((a, b) => a.x - b.x), groupOf = new Map<(typeof blocks)[number], number>();
++  let g = 0; xs.forEach((b, i) => { if (i && b.x - Math.max(...xs.slice(0, i).map((p) => p.x + p.w)) > b.w * 0.35) g++; groupOf.set(b, g); });
++  blocks.sort((a, b) => groupOf.get(a)! - groupOf.get(b)! || (Math.abs(a.y - b.y) < Math.min(a.h, b.h) / 2 ? a.x - b.x : a.y - b.y));
++  const counts: number[] = [];
++  const sheets: PlanSheet[] = [];
++  for (const blk of blocks) {
++    // the sheet's frame: the rows and columns that are mostly ink (its four edges); the label above it is not
++    const rowInk = (y: number) => { let c = 0; for (let x = blk.x; x < blk.x + blk.w; x++) c += ink[y * w + x]; return c; };
++    const colInk = (x: number) => { let c = 0; for (let y = blk.y; y < blk.y + blk.h; y++) c += ink[y * w + x]; return c; };
++    const rows: number[] = [], cols: number[] = [];
++    for (let y = blk.y; y < blk.y + blk.h; y++) if (rowInk(y) > blk.w * 0.6) rows.push(y);
++    for (let x = blk.x; x < blk.x + blk.w; x++) if (colInk(x) > blk.h * 0.55) cols.push(x);
++    const bx = rows.length > 1 && cols.length > 1 ? { x: cols[0], y: rows[0], w: cols[cols.length - 1] - cols[0] + 1, h: rows[rows.length - 1] - rows[0] + 1 } : blk;
++    const pad = 3, sw = bx.w - pad * 2, sh = bx.h - pad * 2;
++    if (sw < 20 || sh < 20) continue;
++    const at = (x: number, y: number) => (bx.y + pad + y) * w + (bx.x + pad + x);
++    let line = new Uint8Array(sw * sh); const mark = new Uint8Array(sw * sh);
++    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) { const i = at(x, y); if (red[i] || green[i]) mark[y * sw + x] = 1; else if (ink[i]) line[y * sw + x] = 1; }
++    // a low-res picture breaks thin lines: close one-pixel gaps before deciding what is enclosed
++    line = dilate(line, sw, sh) as Uint8Array<ArrayBuffer>;
++    // every enclosed region (between the lines) gets a label; the regions the sheet's edge reaches are scrap
++    const label = new Int32Array(sw * sh).fill(-1); const sizes: number[] = [];
++    for (let i0 = 0; i0 < sw * sh; i0++) {
++      if (line[i0] || label[i0] >= 0) continue;
++      const id = sizes.length, stack = [i0]; let n = 0; label[i0] = id;
++      while (stack.length) { const i = stack.pop()!; n++; for (const k of neighbours4(i, sw, sh)) if (!line[k] && label[k] < 0) { label[k] = id; stack.push(k); } }
++      sizes.push(n);
++    }
++    // which regions face each other across a line (looking a few pixels each way)
++    const near = new Map<number, Set<number>>(); const R = 3;
++    const link = (a: number, b: number) => { if (a === b || a < 0 || b < 0) return; (near.get(a) ?? near.set(a, new Set()).get(a)!).add(b); (near.get(b) ?? near.set(b, new Set()).get(b)!).add(a); };
++    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
++      if (!line[y * sw + x]) continue;
++      const l = x >= R ? label[y * sw + x - R] : -1, r = x + R < sw ? label[y * sw + x + R] : -1, u = y >= R ? label[(y - R) * sw + x] : -1, d = y + R < sh ? label[(y + R) * sw + x] : -1;
++      link(l, r); link(u, d);
++    }
++    // depth from the scrap: 1 = a piece, 2 = a hole in it, 3 = a piece cut inside that hole, ...
++    const depth = new Array(sizes.length).fill(-1), queue: number[] = [];
++    const edgeLabels = new Set<number>();
++    for (let x = 0; x < sw; x++) { edgeLabels.add(label[x]); edgeLabels.add(label[(sh - 1) * sw + x]); }
++    for (let y = 0; y < sh; y++) { edgeLabels.add(label[y * sw]); edgeLabels.add(label[y * sw + sw - 1]); }
++    for (const l of edgeLabels) if (l >= 0) { depth[l] = 0; queue.push(l); }
++    while (queue.length) { const a = queue.shift()!; for (const b of near.get(a) ?? []) if (depth[b] < 0) { depth[b] = depth[a] + 1; queue.push(b); } }
++    const piece = new Uint8Array(sw * sh);
++    for (let i = 0; i < sw * sh; i++) { const l = label[i]; if (l >= 0 && depth[l] > 0 && depth[l] % 2 === 1) piece[i] = 1; }
++    // pieces take the lines around them back (each line is half piece, half scrap): grow into the line pixels only
++    for (let k = 0; k < 2; k++) { const g = dilate(piece, sw, sh); for (let i = 0; i < sw * sh; i++) if (g[i] && line[i]) piece[i] = 1; }
++    const keep = new Uint8Array(sw * sh); let pieces = 0;
++    for (const c of components(piece, sw, sh)) { if (c.length < sw * sh * 0.0008 || c.length > sw * sh * 0.9) continue; pieces++; for (const i of c) keep[i] = 1; }
++    const kx = sheetMm / sw, ky = (sheetMm * (sh / sw)) / sh;
++    const toMmPaths = (bits: Uint8Array) => traceMask({ w: sw, h: sh, bits }, { turdSize: 4, tolerance: 0.7, smooth: 1 }).paths.map((p) => p.points.map(([x, y]) => [Math.round(x * kx * 10) / 10, Math.round(y * ky * 10) / 10] as [number, number]));
++    const around = dilate(keep, sw, sh), marks = new Uint8Array(sw * sh); for (let i = 0; i < sw * sh; i++) if (mark[i] && around[i]) marks[i] = 1;
++    const gi = groupOf.get(blk)!; counts[gi] = (counts[gi] ?? 0) + 1;
++    sheets.push({ name: `${String.fromCharCode(65 + gi)}${counts[gi]}`, box: bx, cut: toMmPaths(keep), engrave: toMmPaths(marks), pieces, sizeMm: [sheetMm, Math.round(sheetMm * (sh / sw))] });
++  }
++  return sheets;
++}
+diff --git a/app/src/lib/domain/toolpath.spec.ts b/app/src/lib/domain/toolpath.spec.ts
+index 233356d..8c2469f 100644
+--- a/app/src/lib/domain/toolpath.spec.ts
++++ b/app/src/lib/domain/toolpath.spec.ts
+@@ -37,3 +37,32 @@ describe('the cutting program', () => {
+     expect(toMm([[[0, 0], [1, 1]]], 300)).toEqual([]);
+   });
+ });
++
++describe('separate items: each on its own sheet, straightened', async () => {
++  const { longAxis, uprightTurn, layOut, sheetD } = await import('./toolpath');
++  // a 20 × 100 bookmark tilted 20° from upright
++  const tilt = (deg: number): Pt[] => { const r = (deg * Math.PI) / 180; return ([[-10, -50], [10, -50], [10, 50], [-10, 50]] as Pt[]).map(([x, y]) => [200 + x * Math.cos(r) - y * Math.sin(r), 100 + x * Math.sin(r) + y * Math.cos(r)]); };
++  it('finds the long axis and the turn that stands it upright', () => {
++    expect(Math.abs(longAxis([tilt(0)]).angle)).toBeCloseTo(90, 0);
++    const { turn } = uprightTurn([tilt(20)]);
++    expect(turn).toBeCloseTo(-20, 0);
++    expect(uprightTurn([tilt(0.5)]).turn).toBe(0);
++    expect(longAxis([]).angle).toBe(90);
++  });
++  it('lays it out upright at the sheet corner; the same turn and frame apply to its engraving', () => {
++    const b = [tilt(20)], { turn, centre } = uprightTurn(b);
++    const out = layOut(b, turn, centre);
++    expect(out.size[0]).toBeGreaterThanOrEqual(29); expect(out.size[0]).toBeLessThanOrEqual(31);
++    expect(out.size[1]).toBeGreaterThanOrEqual(109); expect(out.size[1]).toBeLessThanOrEqual(111);
++    const inner = layOut([[[200, 100], [201, 100], [201, 101]]], turn, centre, out.frame);
++    expect(inner.shapes[0][0][0]).toBeGreaterThan(5);
++    expect(sheetD([[[0, 0], [10, 0], [10, 20]]], [10, 20])).toBe('M0 0L1000 0L1000 1000Z');
++  });
++  it('notices an outline with a bite taken out of it (a neighbour lay over it)', async () => {
++    const { hiddenShare, hullOf } = await import('./toolpath');
++    expect(hiddenShare([[[0, 0], [10, 0], [10, 10], [0, 10]]])).toBe(0);
++    expect(hiddenShare([[[0, 0], [10, 0], [10, 5], [5, 5], [5, 10], [0, 10]]])).toBe(0.14);
++    expect(hiddenShare([])).toBe(0);
++    expect(hullOf([[0, 0], [1, 1]])).toHaveLength(2);
++  });
++});
+diff --git a/app/src/lib/domain/toolpath.ts b/app/src/lib/domain/toolpath.ts
+index d22a6d5..95f306c 100644
+--- a/app/src/lib/domain/toolpath.ts
++++ b/app/src/lib/domain/toolpath.ts
+@@ -69,3 +69,58 @@ export function program(tp: Toolpath, machine: Machine, o: ProgramOptions = {}):
+ }
+ /** the whole program as a downloadable text (G-code for a laser, plotter moves for a blade cutter) */
+ export const programText = (tp: Toolpath, machine: Machine, o: ProgramOptions = {}) => program(tp, machine, o).lines.join('\n') + '\n';
++
++// ── Separate items (bookmarks, coasters): each one laid out on its own sheet, straightened ────────────────────
++/** the angle (degrees) of a shape's long axis, from its outline sampled evenly along its length (principal axis) */
++export function longAxis(shapes: Pt[][]): { angle: number; centre: Pt } {
++  const pts: Pt[] = [];
++  for (const s of shapes) for (let i = 0; i < s.length; i++) {
++    const a = s[i], b = s[(i + 1) % s.length], n = Math.max(1, Math.round(dist(a, b)));
++    for (let k = 0; k < n; k++) pts.push([a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n]);
++  }
++  if (!pts.length) return { angle: 90, centre: [0, 0] };
++  const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length, cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
++  let sxx = 0, syy = 0, sxy = 0;
++  for (const [x, y] of pts) { sxx += (x - cx) ** 2; syy += (y - cy) ** 2; sxy += (x - cx) * (y - cy); }
++  return { angle: (Math.atan2(2 * sxy, sxx - syy) / 2) * (180 / Math.PI), centre: [cx, cy] };
++}
++/** the turn that stands a shape upright (its long axis vertical); tiny turns are left alone */
++export function uprightTurn(shapes: Pt[][]): { turn: number; centre: Pt } {
++  const { angle, centre } = longAxis(shapes);
++  let turn = 90 - angle;
++  while (turn > 90) turn -= 180;
++  while (turn < -90) turn += 180;
++  return { turn: Math.abs(turn) < 1.5 ? 0 : Math.round(turn * 10) / 10, centre };
++}
++/** turn shapes by `deg` around `centre`, then move them so their bounds start at `margin` mm */
++export function layOut(shapes: Pt[][], deg: number, centre: Pt, frame?: { x: number; y: number }, margin = 5): { shapes: Pt[][]; size: [number, number]; frame: { x: number; y: number } } {
++  const r = (deg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
++  const turned = shapes.map((p) => p.map(([x, y]) => { const dx = x - centre[0], dy = y - centre[1]; return [centre[0] + dx * c - dy * s, centre[1] + dx * s + dy * c] as Pt; }));
++  const all = turned.flat();
++  const fx = frame?.x ?? Math.min(...all.map((p) => p[0])), fy = frame?.y ?? Math.min(...all.map((p) => p[1]));
++  const moved = turned.map((p) => p.map(([x, y]) => [Math.round((x - fx + margin) * 100) / 100, Math.round((y - fy + margin) * 100) / 100] as Pt));
++  const mx = Math.max(...moved.flat().map((p) => p[0])), my = Math.max(...moved.flat().map((p) => p[1]));
++  return { shapes: moved, size: [Math.ceil(mx + margin), Math.ceil(my + margin)], frame: { x: fx, y: fy } };
++}
++/** shapes in mm on a sheet of `size` → an SVG path in 0-1000 units of the sheet (thumbnails) */
++export function sheetD(shapes: Pt[][], size: [number, number]): string {
++  return shapes.map((p) => `M${p.map(([x, y]) => `${Math.round((x / size[0]) * 10000) / 10} ${Math.round((y / size[1]) * 10000) / 10}`).join('L')}Z`).join('');
++}
++
++/** the convex hull of points (monotone chain) */
++export function hullOf(points: Pt[]): Pt[] {
++  const p = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
++  if (p.length < 3) return p;
++  const cross = (o: Pt, a: Pt, b: Pt) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
++  const lo: Pt[] = [], up: Pt[] = [];
++  for (const q of p) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
++  for (const q of p.reverse()) { while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
++  return [...lo.slice(0, -1), ...up.slice(0, -1)];
++}
++/** how much of an item's outline seems bitten away (by a neighbour lying over it): its hull's area ÷ its own area */
++export function hiddenShare(shapes: Pt[][]): number {
++  const outer = shapes.reduce<Pt[] | null>((b, c) => (!b || areaOf(c) > areaOf(b) ? c : b), null);
++  if (!outer) return 0;
++  const a = areaOf(outer), h = areaOf(hullOf(outer));
++  return a > 0 ? Math.max(0, Math.round((1 - a / h) * 100) / 100) : 0;
++}
+diff --git a/app/src/lib/state/app.svelte.ts b/app/src/lib/state/app.svelte.ts
+index acd2177..61714c9 100644
+--- a/app/src/lib/state/app.svelte.ts
++++ b/app/src/lib/state/app.svelte.ts
+@@ -10,17 +10,17 @@ import { MuseAgents } from './muse.svelte';
+ import { getCraftData, getMedia, putCraftData, putMedia, removeCraftData, removeMedia } from './media-store';
+ 
+ /** results too large for the localStorage craft list: kept per craft in IndexedDB */
+-const HEAVY = ['regionList', 'subjectPaths', 'sheetPaths', 'objectSpec'] as const;
++const HEAVY = ['regionList', 'subjectPaths', 'sheetPaths', 'objectSpec', 'plan'] as const;
+ import { downscale } from './photo';
+ import { parseLayerOp, translatePaths, type Box, type DrawnShape, type LayerOp } from '../domain/layering';
+ import { pointsToPath } from '../domain/vector';
+-import { toMm } from '../domain/toolpath';
++import { hiddenShare } from '../domain/toolpath';
+ 
+ /** what the layer toolbar asks for; every one is said in the chat first, then applied */
+ export type LayerAction =
+   | { kind: 'hide' } | { kind: 'show' } | { kind: 'only' } | { kind: 'duplicate' } | { kind: 'merge' } | { kind: 'mergeWith'; other: number } | { kind: 'split' }
+   | { kind: 'tune'; detail: number; weight: number } | { kind: 'shape'; shape: DrawnShape; mode: 'add' | 'erase' }
+-  | { kind: 'smoothArea'; box: Box; strength: number } | { kind: 'move'; dx: number; dy: number };
++  | { kind: 'smoothArea'; box: Box; strength: number } | { kind: 'move'; dx: number; dy: number } | { kind: 'remove' };
+ 
+ /** "remove the background", "get rid of the textured wall", "no shadows"… — the user wants the backdrop gone */
+ export const BACKDROP_ASK = /\b(remove|drop|delete|erase|clear|get rid of|cut out|without|no|lose)\b[^.]*\b(background|backdrop|wall|shadows?|plants?|shelf|surroundings)\b|\b(background|backdrop|wall)\b[^.]*\b(removed|gone|out|needs to go|should go)\b/i;
+@@ -154,7 +154,7 @@ export class AppState {
+     this.project = { id: crypto.randomUUID(), name: '', createdAt: now, updatedAt: now, reached: -1, kind: 'flat', path: '/capture', image: '', choices: {}, status: 'draft' };
+   }
+   /** Home · a new craft from a starting point (or from what was said or typed): Capture opens set up for it. */
+-  startCraft(from: StartId | string, { heard = false } = {}): string {
++  startCraft(from: StartId | string, { heard = false, say }: { heard?: boolean; /** what the chat opens with instead of the start's own line */ say?: string } = {}): string {
+     const picked = starts.find((s) => s.id === from);
+     // a new craft starts a new chat: what was said goes into it
+     this.newProject();
+@@ -164,7 +164,7 @@ export class AppState {
+     this.layers.setKind(start.kind);
+     this.capture.setMode(start.mode);
+     this.capture.setSource(start.source);
+-    this.flow.conversation.say(start.say);
++    this.flow.conversation.say(say ?? start.say);
+     return '/capture';
+   }
+   /** The first step: what was captured names the project and opens the flow (six sides go to the six-view step). */
+@@ -250,7 +250,7 @@ export class AppState {
+     if (id === 'views' || id === 'reference') return true;
+     // once the craft has its layers, Preview, Cut and Assemble are open (no walking through every step)
+     const at = steps.findIndex((s) => s.id === 'layers');
+-    if (id === 'gaps' || id === 'output' || id === 'assemble') return Boolean(this.project?.example) || (reached >= at && this.layers.layers.length > 0) || steps.findIndex((s) => s.id === id) <= reached;
++    if (id === 'gaps' || id === 'output' || id === 'assemble') return Boolean(this.project?.example) || ((reached >= at || this.project?.kind === '3d') && this.layers.layers.length > 0) || steps.findIndex((s) => s.id === id) <= reached;
+     return steps.findIndex((s) => s.id === id) <= reached + 1;
+   }
+   /** The furthest open step (where a blocked visit lands). */
+@@ -279,7 +279,7 @@ export class AppState {
+         'shape.segment': this.layers.regionList.some((r) => r.paths?.length || r.box),
+         'layers.plan': this.layers.stack.length > 0 && (this.layers.regionList.length === 0 || this.layers.stack.some((l) => l.regionId)),
+         'sheets.vectorise': this.layers.sheetPaths.length >= Math.max(1, this.layers.stack.length),
+-        'layers.unfold': this.layers.objectSpec !== null
++        'layers.unfold': this.layers.objectSpec !== null || this.layers.plan.length > 0
+       };
+       if (have[job]) continue;
+       // each result is written into the flow state; the pages only ever read that state
+@@ -291,15 +291,38 @@ export class AppState {
+       else if (job === 'layers.plan') this.planReady = this.runPlan();
+       else if (job === 'layers.imagineGaps') void this.muse.imagineGaps(craft, image);
+       else if (job === 'layers.unfold') {
+-        void (this.briefReady ?? Promise.resolve()).then(() => this.muse.stitchViews(craft, { views: this.viewImages(image), sizeMm: f.outline.sizeMm, joinery: f.joinery })).then((r) => {
+-          f.applySpec(r.spec); f.applyParts(r.parts); f.applyLayers(r.layers); f.applySheets(r.sheets);
+-          this.flow.conversation.say(`Stitched your views into one object: ${r.spec.wMm} × ${r.spec.dMm} × ${r.spec.hMm} mm, ${r.spec.panels.length} panels and ${r.spec.joins.length} ${f.joinery} joins.${r.spec.symmetry.length ? ` Symmetric: ${r.spec.symmetry.join(', ')}.` : ''}${r.spec.warnings.length ? ` Heads up: ${r.spec.warnings.join(' ')}` : ''}`);
++        // a kit with a cut plan: its sheets come from the plan (code reads it), not from stitching the views
++        void (this.briefReady ?? Promise.resolve()).then(() => {
++          const plan = f.pictures.find((p) => p.kind === 'plan'), url = plan ? this.capture.media[plan.index - 1]?.url : undefined;
++          return url ? this.readPlan(craft, url) : this.stitch(craft, image);
+         });
+       }
+       else if (job === 'sheets.vectorise') void this.muse.vectorise(craft, f.layers.length, this.sheetOpts()).then((r) => { f.applySheets(r.sheetsData); if (r.pathCount) this.flow.conversation.say(`Traced ${r.pathCount} closed paths across ${r.sheetsData.length} sheets (${r.sheetsData.reduce((a, s) => a + s.cutLengthMm, 0).toFixed(0)} mm of cut). Pick a device and send the first sheet.`); });
+       else if (job === 'assemble.instructions') void this.muse.writeInstructions(craft, this.assembly).then((r) => { this.instructions = r; });
+     }
+   }
++  /** 3D · the views stitched into one object (panels as sheets) */
++  private stitch(craft: string, image?: string) {
++    const f = this.layers;
++    return this.muse.stitchViews(craft, { views: this.viewImages(image), sizeMm: f.outline.sizeMm, joinery: f.joinery }).then((r) => {
++      if (this.project?.id !== craft) return;
++      f.applySpec(r.spec); f.applyParts(r.parts); f.applyLayers(r.layers); f.applySheets(r.sheets); this.save();
++      this.flow.conversation.say(`Stitched your views into one object: ${r.spec.wMm} × ${r.spec.dMm} × ${r.spec.hMm} mm, ${r.spec.panels.length} panels and ${r.spec.joins.length} ${f.joinery} joins.${r.spec.symmetry.length ? ` Symmetric: ${r.spec.symmetry.join(', ')}.` : ''}${r.spec.warnings.length ? ` Heads up: ${r.spec.warnings.join(' ')}` : ''}`);
++    });
++  }
++  /** 3D kit · its sheets read from the cut-plan picture, said in the chat as a step */
++  private readPlan(craft: string, url: string) {
++    const f = this.layers, c = this.flow.conversation, key = this.stepKey('plan');
++    c.think(key, 'Reading your cut plan', { job: 'layers.readPlan', thought: 'Code finds each sheet, the pieces its cut lines close off, and the engraving (red and green marks).' });
++    c.work(key);
++    return this.muse.readCutPlan(craft, url).then((r) => {
++      if (this.project?.id !== craft) return;
++      if (!r.sheets.length) { c.fail(key, 'I couldn’t find the sheets in the plan', 'Stitching your views instead.'); return this.stitch(craft); }
++      f.applyPlan(r.sheets); this.save();
++      const pieces = r.sheets.reduce((a, s) => a + s.pieces, 0), size = r.sheets[0].sizeMm;
++      c.done(key, `Read ${r.sheets.length} sheets from your cut plan`, { detail: `${r.sheets.map((s) => s.name).join(' · ')} · about ${pieces} pieces · each sheet ${size[0]} × ${size[1]} mm (assumed)${Math.max(r.w, r.h) < 2500 ? ` · the picture is ${r.w} × ${r.h} px, so outlines are approximate — import the original SVG or DXF to cut precisely` : ''}` });
++    });
++  }
+   // ── Shape → Layers, in order: each step waits for the one it builds on (the brief, then the outline, then the regions)
+   briefReady: Promise<unknown> | null = null;
+   /** jobs queued behind the step they build on (so opening a step twice does not queue them twice) */
+@@ -388,17 +411,46 @@ export class AppState {
+       c.work(key);
+       return this.muse.planLayers(craft, f.makeAs, { imageDataUrl: this.photo, description: f.brief || f.subject, regions: f.regions, brief: f.imageBrief });
+     })
+-      .then((r) => {
++      .then(async (r) => {
+         if (!r || this.project?.id !== craft) return;
+         f.applyLayers(r); this.save();
+         const swatches = f.layers.map((l) => ({ hex: l.colour, label: l.name, n: l.n }));
+         // eslint-disable-next-line svelte/prefer-svelte-reactivity -- counted once, not reactive state
+         const itemsN = new Set(f.layers.map((l) => l.itemName).filter(Boolean)).size;
+         if (!f.layers.length) c.fail(key, 'No layers yet', 'Say “remove the background” to try again.');
+-        else c.done(key, this.multiple ? `${itemsN || f.layers.length} item${(itemsN || f.layers.length) > 1 ? 's' : ''} · ${f.layers.length} layer${f.layers.length > 1 ? 's' : ''}` : `Split into ${f.layers.length} layers by colour`, { detail: this.multiple ? 'one cut each · tap a layer to quote it' : 'back to front · tap a layer to quote it', swatches });
++        else c.done(key, this.multiple ? `${itemsN || f.layers.length} item${(itemsN || f.layers.length) > 1 ? 's' : ''} · ${f.layers.length} layer${f.layers.length > 1 ? 's' : ''}` : `Split into ${f.layers.length} layers by colour`, { detail: this.multiple ? `${f.separateItems ? 'a cut and its engraving per item' : 'one cut each'} · tap a layer to quote it` : 'back to front · tap a layer to quote it', swatches });
++        if (f.separateItems) await this.itemPasses(craft);
+       })
+       .catch(() => { c.fail(key, 'Planning the layers failed', 'Try again in a moment.'); });
+   }
++  /**
++   * Separate items photographed overlapping (bookmarks fanned out) get two passes after their layers, each a step
++   * in the chat: align & straighten (each item onto its own sheet, upright — code, from its long axis), then
++   * interpolation (an item a neighbour lay over gets its hidden edges back from its outline's hull). Each item is
++   * a good cut on its own; these passes are the adjustment the overlap needs.
++   */
++  async itemPasses(craft: string) {
++    const f = this.layers, c = this.flow.conversation;
++    const straighten = this.stepKey('straighten');
++    c.think(straighten, 'Aligning and straightening each item', { thought: 'Code finds each item’s long axis and turns it upright onto its own sheet; its engraving turns with it.' });
++    c.work(straighten);
++    const turns = this.itemTurns();
++    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- counted once, not reactive state
++    const items = new Set(f.layers.map((l) => l.itemName).filter(Boolean)).size;
++    c.done(straighten, `Each of the ${items} items is on its own sheet, upright`, { detail: turns.length ? `turned ${turns.join(', ')}` : 'all were already upright' });
++    const hidden = this.hiddenItems();
++    if (!hidden.length) return;
++    const fill = this.stepKey('interpolate');
++    c.think(fill, 'Filling in what the neighbours hide', { thought: `${hidden.join(', ')} ${hidden.length > 1 ? 'are' : 'is'} partly under another item in the photo; code rebuilds the hidden edges from the visible outline.` });
++    c.work(fill);
++    const done: string[] = [];
++    for (const l of f.layers.filter((x) => x.role !== 'engrave' && hidden.includes(x.itemName ?? x.name))) {
++      if (this.project?.id !== craft) return;
++      if (await this.refineLayer(l.n, `Complete the hidden edges of the ${l.itemName ?? l.name}`, { echo: false, op: { kind: 'complete' }, show: false })) done.push(l.itemName ?? l.name);
++    }
++    if (done.length) c.done(fill, `Filled in the hidden edges of ${done.join(', ')}`, { detail: 'the engraving under a neighbour can’t be seen, so it stays as it was' });
++    else c.fail(fill, 'Couldn’t fill in the hidden edges', 'Say “complete the hidden edges of the …” to try one item.');
++  }
+   /** Re-run Shape (and Layers when reached) after an instruction changed what they should do. */
+   private rebuildFromShape(opts: { k?: number } = {}) {
+     this.run++;
+@@ -427,6 +479,17 @@ export class AppState {
+     this.layers.beginCut({ simulate: true });
+     void this.watch.watchSheet(n);
+   }
++  /** separate items: how far each was turned to stand upright ("fox bookmark 7°") */
++  itemTurns(): string[] {
++    const f = this.layers; if (!f.separateItems) return [];
++    return f.layers.filter((l) => l.role !== 'engrave').map((l) => ({ name: l.itemName ?? l.name, turn: f.pieceFor(l.n).turn })).filter((x) => x.turn).map((x) => `${x.name} ${Math.abs(x.turn)}°`);
++  }
++  /** separate items that a neighbour covered in the photo (their outline has bites taken out of it) */
++  hiddenItems(): string[] {
++    const f = this.layers; if (!f.separateItems) return [];
++    // the item's outline only (its own see-through holes are not something a neighbour hid)
++    return f.layers.filter((l) => l.role !== 'engrave' && hiddenShare(f.regionForLayer(l)?.paths ?? []) > 0.12).map((l) => l.itemName ?? l.name);
++  }
+   /** Add the craft's sheets (all, in cutting order, or some layers) to the cut queue — said in the chat. */
+   queueSheets(only?: number[]) {
+     const f = this.layers, p = this.project, c = this.flow.conversation;
+@@ -436,7 +499,7 @@ export class AppState {
+     const added = this.queue.add(ns.map((n) => {
+       const l = f.layers[n - 1];
+       return { craftId: p.id, craftName: p.name || this.title, layer: n, name: l.name, material: l.material, op: f.opFor(n), colour: l.colour, machine,
+-        cut: f.cutPathFor(n), shapes: toMm(f.sheetPointsFor(n), f.widthMm, f.aspect), sheetMm: [Math.round(f.widthMm), Math.round(f.widthMm / (f.aspect || 1))] as [number, number] };
++        ...((pc) => ({ cut: pc.d, shapes: pc.shapes, sheetMm: pc.sheetMm }))(f.pieceFor(n)) };
+     }));
+     c.ingestTranscript(only?.length === 1 ? `Add ${f.layers[only[0] - 1].name} to the cut queue` : 'Add the sheets to the cut queue');
+     c.done(`${p.id}:queue:${c.log.length}`, added ? `Added ${added} sheet${added === 1 ? '' : 's'} to the cut queue` : 'Already in the cut queue',
+@@ -469,7 +532,7 @@ export class AppState {
+   /** what Sheets traces: each layer's sheet as its build decides, engraving before the cut */
+   private sheetOpts() {
+     const f = this.layers;
+-    return { regions: f.regions, sizeMm: f.widthMm, aspect: f.aspect, layers: f.layers, sheetPoints: (n: number) => f.sheetPointsFor(n), op: (n: number) => f.opFor(n), order: f.passOrder };
++    return { regions: f.regions, sizeMm: f.widthMm, aspect: f.aspect, layers: f.layers, sheetPoints: (n: number) => f.sheetPointsFor(n), pieceMm: f.separateItems ? (n: number) => f.pieceFor(n).shapes : undefined, op: (n: number) => f.opFor(n), order: f.passOrder };
+   }
+   /** Scale the piece to a real size, proportions kept (said in the chat; the sheets are traced again at the new size). */
+   setSize(mm: number, side: 'w' | 'h' = 'w', { say = true } = {}) {
+@@ -635,6 +698,16 @@ export class AppState {
+       // selected layer by name, and the next step last
+       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a lookup built per read, not reactive state
+       const said = new Set(this.flow.conversation.log.filter((e) => e.role === 'user').map((e) => e.text.trim().toLowerCase()));
++      // tidy-ups the stack itself needs: layers nothing of shows, several engravings that could be one
++      const tidy = [
++        ...(f.layers.some((l) => Math.round(l.visiblePct) <= 0 && (l.n > 1 || f.separateItems || l.role)) ? ['Remove the empty layers'] : []),
++        // separate items: only when an item has more than one engraving (each item keeps its own sheet)
++        ...((f.separateItems ? f.items.some((i) => i.layers.filter((l) => l.role === 'engrave').length > 1) : f.layers.filter((l) => l.role === 'engrave').length > 1) ? ['Merge all the engravings into one layer'] : [])
++      ].filter((x) => !said.has(x.toLowerCase()));
++      if (f.separateItems) {
++        const fix = this.hiddenItems().map((n) => `Complete the hidden edges of the ${n}`).filter((x) => !said.has(x.toLowerCase()));
++        return [...tidy, ...fix.slice(0, 2), { label: 'Add the sheets to the cut queue', id: 'queue' }, { label: 'Cut the sheets', href: '/make/output', id: 'say' }];
++      }
+       const sel = f.selected, front = f.layers[sel.n];
+       const ideas: (string | ChatAction)[] = [
+         ...(f.removeBackdrop ? [] : ['Remove the wall and shadows']),
+@@ -719,14 +792,25 @@ export class AppState {
+   }
+   /** Plain chat commands the app can apply itself, right now (drop/keep a region, merge/duplicate/split, solid/open). */
+   private applyChatCommand(text: string): string | null {
++    const f = this.layers, n = f.history.length;
++    f.checkpoint(text);
++    const done = this.chatCommand(text);
++    // nothing changed: no undo step for it
++    if (!done && f.history.length > n) f.history = f.history.slice(0, n);
++    return done;
++  }
++  private chatCommand(text: string): string | null {
+     const f = this.layers, t = text.toLowerCase();
+     const region = f.regions.find((r) => t.includes(r.name.toLowerCase()));
+-    if (region && /\b(drop|remove|exclude|hide|without)\b/.test(t)) { f.keep[region.id] = false; return `dropped ${region.name} — ${f.kept.length} of ${f.regions.length} regions kept (${f.keptPct}%)`; }
+-    if (region && /\b(keep|include|add|restore|back)\b/.test(t)) { f.keep[region.id] = true; return `kept ${region.name} — ${f.kept.length} of ${f.regions.length} regions kept (${f.keptPct}%)`; }
++    // the verb, not a word of the region's own name ("Swirl drop left")
++    const verb = region ? t.replace(region.name.toLowerCase(), ' ') : t;
++    if (region && /\b(merge|combine|join)\b/.test(verb)) { /* a stack edit: handled below */ }
++    else if (region && /\b(drop|remove|exclude|hide|without)\b/.test(verb)) { f.keep[region.id] = false; return `dropped ${region.name} — ${f.kept.length} of ${f.regions.length} regions kept (${f.keptPct}%)`; }
++    else if (region && /\b(keep|include|add|restore|back)\b/.test(verb)) { f.keep[region.id] = true; return `kept ${region.name} — ${f.kept.length} of ${f.regions.length} regions kept (${f.keptPct}%)`; }
+     const sel = f.selected;
+     // "merge the gold and the red layers" / "merge white with black": two layers named
+     const named = /\b(merge|combine|join)\b/.test(t) ? this.namedLayers(t) : [];
+-    if (named.length >= 2 && f.canMerge(named[0].n, named[1].n)) { const label = `${named[0].name} and ${named[1].name}`; f.mergeLayers(named[0].n, named[1].n); f.sheetPaths = []; return `merged ${label} — now ${f.layers.length} layers`; }
++    if (named.length >= 2) { const label = named.length > 2 ? `${named.length} layers (${named.map((l) => l.name).join(', ')})` : `${named[0].name} and ${named[1].name}`; f.mergeMany(named.map((l) => l.n)); return `merged ${label} — now ${f.layers.length} layers`; }
+     if (sel && /\bmerge\b/.test(t) && f.canMergeDown(sel.n)) { const name = sel.name; f.mergeDown(sel.n); return `merged ${name} down — now ${f.layers.length} layers`; }
+     if (sel && /\bduplicate\b/.test(t)) { f.duplicate(sel.n); return `duplicated ${sel.name} — now ${f.layers.length} layers`; }
+     if (sel && /\bsplit\b/.test(t) && f.canSplit(sel.n)) { const name = sel.name; f.split(sel.n); return `split ${name} — now ${f.layers.length} layers`; }
+@@ -734,9 +818,89 @@ export class AppState {
+     if (sel && /\b(open|leave|hollow)\b/.test(t)) { f.overrides = { ...f.overrides, [sel.n]: false }; return `${sel.name} will be left open with a glue lip`; }
+     return null;
+   }
++  /**
++   * Stack edits said in the chat, applied before anything is read as a mask correction:
++   * "remove the 0% layers" / "delete the empty layers", "delete this layer", "remove the X and Y layers",
++   * "merge all the engravings into one layer". Returns what was done, or null.
++   */
++  stackCommand(text: string, quoted?: number): { title: string; detail?: string } | null {
++    const f = this.layers, t = text.toLowerCase();
++    if (!f.layers.length) return null;
++    const removing = /\b(remove|delete|drop|get rid of|discard)\b/.test(t);
++    // the layers nothing of shows (0% visible): they only repeat what is already there
++    if (removing && /(\b0\s*%|\bzero\b|\bempty\b|nothing (shows|visible)|not visible|invisible|no visible)/.test(t)) {
++      const empty = f.layers.filter((l) => Math.round(l.visiblePct) <= 0 && (l.n > 1 || f.separateItems || l.role)).map((l) => l.n);
++      if (!empty.length) return { title: 'No empty layers', detail: 'Every layer has something that shows.' };
++      const names = empty.map((n) => f.layers[n - 1].name);
++      f.checkpoint(text); f.removeLayers(empty);
++      return { title: `Deleted ${names.length} empty layer${names.length > 1 ? 's' : ''}`, detail: `${names.join(', ')} · now ${f.layers.length} layers` };
++    }
++    // "merge all the engravings (into one layer)" / "combine all the gold layers"
++    const all = /\b(merge|combine|join)\b.*?\ball\s+(?:of\s+)?(?:the\s+)?([a-z]+)/.exec(t);
++    if (all) {
++      const word = all[2].replace(/(ings?|s)$/, ''), stem = word.slice(0, Math.max(4, Math.min(6, word.length)));
++      const ns = f.layers.filter((l) => (stem.startsWith('engrav') && l.role === 'engrave') || (stem.startsWith('cut') && l.role === 'cut') || l.name.toLowerCase().includes(stem)).map((l) => l.n);
++      // separate items: one engraving per item, so each still sits on its own straightened sheet
++      const byItem = f.separateItems ? Object.values(Object.groupBy(ns.map((n) => f.layers[n - 1]), (l) => l.itemName ?? '')).filter((g) => (g?.length ?? 0) > 1) : [];
++      if (byItem.length) {
++        f.checkpoint(text);
++        let k = 0;
++        // merge the frontmost group first, so the earlier groups keep their positions
++        for (const g of byItem.reverse()) { const names = g!.map((l) => l.name); const item = g![0].itemName; const cur = f.layers.filter((l) => names.includes(l.name)).map((l) => l.n); k += f.mergeMany(cur, item ? `${item} · engraving` : undefined); }
++        return { title: `Merged ${k} layers: one ${all[2].replace(/s$/, '')} per item`, detail: `now ${f.layers.length} layers · each item’s engraving stays on its own sheet · split one to undo` };
++      }
++      if (ns.length >= 2) { f.checkpoint(text); const k = f.mergeMany(ns, `All ${all[2]}`); return { title: `Merged ${k} layers into one`, detail: `“All ${all[2]}” · now ${f.layers.length} layers · split it to undo` }; }
++      if (ns.length < 2 && /layers?\b/.test(t) && !/\b(engrav|cut)/.test(stem)) {
++        // "merge all layers": everything into one
++        if (all[2] === 'layer' || all[2] === 'layers') { f.checkpoint(text); const k = f.mergeMany(f.layers.map((l) => l.n)); return { title: `Merged all ${k} layers into one` }; }
++      }
++      return { title: `Nothing to merge`, detail: `I found ${ns.length} layer${ns.length === 1 ? '' : 's'} matching “${all[2]}”.` };
++    }
++    if (removing && /\blayers?\b/.test(t)) {
++      // "delete this layer" (quoted / selected), or the layers it names
++      if (/\b(this|that)\s+layer\b/.test(t)) { const n = quoted ?? f.selected.n; const name = f.layers[n - 1]?.name; if (!name) return null; f.checkpoint(text); f.removeLayers([n]); return { title: `Deleted ${name}`, detail: `now ${f.layers.length} layers` }; }
++      // only a whole-layer delete when the text is about layers, not parts of one ("remove the wall from the gold layer")
++      if (!/\bfrom\b/.test(t)) {
++        const named = this.namedLayers(t);
++        if (named.length) { const names = named.map((l) => l.name); f.checkpoint(text); f.removeLayers(named.map((l) => l.n)); return { title: `Deleted ${names.length > 1 ? `${names.length} layers` : names[0]}`, detail: `${names.length > 1 ? `${names.join(', ')} · ` : ''}now ${f.layers.length} layers` }; }
++      }
++    }
++    return null;
++  }
++  /** Undo the last edit to the layers (chat “undo” or the Undo button), said in the chat */
++  undoLast({ echo = true } = {}) {
++    const f = this.layers, c = this.flow.conversation;
++    if (echo) c.ingestTranscript('Undo');
++    const what = f.undo(), key = `${this.project?.id ?? 'craft'}:undo:${c.log.length}`;
++    if (!what) { c.done(key, 'Nothing to undo', { detail: 'Edits made in this session can be undone, one at a time.' }); return false; }
++    this.save();
++    c.done(key, `Undone: ${what}`, { detail: `${f.layers.length} layers${f.canUndo ? ` · ${f.history.length} more to undo` : ''}` });
++    return true;
++  }
+   /** the layers a text names ("the gold and the red layers"), back to front */
+   namedLayers(text: string) {
+-    const t = text.toLowerCase();
++    const t = text.toLowerCase(), f = this.layers;
++    // by number: "layer 3", "layers 2 and 5", "layers 2, 3, 4", "layers 2-4" / "2 to 4", "#3"
++    const nums: number[] = [];
++    for (const m of t.matchAll(/\blayers?\s+((?:#?\d{1,2}\s*(?:,|and|&|to|through|-|–)?\s*)+)/g)) {
++      const part = m[1];
++      for (const r of part.matchAll(/(\d{1,2})\s*(?:-|–|to|through)\s*(\d{1,2})/g)) for (let k = Number(r[1]); k <= Number(r[2]); k++) nums.push(k);
++      for (const d of part.replace(/(\d{1,2})\s*(?:-|–|to|through)\s*(\d{1,2})/g, '').matchAll(/\d{1,2}/g)) nums.push(Number(d[0]));
++    }
++    for (const m of t.matchAll(/#(\d{1,2})\b/g)) nums.push(Number(m[1]));
++    const byNumber = f.layers.filter((l) => nums.includes(l.n));
++    if (byNumber.length) return byNumber;
++    // by name: a layer whose whole name is said wins over ones that only share a word ("left", "drop")
++    const flat = t.replace(/\s+/g, ' ');
++    const said = (l: { name: string; role?: string }) => { const full = l.name.toLowerCase().replace(/\s*·\s*/g, ' ').replace(/\s+/g, ' ').trim(), base = l.name.toLowerCase().split('·')[0].trim();
++      // "the swirl drop left" names the item's cut; its engraving only when said ("… engraving")
++      return flat.includes(full) || (l.role !== 'engrave' && base.length > 3 && flat.includes(base)); };
++    const whole = f.layers.filter(said);
++    if (whole.length) return whole;
++    const stop = ['the', 'and', 'layer', 'layers', 'cut', 'left', 'right', 'top', 'bottom', 'with', 'into', 'one'];
++    const words = (l: { name: string }) => l.name.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 2 && !stop.includes(w));
++    const all = f.layers.filter((l) => words(l).length && words(l).every((w) => new RegExp(`\\b${w}\\b`).test(t)));
++    if (all.length) return all;
+     return this.layers.layers.filter((l) => l.name.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 2 && !['the', 'and', 'layer'].includes(w)).some((w) => new RegExp(`\\b${w}\\b`).test(t)));
+   }
+   /** The layer a correction is about: one named in the text ("the white layer…"), else the selected one. */
+@@ -746,7 +910,7 @@ export class AppState {
+     return named ?? (f.selected.n > 0 ? f.selected : undefined);
+   }
+   /** Correct one layer from the chat or the layer's own feedback box: re-measured from the photo, saved, said in the chat. */
+-  async refineLayer(n: number, text: string, { echo = true, op }: { echo?: boolean; op?: LayerOp } = {}): Promise<boolean> {
++  async refineLayer(n: number, text: string, { echo = true, op, show = true }: { echo?: boolean; op?: LayerOp; /** switch the stage to this layer on its own (not during the automatic passes) */ show?: boolean } = {}): Promise<boolean> {
+     const f = this.layers, craft = this.project?.id;
+     const layer = f.layers[n - 1];
+     const region = f.regionForLayer(layer);
+@@ -757,16 +921,18 @@ export class AppState {
+     c.work(key);
+     // the layer's own name words are how it was addressed, not what to change ("the white layer is missing the whiskers")
+     const ask = layer.name.toLowerCase().split(/\s+/).filter((w) => w.length > 3).reduce((acc, w) => acc.replace(new RegExp(`\\b${w}\\b`, 'gi'), ''), text);
+-    const front = f.layers.slice(n).flatMap((l) => f.regionForLayer(l)?.paths ?? []);
++    // what lies in front of it: the later layers of the same item (separate items never cover each other's sheets)
++    const front = f.layers.slice(n).filter((l) => !layer.itemName || l.itemName === layer.itemName).flatMap((l) => f.regionForLayer(l)?.paths ?? []);
+     const r = await this.muse.refineLayer(craft, { imageDataUrl: this.photo, subjectPaths: f.subjectPaths, colours: f.layers.map((l) => l.colour), index: n - 1, current: region.paths, front, text: ask, name: `${layer.name}`, op }).catch(() => null);
+     f.addNote({ step: 'Layers', layer: `${layer.name}`, text });
+     if (!r) { this.save(); c.done(key, `Noted for ${layer.name}`, { detail: 'I can apply “keep the fine details”, “bolder”, “thinner”, “smoother”, “take the wall out”, or “add/remove the <colour> parts” right away; anything else is saved with the craft.' }); return false; }
++    f.checkpoint(`${layer.name}: ${text}`);
+     f.regionList = f.regionList.map((x) => (x.id === region.id ? { ...x, paths: r.visiblePaths, cutPaths: r.sheetPaths, pct: r.visiblePct, hiddenPct: r.hiddenPct } : x));
+     f.stack = f.stack.map((l) => (l.n === n ? { ...l, visiblePct: r.visiblePct, hiddenPct: r.hiddenPct, ...(op?.kind === 'tune' ? { tune: { detail: op.detail, weight: op.weight } } : {}) } : l));
+     f.sheetPaths = [];
+     this.save();
+     // show the change: the layer on its own, its whole sheet in its colour
+-    const shown = f.view === 'all' || f.view === 'exploded';
++    const shown = show && (f.view === 'all' || f.view === 'exploded');
+     if (shown) { f.selectLayer(n); f.setView('only'); }
+     c.done(key, `Done — ${layer.name}: ${r.describe}`, { detail: `Now ${r.visiblePct}% shows · saved with the craft${shown ? ' · showing this layer on its own (All layers on the toolbar shows the stack)' : ''}`, swatches: [{ hex: layer.colour, label: layer.name, n }] });
+     return true;
+@@ -785,12 +951,13 @@ export class AppState {
+       tune: a.kind === 'tune' ? `Detail ${a.detail} of 5 · weight ${a.weight > 0 ? `+${a.weight}` : a.weight}` : '',
+       shape: a.kind === 'shape' ? `${a.mode === 'add' ? 'Add' : 'Cut out'} a ${a.shape.type}` : '',
+       smoothArea: a.kind === 'smoothArea' ? (a.strength >= 3 ? 'Reduce the jitter in this area' : 'Smooth the curves in this area') : '',
+-      move: a.kind === 'move' ? 'Move this layer' : ''
++      move: a.kind === 'move' ? 'Move this layer' : '', remove: 'Delete this layer'
+     };
+     const viaRefine = a.kind === 'tune' || a.kind === 'shape' || a.kind === 'smoothArea';
+     if (!viaRefine) c.ingestTranscript(said[a.kind], this.layerQuote(n));
+     const key = `${this.project?.id ?? 'craft'}:act:${n}:${c.log.length}`;
+     const done = (title: string, detail?: string) => { this.save(); c.done(key, title, { detail }); };
++    if (['mergeWith', 'duplicate', 'merge', 'split', 'move', 'remove'].includes(a.kind)) f.checkpoint(`${said[a.kind].replace('this layer', name)}`);
+     switch (a.kind) {
+       case 'hide': case 'show': if (f.isLayerVisible(n) === (a.kind === 'hide')) f.toggleLayerVisible(n); return done(`${a.kind === 'hide' ? 'Hidden' : 'Showing'} · ${name}`, a.kind === 'hide' ? 'Still cut on Sheets; show it again from the list.' : undefined);
+       case 'only': if (!f.isLayerVisible(n)) f.toggleLayerVisible(n); f.selectLayer(n); f.setView('only'); return done(`Showing only ${name}`, 'Switch the view back to All layers on the toolbar.');
+@@ -800,13 +967,14 @@ export class AppState {
+         f.mergeLayers(n, a.other); f.sheetPaths = [];
+         return done(`Merged ${name} with ${other.name}`, `now ${f.layers.length} layers · split it to undo`);
+       }
++      case 'remove': f.removeLayers([n]); return done(`Deleted ${name}`, `now ${f.layers.length} layer${f.layers.length === 1 ? '' : 's'} · its mask stays with the photo`);
+       case 'duplicate': f.duplicate(n); return done(`Duplicated ${name}`, `now ${f.layers.length} layers`);
+       case 'merge': if (!f.canMergeDown(n)) return done(`${name} is already the front layer`); f.mergeDown(n); f.sheetPaths = []; return done(`Merged ${name} down`, `now ${f.layers.length} layers`);
+       case 'split': if (!f.canSplit(n)) return done(`${name} is one piece`, 'Nothing to split.'); f.split(n); return done(`Split ${name}`, `now ${f.layers.length} layers`);
+       case 'move': {
+         const region = f.regionForLayer(layer);
+         if (!region?.paths?.length) return done(`${name} has no mask to move yet`);
+-        f.regionList = f.regionList.map((x) => (x.id === region.id ? { ...x, paths: translatePaths(x.paths ?? [], a.dx, a.dy), cutPaths: x.cutPaths ? translatePaths(x.cutPaths, a.dx, a.dy) : x.cutPaths } : x));
++        f.regionList = f.regionList.map((x) => (x.id === region.id ? { ...x, paths: translatePaths(x.paths ?? [], a.dx, a.dy), cutPaths: x.cutPaths ? translatePaths(x.cutPaths, a.dx, a.dy) : x.cutPaths, holes: x.holes ? translatePaths(x.holes, a.dx, a.dy) : x.holes } : x));
+         f.sheetPaths = [];
+         return done(`Moved ${name}`, `${Math.round(a.dx / 10)}% across, ${Math.round(a.dy / 10)}% down`);
+       }
+@@ -838,7 +1006,7 @@ export class AppState {
+       const other = f.layers.find((l) => l.n !== n && a.other && l.name.toLowerCase().includes(a.other.toLowerCase().split(/\s+/)[0]));
+       if (!other) { c.fail(`${key}:m`, `Which layer should ${layer.name} merge with?`, 'Name it, or use Merge with… on the layer.'); return; }
+       const label = `${layer.name} with ${other.name}`;
+-      f.mergeLayers(n, other.n); f.sheetPaths = []; this.save();
++      f.checkpoint(`Merge ${label}`); f.mergeLayers(n, other.n); f.sheetPaths = []; this.save();
+       c.done(`${key}:m`, `Merged ${label}`, { detail: `now ${f.layers.length} layers · split it to undo` });
+       return;
+     }
+@@ -855,6 +1023,8 @@ export class AppState {
+     const quoted = quote?.kind === 'layer' && quote.n ? this.layers.layers[quote.n - 1] : undefined;
+     if (quoted) this.layers.selectLayer(quoted.n);
+     const layer = /^\/make\/(layers|gaps)$/.test(path) && this.layers.selected.n > 0 ? this.layers.selected.name : undefined;
++    // "undo" / "undo that" / "go back": the last edit is put back
++    if (/^\s*(undo|undo (that|it|the last( change| edit)?)|go back|revert( that)?|put it back)\s*[.!]?\s*$/i.test(text)) { this.flow.conversation.ingestTranscript(text, quote); this.undoLast({ echo: false }); return; }
+     this.flow.conversation.ingestTranscript(text, quote);
+     // "use 3 layers": regroup the whole picture's colours
+     const count = /\b(\d{1,2})\s+(colour |color )?layers\b/i.exec(text);
+@@ -875,6 +1045,22 @@ export class AppState {
+       this.setSize(mm, !pctAsk && /tall|high|height/i.test(sizeAsk?.[3] ?? '') ? 'h' : 'w', { say: false });
+       return;
+     }
++    // stack edits (delete, delete the empty ones, merge all of a kind) apply at once
++    const stack = /^\/make\/(layers|gaps|output)$/.test(path) ? this.stackCommand(text, quoted?.n) : null;
++    if (stack) {
++      const c = this.flow.conversation; this.save();
++      c.done(`${this.project?.id ?? 'craft'}:stack:${c.log.length}`, stack.title, { detail: stack.detail });
++      return;
++    }
++    // "straighten each bookmark / lay them out separately": separate items already are — say how
++    if (this.layers.separateItems && /\b(straighten|upright|rotat(e|ed|ion)|tilt(ed)?|separate(ly)?|apart|own sheet|lay (them )?out)\b/i.test(text)) {
++      const c = this.flow.conversation, turns = this.itemTurns(), hidden = this.hiddenItems();
++      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- counted once, not reactive state
++      c.done(`${this.project?.id ?? 'craft'}:layout:${c.log.length}`, `Each of the ${new Set(this.layers.layers.map((l) => l.itemName)).size} items is on its own sheet, upright`,
++        { detail: `${turns.length ? `Turned: ${turns.join(', ')}.` : 'They were already upright.'} Its engraving turns with it. See it on “Its sheet”, in Cut and in the cut queue.${hidden.length ? ` Partly hidden in the photo: ${hidden.join(', ')} — say “complete the hidden edges of the ${hidden[0]}”.` : ''}` });
++      this.layers.setView('cut'); this.save();
++      return;
++    }
+     // "merge the gold and the red layers": two layers named — a stack edit, not a correction to one mask
+     if (/\b(merge|combine|join)\b/i.test(text) && this.namedLayers(text).length >= 2) { this.refineFallback(text, path, step, layer); return; }
+     // On Layers: a correction aimed at one layer (quoted, named, or "this layer") is applied to that layer's mask
+diff --git a/app/src/lib/state/layer-edits.spec.ts b/app/src/lib/state/layer-edits.spec.ts
+new file mode 100644
+index 0000000..4fad7e2
+--- /dev/null
++++ b/app/src/lib/state/layer-edits.spec.ts
+@@ -0,0 +1,78 @@
++import { describe, expect, it } from 'vitest';
++import { AppState } from './app.svelte';
++import { MemoryStorage, ProjectStore } from './project.svelte';
++import type { Layer } from '../content/layers';
++
++// Stack edits said in the chat (by name or by number), the toolbar's Delete, and Undo for all of them.
++function earrings() {
++  const app = new AppState(new ProjectStore(new MemoryStorage()));
++  app.startCraft('flat');
++  const L = (name: string, itemName: string, role: 'cut' | 'engrave', visiblePct: number): Layer => ({ n: 0, name, shapes: ['sky'], colour: '#C89B6A', visiblePct, hiddenPct: 0, material: '3 mm ply', itemName, role });
++  app.layers.applyLayers([
++    L('Left earring · cut', 'Left earring', 'cut', 20), L('Left lattice · engraving', 'Left earring', 'engrave', 4), L('Left teardrop · engraving', 'Left earring', 'engrave', 0),
++    L('Right earring · cut', 'Right earring', 'cut', 20), L('Right lattice · engraving', 'Right earring', 'engrave', 4), L('Right rim · engraving', 'Right earring', 'engrave', 3)
++  ]);
++  app.page = '/make/layers'; app.currentStep = 'layers';
++  return app;
++}
++const names = (app: AppState) => app.layers.layers.map((l) => l.name);
++const last = (app: AppState) => app.flow.conversation.log.at(-1)?.step?.title;
++
++describe('layer edits from the chat, with undo', () => {
++  it('“remove the 0% layers” deletes the layers nothing of shows; “undo” brings them back', async () => {
++    const app = earrings();
++    expect(app.suggestions).toContain('Remove the empty layers');
++    await app.ask('remove the 0% shows layers', '/make/layers');
++    expect(last(app)).toBe('Deleted 1 empty layer');
++    expect(names(app)).not.toContain('Left teardrop · engraving');
++    await app.ask('undo', '/make/layers');
++    expect(last(app)).toMatch(/^Undone: remove the 0% shows layers/);
++    expect(names(app)).toHaveLength(6);
++    await app.ask('undo', '/make/layers');
++    expect(last(app)).toBe('Nothing to undo');
++  });
++  it('layers by number: merge layers 2 and 3, delete layer 6, merge layers 1-3; each undoable', async () => {
++    const app = earrings(), f = app.layers;
++    await app.ask('merge layers 2 and 3', '/make/layers');
++    expect(f.layers).toHaveLength(5);
++    expect(names(app)[1]).toBe('Left lattice · engraving + Left teardrop · engraving');
++    expect(f.layers[1].role).toBe('engrave');
++    await app.ask('delete layer 5', '/make/layers');
++    expect(names(app)).not.toContain('Right rim · engraving');
++    await app.ask('merge layers 1-3', '/make/layers');
++    expect(f.layers).toHaveLength(2);
++    await app.ask('undo', '/make/layers'); await app.ask('undo', '/make/layers'); await app.ask('undo', '/make/layers');
++    expect(f.layers).toHaveLength(6);
++  });
++  it('“merge all the engravings into one layer”: one engraving per separate item, each still on its own sheet', async () => {
++    const app = earrings(), f = app.layers;
++    expect(app.suggestions).toContain('Merge all the engravings into one layer');
++    await app.ask('merge all the engravings into one layer', '/make/layers');
++    expect(last(app)).toBe('Merged 4 layers: one engraving per item');
++    expect(f.items.map((i) => [i.name, i.layers.map((l) => l.role)])).toEqual([['Left earring', ['cut', 'engrave']], ['Right earring', ['cut', 'engrave']]]);
++    expect(names(app)).toContain('Right earring · engraving');
++    await app.ask('undo', '/make/layers');
++    expect(f.layers).toHaveLength(6);
++  });
++  it('by name: a whole name wins over shared words; a word inside a name is not a command (“Swirl drop left”)', async () => {
++    const app = earrings(), f = app.layers;
++    f.applyLayers([...f.layers, { n: 0, name: 'Swirl drop left · cut', shapes: ['sky'], colour: '#C89B6A', visiblePct: 10, hiddenPct: 0, material: '3 mm ply', itemName: 'Swirl drop left', role: 'cut' }, { n: 0, name: 'Swirl drop right · cut', shapes: ['sky'], colour: '#C89B6A', visiblePct: 10, hiddenPct: 0, material: '3 mm ply', itemName: 'Swirl drop right', role: 'cut' }]);
++    expect(app.namedLayers('merge the swirl drop left and the swirl drop right').map((l) => l.name)).toEqual(['Swirl drop left · cut', 'Swirl drop right · cut']);
++    await app.ask('merge the swirl drop left and the swirl drop right', '/make/layers');
++    expect(names(app)).toContain('Swirl drop left · cut + Swirl drop right · cut');
++    expect(f.layers).toHaveLength(7);
++    await app.ask('delete the swirl drop left and the swirl drop right layer', '/make/layers');
++    expect(f.layers).toHaveLength(6);
++    await app.ask('undo', '/make/layers'); await app.ask('undo', '/make/layers');
++    expect(f.layers).toHaveLength(8);
++  });
++  it('the layer’s Delete action is said in the chat and undoable', async () => {
++    const app = earrings(), f = app.layers;
++    f.selectLayer(4);
++    await app.layerAction(4, { kind: 'remove' });
++    expect(last(app)).toBe('Deleted Right earring · cut');
++    expect(f.canUndo).toBe(true);
++    expect(app.undoLast()).toBe(true);
++    expect(names(app)[3]).toBe('Right earring · cut');
++  });
++});
+diff --git a/app/src/lib/state/layer-flow.svelte.ts b/app/src/lib/state/layer-flow.svelte.ts
+index 1aa92c5..ba7dec6 100644
+--- a/app/src/lib/state/layer-flow.svelte.ts
++++ b/app/src/lib/state/layer-flow.svelte.ts
+@@ -1,12 +1,13 @@
+ import { changes, cleanLayerName, type Layer, devices, gapChoices, kinds, layerSets, regions, views, type DeviceId, type GapChoice, type GapRule, type Joinery, type Kind, type LayerSetId, type MakeAs, type RefineTool, type RegionId, type SegmentView, type ViewId } from '../content/layers';
+ import { pointsToPath } from '../domain/vector';
+ import { pointInPaths, unionPaths, type Box } from '../domain/layering';
++import { layOut, sheetD, toMm, uprightTurn, type Pt } from '../domain/toolpath';
+ 
+ 
+ /** What the models found, in the shape the live calls return. Pages read these fields only; the fixtures are just
+  * the starting values until MuseAgents (lib/state/muse.svelte.ts) writes a result over them. */
+ export interface Check { status: 'pass' | 'warn' | 'fail'; text: string }
+-export type Region = (typeof regions)[number] & { paths?: [number, number][][]; /** the whole sheet to cut (what shows + what hides under the layers in front) */ cutPaths?: [number, number][][]; hiddenPct?: number; ones?: number; box?: { x1: number; y1: number; x2: number; y2: number }; colour?: string; itemId?: string; itemName?: string; /** separate items: the cut outline or an engraving inside it */ role?: 'cut' | 'engrave' };
++export type Region = (typeof regions)[number] & { paths?: [number, number][][]; /** the whole sheet to cut (what shows + what hides under the layers in front) */ cutPaths?: [number, number][][]; hiddenPct?: number; ones?: number; box?: { x1: number; y1: number; x2: number; y2: number }; colour?: string; itemId?: string; itemName?: string; /** separate items: the cut outline or an engraving inside it */ role?: 'cut' | 'engrave'; /** fretwork: the see-through holes inside a cut item (cut out first; kept apart so reshaping the outline keeps them) */ holes?: [number, number][][] };
+ export interface SheetPaths { name: string; svg: string; pathCount: number; cutLengthMm: number; sizeMm?: number; /** the piece's bounds on the sheet, mm */ bbox?: { x: number; y: number; w: number; h: number }; /** the layer it is cut from */ layer?: number; /** engraved (Engrave + cut builds) or cut through */ op?: 'cut' | 'engrave' }
+ /**
+  * How a layered piece is built (design/10 §Build):
+@@ -56,6 +57,22 @@ export class LayerFlowState {
+   /** the stitched ObjectSpec for a 3D object (docs/design/08-B), kept with the craft */
+   objectSpec = $state<import('../domain/stitch').ObjectSpec | null>(null);
+   applySpec(spec: import('../domain/stitch').ObjectSpec) { this.objectSpec = spec; }
++  /** a 3D kit's sheets as read from its cut-plan picture (approximate outlines, mm on each sheet) */
++  plan = $state<import('../domain/layering').PlanSheet[]>([]);
++  /** the plan's sheets become the craft's layers: per sheet the engraving (first) and the cut */
++  applyPlan(sheets: import('../domain/layering').PlanSheet[], material = '3 mm ply') {
++    this.plan = sheets;
++    const layers: Layer[] = [];
++    sheets.forEach((s, i) => {
++      if (s.engrave.length) layers.push({ n: 0, name: `${s.name} · engrave`, shapes: ['sky'], colour: '#8A5A33', visiblePct: 100, hiddenPct: 0, material, itemName: s.name, role: 'engrave', planSheet: i });
++      layers.push({ n: 0, name: `${s.name} · cut`, shapes: ['sky'], colour: '#C89B6A', visiblePct: 100, hiddenPct: 0, material, itemName: s.name, role: 'cut', planSheet: i });
++    });
++    this.applyLayers(layers);
++    const d = (paths: [number, number][][]) => paths.map((p) => `M${p.map(([x, y]) => `${x} ${y}`).join('L')}Z`).join('');
++    const len = (paths: [number, number][][]) => paths.reduce((a, p) => a + p.reduce((b, q, k) => b + Math.hypot(q[0] - p[(k + 1) % p.length][0], q[1] - p[(k + 1) % p.length][1]), 0), 0);
++    this.applySheets(this.layers.map((l) => { const s = sheets[l.planSheet!], paths = l.role === 'engrave' ? s.engrave : s.cut;
++      return { name: l.name, svg: d(paths), pathCount: paths.length, cutLengthMm: Math.round(len(paths)), sizeMm: Math.max(...s.sizeMm), layer: l.n, op: l.role }; }));
++  }
+   /** traced cut paths per sheet (S7, from the SAM masks via domain/vector), kept with the craft */
+   sheetPaths = $state<SheetPaths[]>([]);
+   applySheets(sheets: SheetPaths[]) { this.sheetPaths = sheets; }
+@@ -122,13 +139,40 @@ export class LayerFlowState {
+   /** a layer's sheet: stacked = what shows + what sits under the layers in front; the back layer is always the
+    *  whole outline (the backing); inlay and engrave = just what shows */
+   sheetPointsFor(n: number): [number, number][][] {
++    const pl = this.layers[n - 1]?.planSheet, ps = pl !== undefined ? this.plan[pl] : undefined;
++    if (ps) { const [sw, sh] = ps.sizeMm; return (this.layers[n - 1].role === 'engrave' ? ps.engrave : ps.cut).map((p) => p.map(([x, y]) => [Math.round((x / sw) * 1000), Math.round((y / sh) * 1000)] as [number, number])); }
+     const r = this.regionForLayer(this.layers[n - 1]);
+     if (!r) return [];
+     const whole = r.cutPaths?.length ? r.cutPaths : r.paths ?? [];
+     const l = this.layers[n - 1];
+-    if (l?.role) return l.role === 'cut' ? whole : r.paths ?? [];
++    if (l?.role) return l.role === 'cut' ? [...whole, ...(r.holes ?? [])] : r.paths ?? [];
+     return this.build === 'stacked' || n === 1 ? whole : r.paths ?? [];
+   }
++  /**
++   * What a layer becomes on the machine, in mm. One piece (stacked art): its sheet at the craft's real size, in the
++   * photo's place. Separate items (bookmarks): each item on its own sheet, turned upright (its long axis vertical),
++   * its engraving turned with it; `turn` is how far it was turned.
++   */
++  pieceFor(n: number): { shapes: Pt[][]; sheetMm: [number, number]; d: string; turn: number } {
++    const l = this.layers[n - 1];
++    const planned = l?.planSheet !== undefined ? this.plan[l.planSheet] : undefined;
++    if (planned) { const shapes = (l.role === 'engrave' ? planned.engrave : planned.cut) as Pt[][]; return { shapes, sheetMm: planned.sizeMm, d: sheetD(shapes, planned.sizeMm), turn: 0 }; }
++    const own = toMm(this.sheetPointsFor(n), this.widthMm, this.aspect);
++    if (!l?.itemName || !this.layers.some((x) => x.itemName && x.itemName !== l.itemName)) {
++      const size: [number, number] = [Math.round(this.widthMm), Math.round(this.widthMm / (this.aspect || 1))];
++      return { shapes: own, sheetMm: size, d: sheetD(own, size), turn: 0 };
++    }
++    const ref = this.layers.find((x) => x.itemName === l.itemName && x.role === 'cut') ?? l;
++    const refShapes = ref.n === n ? own : toMm(this.sheetPointsFor(ref.n), this.widthMm, this.aspect);
++    if (!refShapes.length || !own.length) return { shapes: own, sheetMm: [10, 10], d: '', turn: 0 };
++    const { turn, centre } = uprightTurn(refShapes);
++    const frame = layOut(refShapes, turn, centre);
++    const out = ref.n === n ? frame : layOut(own, turn, centre, frame.frame);
++    return { shapes: out.shapes, sheetMm: frame.size, d: sheetD(out.shapes, frame.size), turn };
++  }
++  /** separate items are laid out each on its own sheet, straightened */
++  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- counted once, not reactive state
++  get separateItems() { return new Set(this.layers.map((l) => l.itemName).filter(Boolean)).size > 1; }
+   /** the sheet a layer is cut (or engraved) from, as one SVG path */
+   cutPathFor(n: number): string { return this.sheetPointsFor(n).map(pointsToPath).join(''); }
+   /** the virtual run of one pass: the board's colour, its cut outline, the engraving on it, and which pass this is */
+@@ -176,6 +220,9 @@ export class LayerFlowState {
+   }
+   /** an item's size on the material (its layers' outlines) */
+   itemSize(name: string): { wMm: number; hMm: number } | null {
++    // separate items are measured as cut: straightened, on their own sheet (less the sheet's 5 mm margin)
++    const cut = this.separateItems ? this.layers.find((l) => l.itemName === name && l.role !== 'engrave') : undefined;
++    if (cut) { const [w, h] = this.pieceFor(cut.n).sheetMm; if (w > 10 && h > 10) return { wMm: Math.round(w - 10), hMm: Math.round(h - 10) }; }
+     return this.sizeOf(this.layers.filter((l) => (l.itemName ?? this.subject) === name).flatMap((l) => this.regionForLayer(l)?.paths ?? []));
+   }
+   /** the whole piece's size (the background-removed outline, else every layer) */
+@@ -234,12 +281,55 @@ export class LayerFlowState {
+     }
+     const layer: Layer = { n: hi, name: `${back.name} + ${front.name}`, shapes: [...back.shapes, ...front.shapes], colour: front.colour, material: front.material,
+       visiblePct: round(back.visiblePct + front.visiblePct), hiddenPct: round(Math.min(back.hiddenPct, front.hiddenPct)), parts: [...(back.parts ?? [back]), ...(front.parts ?? [front])],
+-      ...(regionId ? { regionId } : {}), ...(front.itemName ? { itemName: front.itemName } : {}) };
++      ...(regionId ? { regionId } : {}),
++      // one item's parts stay that item's; parts of different items become one sheet laid out as in the photo
++      ...(front.itemName && back.itemName === front.itemName ? { itemName: front.itemName } : {}),
++      ...(front.role && back.role === front.role ? { role: front.role } : {}) };
+     const next = this.stack.filter((l) => l.n !== lo && l.n !== hi);
+     next.splice(hi - 2, 0, layer);
+     this.stack = next.map((l, i) => ({ ...l, n: i + 1 }));
+     this.sel = hi - 1; this.overrides = {}; this.hiddenLayers = [];
+   }
++  // ── Undo: every edit to the stack or a layer's mask is checkpointed first (kept with the session, last 30)
++  history = $state<{ label: string; at: Record<string, unknown> }[]>([]);
++  private static readonly UNDOABLE = ['stack', 'regionList', 'keep', 'sheetPaths', 'overrides', 'hiddenLayers', 'sel', 'plan', 'view'] as const;
++  /** remember the craft as it is now, before `label` changes it */
++  checkpoint(label: string) {
++    const at = Object.fromEntries(LayerFlowState.UNDOABLE.map((k) => [k, $state.snapshot(this[k])]));
++    this.history = [...this.history.slice(-29), { label, at }];
++  }
++  get canUndo() { return this.history.length > 0; }
++  /** put back what the last edit changed; returns what was undone */
++  undo(): string | null {
++    const last = this.history.at(-1);
++    if (!last) return null;
++    this.history = this.history.slice(0, -1);
++    const self = this as unknown as Record<string, unknown>;
++    for (const k of LayerFlowState.UNDOABLE) if (k in last.at) self[k] = last.at[k];
++    return last.label;
++  }
++  /** several layers become one (merged into the frontmost of them), optionally renamed */
++  mergeMany(ns: number[], name?: string) {
++    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a one-off de-duplication, not reactive state
++    const list = [...new Set(ns)].filter((n) => this.stack[n - 1]).sort((a, b) => a - b);
++    if (list.length < 2) return 0;
++    // merge from the front: each merge leaves the result where the front one was, one place further back
++    let into = list[list.length - 1];
++    for (let i = list.length - 2; i >= 0; i--) { this.mergeLayers(list[i], into); into -= 1; }
++    if (name) this.stack = this.stack.map((l) => (l.n === into ? { ...l, name } : l));
++    this.sel = into; this.sheetPaths = [];
++    return list.length;
++  }
++  /** take layers out of the craft (their masks stay with the photo; nothing else moves) */
++  removeLayers(ns: number[]) {
++    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a one-off lookup, not reactive state
++    const drop = new Set(ns);
++    if (!drop.size) return 0;
++    const before = this.stack.length;
++    this.stack = this.stack.filter((l) => !drop.has(l.n)).map((l, i) => ({ ...l, n: i + 1 }));
++    this.sel = Math.min(this.sel, this.stack.length) || 1; this.overrides = {}; this.hiddenLayers = []; this.sheetPaths = [];
++    return before - this.stack.length;
++  }
+   canSplit(n: number) { const l = this.stack[n - 1]; return Boolean(l) && ((l.parts?.length ?? 0) > 1 || l.shapes.length > 1); }
+   split(n: number) {
+     if (!this.canSplit(n)) return;
+@@ -374,7 +464,7 @@ export class LayerFlowState {
+   toggleAssembled(i: number) { this.assembled = this.assembled.includes(i) ? this.assembled.filter((x) => x !== i) : [...this.assembled, i]; }
+ 
+   // project save / reopen: every choice above, as plain data
+-  private static readonly SAVED = ['removeBackdrop', 'subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths', 'subjectPaths', 'hiddenLayers', 'showStack', 'view', 'build', 'aspect', 'widthMm', 'sizeBasis', 'pictures', 'objectSpec'] as const;
++  private static readonly SAVED = ['removeBackdrop', 'subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths', 'subjectPaths', 'hiddenLayers', 'showStack', 'view', 'build', 'aspect', 'widthMm', 'sizeBasis', 'pictures', 'objectSpec', 'plan'] as const;
+   /** a fresh flow's choices (New starts from these) */
+   static defaults() { return new LayerFlowState().snapshot(); }
+   snapshot(): Record<string, unknown> {
+@@ -383,6 +473,7 @@ export class LayerFlowState {
+   restore(saved: Record<string, unknown>) {
+     const self = this as unknown as Record<string, unknown>;
+     for (const k of LayerFlowState.SAVED) if (k in saved) self[k] = saved[k];
++    this.history = [];
+     // crafts saved before names were cleaned: drop a model's own "Layer 4 -" numbering
+     if (this.stack.some((l) => cleanLayerName(l.name) !== l.name)) this.stack = this.stack.map((l) => ({ ...l, name: cleanLayerName(l.name) }));
+   }
+diff --git a/app/src/lib/state/muse.svelte.ts b/app/src/lib/state/muse.svelte.ts
+index bca09ab..bb3405e 100644
+--- a/app/src/lib/state/muse.svelte.ts
++++ b/app/src/lib/state/muse.svelte.ts
+@@ -39,8 +39,6 @@ async function withPhotoColours(imageDataUrl: string | undefined, found: Region[
+     });
+   } catch { return found; }
+ }
+-/** how light a #rrggbb colour is (0–255), to tell the engraved (darker) tone from the wood */
+-const hexLight = (hex: string) => { const n = parseInt(hex.slice(1), 16); return ((n >> 16) & 255) * 0.3 + ((n >> 8) & 255) * 0.59 + (n & 255) * 0.11; };
+ const traceCost = (j: any): number | undefined => Array.isArray(j?.trace) ? j.trace.reduce((a: number, x: any) => a + (Number(x?.costUsd) || 0), 0) : undefined;
+ 
+ /** One run of a model or agent job for a craft, as the UI shows it. */
+@@ -194,17 +192,22 @@ export class MuseAgents {
+         // separate items cut from wood or acrylic (bookmarks, coasters): each item is a cut outline plus an
+         // engraving — code measures the engraved detail inside each item from the photo (two tones per item)
+         const laser = opts.brief?.arrangement === 'multiple-items' && (opts.brief.likelyMaterial === 'wood' || opts.brief.likelyMaterial === 'acrylic');
+-        const ipx = laser ? await this.pixels(opts.imageDataUrl, 800) : null;
++        // full resolution: small items (earrings) have holes only a few pixels wide at working size
++        const ipx = laser ? await this.pixels(opts.imageDataUrl, 1600) : null;
+         if (ipx) {
+           const extra: Region[] = [];
++          const { woodPiece, rasterisePaths } = await import('../domain/layering');
+           for (const r of found) {
+             if (!r.paths?.length) continue;
+             r.role = 'cut';
+-            const parts = await measureLayers(ipx, r.paths, { k: 2, titles: [] });
+-            // the engraving: the darker tone, when it is a real share of the item (not the whole of it, not specks)
+-            const dark = [...parts].sort((a, b) => hexLight(a.hex) - hexLight(b.hex))[0];
+-            if (!dark || parts.length < 2 || dark.visiblePct < 3 || dark.visiblePct > 70) continue;
+-            extra.push({ id: `${r.id}-e` as Region['id'], name: `${r.itemName ?? r.name} · engraving`, pct: Math.round(((dark.visiblePct * r.pct) / 100) * 10) / 10, note: 'engraved detail inside the item', tone: 'ink', keep: true, colour: dark.hex, paths: dark.visiblePaths, itemId: r.itemId ?? r.id, itemName: r.itemName ?? r.name, role: 'engrave' } as Region);
++            // fretwork: dark blobs inside the item are see-through holes (cut out); thin dark lines are engraving
++            const wp = woodPiece(ipx, rasterisePaths(r.paths, ipx.w, ipx.h));
++            if (wp.holesPct >= 2) r.holes = wp.holePaths;
++            // an engraving that would show 0% of the item is no layer at all
++            // in heavy fretwork (mostly holes), a little dark left over is the cut walls' shadow, not engraving
++            if (wp.holesPct > 35 && wp.engravePct < 4) continue;
++            if (wp.engravePct < 2 || wp.engravePct > 70 || !wp.engravePaths.length || (wp.engravePct * r.pct) / 100 < 0.5) continue;
++            extra.push({ id: `${r.id}-e` as Region['id'], name: `${r.itemName ?? r.name} · engraving`, pct: Math.round(((wp.engravePct * r.pct) / 100) * 10) / 10, note: `engraved detail inside the item${r.holes ? ` · ${wp.holesPct}% of it is cut through` : ''}`, tone: 'ink', keep: true, colour: '#5A3A22', paths: wp.engravePaths, itemId: r.itemId ?? r.id, itemName: r.itemName ?? r.name, role: 'engrave' } as Region);
+           }
+           found = [...found, ...extra];
+         }
+@@ -278,6 +281,18 @@ export class MuseAgents {
+     const parts: Part[] = fixtureParts.map((p) => ({ ...p, needs: [...p.needs] }));
+     return this.run('layers.unfold', craftId, async () => { await tick(); return { result: parts, summary: `${parts.length} part groups · front, back, sides, roof, floor` }; });
+   }
++  /** A 3D kit's cut plan, read by code from its picture (design/13): each framed sheet, its pieces (what the cut
++   *  lines close off) and its engraving. A low-resolution picture gives approximate outlines. */
++  readCutPlan(craftId: string, url: string | undefined) {
++    return this.run('layers.readPlan', craftId, async () => {
++      const { readPlan } = await import('../domain/layering');
++      const { loadPixels } = await import('./photo');
++      const img = await loadPixels(url, 1600);
++      const sheets = img ? readPlan(img) : [];
++      const pieces = sheets.reduce((a, s) => a + s.pieces, 0);
++      return { result: { sheets, w: img?.w ?? 0, h: img?.h ?? 0 }, summary: sheets.length ? `Read ${sheets.length} sheets · ${pieces} pieces from the cut plan` : 'No sheets found in the cut plan', source: 'live' as const, costUsd: 0 };
++    });
++  }
+   /** Six-view stitch (design/08-B): SAM silhouette per captured view -> stitchViews -> panels as layers + rectangle sheets. */
+   stitchViews(craftId: string, opts: { views: { view: import('../content/layers').ViewId; url?: string }[]; sizeMm?: number; joinery?: import('../content/layers').Joinery; thicknessMm?: number }) {
+     return this.run('layers.unfold', craftId, async () => {
+@@ -328,7 +343,7 @@ export class MuseAgents {
+   }
+   // ── Sheets
+   /** Sheets: SAM mask paths (0-1000 image coords from /api/segment) scaled to mm and traced to closed SVG per kept region. */
+-  vectorise(craftId: string, sheets: number, opts: { regions?: Region[]; sizeMm?: number; /** photo width / height */ aspect?: number; layers?: Layer[]; /** per-layer sheet paths (how it is built decides them) */ sheetPoints?: (n: number) => [number, number][][]; op?: (n: number) => 'cut' | 'engrave'; order?: number[] } = {}) {
++  vectorise(craftId: string, sheets: number, opts: { regions?: Region[]; sizeMm?: number; /** photo width / height */ aspect?: number; layers?: Layer[]; /** per-layer sheet paths (how it is built decides them) */ sheetPoints?: (n: number) => [number, number][][]; /** separate items: each laid out on its own sheet, already in mm */ pieceMm?: (n: number) => [number, number][][]; op?: (n: number) => 'cut' | 'engrave'; order?: number[] } = {}) {
+     return this.run('sheets.vectorise', craftId, async () => {
+       const sizeMm = opts.sizeMm ?? 300;
+       const mmPerUnit = sizeMm / 1000;
+@@ -342,8 +357,9 @@ export class MuseAgents {
+         const paths = own?.length ? own : r!.cutPaths?.length ? r!.cutPaths : r!.paths?.length ? r!.paths : r!.box ? [[[r!.box.x1, r!.box.y1], [r!.box.x2, r!.box.y1], [r!.box.x2, r!.box.y2], [r!.box.x1, r!.box.y2]] as [number, number][]] : [];
+         // y is 0-1000 of the photo's height: squeeze it to the photo's shape before scaling to mm
+         const ky = 1 / (opts.aspect ?? 1);
+-        const traced = paths.map((points) => ({ points: points.map(([x, y]) => [x, y * ky] as [number, number]), area: 0, closed: true as const }));
+-        const mm = scalePaths(traced, mmPerUnit);
++        const laid = opts.pieceMm?.(n);
++        const mm = laid?.length ? laid.map((points) => ({ points, area: 0, closed: true as const }))
++          : scalePaths(paths.map((points) => ({ points: points.map(([x, y]) => [x, y * ky] as [number, number]), area: 0, closed: true as const })), mmPerUnit);
+         const pts = mm.flatMap((p) => p.points), xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+         const bbox = pts.length ? { x: Math.min(...xs), y: Math.min(...ys), w: Math.round((Math.max(...xs) - Math.min(...xs)) * 10) / 10, h: Math.round((Math.max(...ys) - Math.min(...ys)) * 10) / 10 } : undefined;
+         return { name, svg: pathsToSvg(mm), pathCount: mm.length, cutLengthMm: cutLength(mm), sizeMm, layer: n, op: opts.op?.(n) ?? 'cut' as const, ...(bbox ? { bbox } : {}) };
+diff --git a/app/src/lib/state/photo-flow.spec.ts b/app/src/lib/state/photo-flow.spec.ts
+index 0ccae32..86e18e7 100644
+--- a/app/src/lib/state/photo-flow.spec.ts
++++ b/app/src/lib/state/photo-flow.spec.ts
+@@ -297,7 +297,7 @@ describe('photo → outline → colour layers in AppState (code measures; no SAM
+     const set = (x: number, y: number, [r, g, b]: number[]) => { const i = (y * w + x) * 4; data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255; };
+     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+       set(x, y, [235, 232, 226]);
+-      for (const x0 of [12, 72]) if (x >= x0 && x < x0 + 30 && y >= 12 && y < 108) set(x, y, (x - x0 > 8 && x - x0 < 22 && y > 30 && y < 90 && (y % 6 < 3)) ? [70, 42, 20] : [205, 160, 110]);
++      for (const x0 of [12, 72]) if (x >= x0 && x < x0 + 30 && y >= 12 && y < 108) set(x, y, (x - x0 > 8 && x - x0 < 22 && y > 30 && y < 90 && (y % 6 < 2)) ? [70, 42, 20] : [205, 160, 110]);
+     }
+     const px = { data, w, h };
+     const names = ['Fox bookmark', 'Owl bookmark'];
+@@ -322,6 +322,17 @@ describe('photo → outline → colour layers in AppState (code measures; no SAM
+     expect(fox.hMm).toBeGreaterThanOrEqual(170); expect(fox.hMm).toBeLessThanOrEqual(190);
+     const found = app.flow.conversation.log.find((e) => e.step?.title === 'Found 2 items')!;
+     expect(found.step!.detail).toMatch(/Fox bookmark \(\d+ × \d+ mm\).*engrave first, then cut.*a typical bookmark/);
++    // each item on its own sheet, upright, its engraving turned and moved with it
++    expect(f.separateItems).toBe(true);
++    const foxCut = f.layers.find((l) => l.itemName === 'Fox bookmark' && l.role === 'cut')!, foxEng = f.layers.find((l) => l.itemName === 'Fox bookmark' && l.role === 'engrave')!;
++    const pc = f.pieceFor(foxCut.n), pe = f.pieceFor(foxEng.n);
++    expect(pc.turn).toBe(0); expect(pc.sheetMm).toEqual(pe.sheetMm);
++    expect(pc.sheetMm[1]).toBeGreaterThan(pc.sheetMm[0] * 2);
++    expect(Math.min(...pc.shapes.flat().map((p) => p[0]))).toBeCloseTo(5, 0);
++    await app.ask('straighten each of the bookmarks as separate items', '/make/layers');
++    expect(app.flow.conversation.log.at(-1)?.step?.title).toBe('Each of the 2 items is on its own sheet, upright');
++    expect(f.view).toBe('cut');
++    expect(app.hiddenItems()).toEqual([]);
+     // engraving runs first, then the cuts
+     expect(f.passOrder.map((n) => f.opFor(n))).toEqual(['engrave', 'engrave', 'cut', 'cut']);
+     const pv = f.previewFor(f.passOrder[0]);
+@@ -419,10 +430,12 @@ describe('photo → outline → colour layers in AppState (code measures; no SAM
+     expect(app.layers.done).toEqual(['front', 'right', 'top']);
+     expect(app.layers.outline.sizeMm).toBe(300);
+     app.visit('views'); await settle(); await settle();
+-    await vi.waitFor(() => expect(app.layers.objectSpec).not.toBeNull(), { timeout: 4000 });
++    // a cut plan among them is read first (no pixels here, so no sheets: the views are stitched instead)
++    await vi.waitFor(() => expect(app.layers.objectSpec).not.toBeNull(), { timeout: 12000 });
++    expect(app.flow.conversation.log.some((e) => e.step?.title === 'I couldn’t find the sheets in the plan')).toBe(true);
+     app.page = '/make/views';
+     expect(app.suggestions.some((x) => typeof x !== 'string' && x.label === 'Cut the parts')).toBe(true);
+-  });
++  }, 20_000);
+ 
+   it('on Cut, “play the whole run” in the chat runs every pass', async () => {
+     const app = await craft();
+diff --git a/app/src/routes/(studio)/make/assemble/+page.svelte b/app/src/routes/(studio)/make/assemble/+page.svelte
+index 00ef5e3..9ce2bfa 100644
+--- a/app/src/routes/(studio)/make/assemble/+page.svelte
++++ b/app/src/routes/(studio)/make/assemble/+page.svelte
+@@ -19,8 +19,13 @@ const finished = $derived(app.project?.status === 'finished');
+ const joined = $derived(f.kind === '3d');
+ const pad = (n: number) => String(n).padStart(2, '0');
+ // one card per layer, with the instruction for it; sheets in their own colour
+-const layerSteps = $derived(f.layers.map((l) => ({ l, step: steps.find((s) => s.layer === l.n) ?? { title: l.name, detail: '' }, d: f.cutPathFor(l.n) })));
+-const sheets = $derived(layerSteps.map((x) => ({ d: x.d, colour: x.l.colour })));
++// separate items (bookmarks): each on its own sheet, upright, in its own cell; its engraving lands on it
++const itemNames = $derived([...new Set(f.layers.map((l) => l.itemName ?? ''))]);
++const layerSteps = $derived(f.layers.map((l) => {
++  const pc = f.pieceFor(l.n);
++  return { l, step: steps.find((s) => s.layer === l.n) ?? { title: l.name, detail: '' }, d: f.separateItems ? pc.d : f.cutPathFor(l.n), aspect: f.separateItems ? pc.sheetMm[0] / pc.sheetMm[1] : f.aspect || 1 };
++}));
++const sheets = $derived(layerSteps.map((x) => ({ d: x.d, colour: x.l.colour, ...(f.separateItems ? { cell: itemNames.indexOf(x.l.itemName ?? ''), aspect: x.aspect, engrave: x.l.role === 'engrave' } : {}) })));
+ const cut = $derived(app.project ? app.queue.cutLayers(app.project.id) : []);
+ const intro = $derived(steps[0]);
+ const outro = $derived(steps.at(-1));
+@@ -37,7 +42,7 @@ let raf = 0, hold = 0;
+ function place(k: number) {
+   placed = k + 1; settle = 0; f.openAssembleStep(k + 1);
+   const thumb = cards?.querySelectorAll('[data-card-sheet]')[k] as HTMLElement | undefined;
+-  const to = stage?.target();
++  const to = stage?.target(k);
+   if (reduce || !thumb || !to || !thumb.animate || !sheets[k]?.d) { settle = 1; return; }
+   flying = k;
+   const fr = thumb.getBoundingClientRect();
+@@ -45,7 +50,7 @@ function place(k: number) {
+   fly.width = to.w * d; fly.height = to.h * d;
+   Object.assign(fly.style, { position: 'fixed', left: `${to.x}px`, top: `${to.y}px`, width: `${to.w}px`, height: `${to.h}px`, pointerEvents: 'none', zIndex: '50', transformOrigin: '0 0', filter: 'drop-shadow(0 10px 14px color-mix(in oklab, var(--ink) 35%, transparent))' });
+   const g = fly.getContext('2d');
+-  if (g) { g.scale(d * to.w / 1000, d * to.h / 1000); g.fillStyle = sheets[k].colour; g.fill(new Path2D(sheets[k].d), 'evenodd'); }
++  if (g) { g.scale((d * to.w) / 1000, (d * to.h) / 1000); g.fillStyle = sheets[k].colour; g.fill(new Path2D(sheets[k].d), 'evenodd'); }
+   document.body.appendChild(fly);
+   const sc = fr.width / to.w, dx = fr.left - to.x, dy = fr.top - to.y;
+   fly.animate([
+@@ -86,7 +91,7 @@ const at3d = $derived(Math.min(f.assembleAt, steps.length - 1));
+     {#if finished}<p role="status" class="flex items-center gap-2 rounded-md border border-paper-edge bg-paper-soft px-3 py-2 text-ui text-success"><span class="i-solar:check-circle-linear" aria-hidden="true"></span>Saved to your crafts with {steps.length} steps and {f.notes.length} notes.</p>{/if}
+     <section aria-label="Putting it together" class="grid md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] rounded-lg border border-paper-edge bg-paper-soft overflow-hidden">
+       <figure class="relative m-0 aspect-square max-h-[64vh] w-full bg-paper border-b md:border-b-0 md:border-r border-paper-edge">
+-        <StackStage bind:this={stage} {sheets} {placed} {settle} hidden={flying} {finale} photo={app.stageImage} aspect={f.aspect || 1} label={finale > 0.5 ? 'The finished piece' : `${placed} of ${f.layers.length} layers placed`} />
++        <StackStage bind:this={stage} {sheets} {placed} {settle} hidden={flying} {finale} aspect={f.aspect || 1} label={finale > 0.5 ? 'The finished piece' : `${placed} of ${f.layers.length} layers placed`} />
+         <figcaption class="absolute left-3 top-3 meta rounded-full border border-paper-edge bg-paper px-3 py-1 text-ink" aria-live="polite">{finale > 0.5 ? 'The finished piece' : `${placed} of ${f.layers.length} layers placed`}</figcaption>
+       </figure>
+       <div class="p-5 flex flex-col gap-3 min-w-0">
+@@ -108,9 +113,9 @@ const at3d = $derived(Math.min(f.assembleAt, steps.length - 1));
+       {#each layerSteps as x, i (x.l.n)}
+         <article aria-label={`Layer ${i + 1}: ${x.l.name}`} aria-current={i === placed - 1 ? 'step' : undefined}
+           class="rounded-lg border bg-paper-soft p-2.5 grid grid-cols-[72px_minmax(0,1fr)] gap-2.5 items-start transition-transform {i === placed - 1 ? 'border-accent -translate-y-0.5' : 'border-paper-edge'} {i < placed - 1 ? 'opacity-75' : ''}">
+-          <span class="w-[72px] h-[72px] rounded-md bg-paper p-1" data-card-sheet>{#if x.d}<CutSheet d={x.d} colour={x.l.colour} aspect={f.aspect || 1} label="" small />{/if}</span>
++          <span class="w-[72px] h-[72px] rounded-md bg-paper p-1" data-card-sheet>{#if x.d}<CutSheet d={x.d} colour={x.l.colour} aspect={x.aspect} label="" small />{/if}</span>
+           <div class="min-w-0 flex flex-col gap-1">
+-            <p class="eyebrow">Layer {i + 1} · {where(i, layerSteps.length)}{app.queue.items.some((q) => q.craftId === app.project?.id) ? (cut.includes(x.l.n) ? ' · cut' : ' · not cut yet') : ''}</p>
++            <p class="eyebrow">{f.separateItems ? `${x.l.itemName} · ${x.l.role === 'engrave' ? 'engrave' : 'cut'}` : `Layer ${i + 1} · ${where(i, layerSteps.length)}`}{app.queue.items.some((q) => q.craftId === app.project?.id) ? (cut.includes(x.l.n) ? ' · cut' : ' · not cut yet') : ''}</p>
+             <h3 class="text-ui font-medium text-ink">{x.l.name}</h3>
+             <p class="text-ui text-ink-mute">{x.step.detail}</p>
+           </div>
+diff --git a/app/src/routes/(studio)/make/layers/+page.svelte b/app/src/routes/(studio)/make/layers/+page.svelte
+index 880a9c9..0645e85 100644
+--- a/app/src/routes/(studio)/make/layers/+page.svelte
++++ b/app/src/routes/(studio)/make/layers/+page.svelte
+@@ -11,12 +11,13 @@ import { useApp } from '$lib/state/context';
+ // Layers · the breakdown. Analyze lands here from Capture: the background goes, the items are found and each
+ // is split into layers, live — the work area fills in as the chat says what Katachi is thinking, doing and done.
+ // The work area is the editor: its toolbar holds the tools, the view and the selected layer's sliders. A layer's
+-// own actions (show only, hide, quote, duplicate, merge, split) float by its row when it is selected. Every
++// own actions (show only, hide, quote, duplicate, merge, split, delete) float by its row when it is selected. Every
+ // action is said in the chat with the layer quoted, then lands there as a step; next steps are chat suggestions.
+ const app = useApp();
+ const f = app.layers;
+ $effect(() => app.setScreen(app.title, f.layers.length ? `${f.items.length} item${f.items.length === 1 ? '' : 's'} · ${f.layers.length} layers` : 'breaking it down'));
+ const sel = $derived(f.selected);
++const hidden = $derived(f.layers.length ? app.hiddenItems() : []);
+ const tune = $derived(sel.tune ?? { detail: 3, weight: 0 });
+ const allHidden = $derived(f.layers.length > 0 && f.layers.every((l) => !f.isLayerVisible(l.n)));
+ // the stage: every visible layer as a hairline, the selected one showing the photo itself inside its mask;
+@@ -80,6 +81,7 @@ $effect(() => { void sel.n; merging = false; });
+       <Button size="sm" style="outline" icon="i-solar:magic-stick-3-linear" label="Smooth" onclick={() => void app.layerAction(sel.n, { kind: 'smoothArea', box: f.area!, strength: 2 })} />
+       <Button size="sm" style="outline" label="Reduce jitter" onclick={() => void app.layerAction(sel.n, { kind: 'smoothArea', box: f.area!, strength: 3 })} />
+     {/if}
++    <Button size="sm" style="ghost" icon="i-solar:undo-left-round-linear" title={f.canUndo ? `Undo: ${f.history.at(-1)?.label}` : 'Nothing to undo'} aria-label="Undo" disabled={!f.canUndo} onclick={() => app.undoLast()} />
+     <span class="w-px h-5 bg-paper-edge mx-1.5"></span>
+     <Toggle options={views} value={f.view} label="View" class="seg" onchange={(v) => { f.setView(v as 'all' | 'only' | 'exploded' | 'cut'); app.save(); }} />
+     <span class="w-px h-5 bg-paper-edge mx-1.5"></span>
+@@ -96,6 +98,7 @@ $effect(() => { void sel.n; merging = false; });
+     <Button size="sm" style="ghost" icon="i-solar:copy-linear" title="Duplicate this layer" aria-label="Duplicate this layer" onclick={() => void app.layerAction(sel.n, { kind: 'duplicate' })} />
+     <Button size="sm" style={merging ? 'default' : 'ghost'} icon="i-solar:layers-minimalistic-linear" title="Merge with another layer" aria-label="Merge with…" aria-expanded={merging} disabled={f.layers.length < 2} onclick={() => (merging = !merging)} />
+     <Button size="sm" style="ghost" icon="i-solar:scissors-linear" title={f.canSplit(sel.n) ? 'Split into its pieces' : 'One piece — nothing to split'} aria-label="Split" disabled={!f.canSplit(sel.n)} onclick={() => void app.layerAction(sel.n, { kind: 'split' })} />
++    <Button size="sm" style="ghost" icon="i-solar:trash-bin-minimalistic-linear" title="Delete this layer" aria-label="Delete this layer" disabled={f.layers.length < 2} onclick={() => void app.layerAction(sel.n, { kind: 'remove' })} />
+     <Button size="sm" style="ghost" icon="i-solar:checklist-minimalistic-linear" title="Add this sheet to the cut queue" aria-label="Add to the cut queue" onclick={() => app.queueSheets([sel.n])} />
+   </div>
+   {#if merging}
+@@ -134,7 +137,8 @@ $effect(() => { void sel.n; merging = false; });
+   {/if}
+   {#each f.items as item (item.name)}
+     <section aria-label={`Item: ${item.name}`} class="flex flex-col gap-1">
+-      {#if f.items.length > 1}{@const z = f.itemSize(item.name)}<p class="text-ui text-ink font-medium truncate">{item.name}<span class="meta ml-1.5">{item.layers.length} layer{item.layers.length === 1 ? '' : 's'}{z ? ` · ${z.wMm} × ${z.hMm} mm` : ''}</span></p>{/if}
++      {#if f.items.length > 1}{@const z = f.itemSize(item.name)}<p class="text-ui text-ink font-medium truncate">{item.name}<span class="meta ml-1.5">{item.layers.length} layer{item.layers.length === 1 ? '' : 's'}{z ? ` · ${z.wMm} × ${z.hMm} mm` : ''}</span></p>
++        {#if hidden.includes(item.name)}<p class="meta text-warning-ink">Partly hidden by a neighbour in the photo — say “complete the hidden edges of the {item.name}”</p>{/if}{/if}
+       <ul aria-label={f.items.length > 1 ? `${item.name} layers` : 'Layer stack, back to front'} class="flex flex-col gap-1.5">
+         {#each item.layers as l (l.n)}
+           {@const o = f.overlayForLayer(l.n)}
+@@ -158,8 +162,9 @@ $effect(() => { void sel.n; merging = false; });
+     <figure class="relative m-0 h-[300px] md:h-auto md:flex-1 md:min-h-0 w-full rounded-lg overflow-hidden border border-paper-edge bg-paper-soft" data-work-area>
+       {#if app.stageImage}
+         {#if f.layers.length && f.view === 'cut'}
+-          <div class="h-full p-4 flex flex-col gap-2 items-center"><div class="flex-1 min-h-0 w-full"><CutSheet d={f.cutPathFor(sel.n)} colour={sel.colour} image={app.stageImage} label={`Layer ${sel.n}, ${sel.name}: the sheet it is ${f.opFor(sel.n) === 'engrave' ? 'engraved' : 'cut'} from`} /></div>
+-            <p class="meta">{f.opFor(sel.n) === 'engrave' ? 'Engraved' : 'Cut'} · {sel.n === 1 ? 'the backing: the whole outline' : f.build === 'stacked' ? 'includes the layers in front of it' : 'just its own piece'}</p></div>
++          {@const pc = f.pieceFor(sel.n)}
++          <div class="h-full p-4 flex flex-col gap-2 items-center"><div class="flex-1 min-h-0 w-full"><CutSheet d={pc.d} colour={sel.colour} aspect={pc.sheetMm[0] / pc.sheetMm[1]} label={`Layer ${sel.n}, ${sel.name}: the sheet it is ${f.opFor(sel.n) === 'engrave' ? 'engraved' : 'cut'} from`} /></div>
++            <p class="meta">{f.opFor(sel.n) === 'engrave' ? 'Engraved' : 'Cut'} · {pc.sheetMm[0]} × {pc.sheetMm[1]} mm · {f.separateItems ? `its own sheet${pc.turn ? `, turned ${Math.abs(pc.turn)}° upright` : ', upright'}` : sel.n === 1 ? 'the backing: the whole outline' : f.build === 'stacked' ? 'includes the layers in front of it' : 'just its own piece'}</p></div>
+         {:else if f.layers.length && f.view === 'exploded'}
+           <ExplodedPhoto image={app.stageImage} layers={exploded} selected={sel.n} />
+         {:else if f.layers.length}
+diff --git a/app/src/routes/(studio)/make/views/+page.svelte b/app/src/routes/(studio)/make/views/+page.svelte
+index 60bfcab..349365a 100644
+--- a/app/src/routes/(studio)/make/views/+page.svelte
++++ b/app/src/routes/(studio)/make/views/+page.svelte
+@@ -10,20 +10,24 @@ import { stepContext } from '$lib/state/step-context.svelte';
+ const app = useApp();
+ const f = app.layers;
+ const media = $derived(app.capture.media);
+-const sorted = $derived(f.pictures.map((p) => ({ ...p, url: media[p.index - 1]?.url })).filter((p) => p.url));
+-const label = (p: { kind: string; angle: string }) => p.kind === 'view' ? (p.angle === 'three-quarter' ? '¾ view' : p.angle) : p.kind === 'plan' ? 'cut plan' : p.kind === 'detail' ? 'close-up' : 'other';
++// until Muse has sorted them (or if it could not), the pictures show in the order you gave them
++const sorted = $derived(f.pictures.length
++  ? f.pictures.map((p) => ({ ...p, url: media[p.index - 1]?.url })).filter((p) => p.url)
++  : media.filter((m) => m.url).map((m, i) => ({ index: i + 1, kind: 'unsorted', angle: 'unknown', note: '', url: m.url })));
++const label = (p: { kind: string; angle: string }) => p.kind === 'view' ? (p.angle === 'three-quarter' ? '¾ view' : p.angle) : p.kind === 'plan' ? 'cut plan' : p.kind === 'detail' ? 'close-up' : p.kind === 'unsorted' ? 'sorting…' : 'other';
+ $effect(() => app.setScreen(app.title, `${sorted.length || f.done.length} pictures · ${f.done.length} sides seen`));
+ const ctx = stepContext(app, 'Parts', parts);
+-const rows = $derived<[string, string, boolean][]>(f.partRows.map((p) => [p.name, p.ok ? p.size : p.missing, p.ok]));
++// a kit with a cut plan: its sheets (read from the plan); otherwise the parts the views unfold into
++const rows = $derived<[string, string, boolean][]>(f.plan.length ? f.plan.map((s) => [`Sheet ${s.name}`, `${s.pieces} pieces · ${s.sizeMm[0]} × ${s.sizeMm[1]} mm`, true]) : f.partRows.map((p) => [p.name, p.ok ? p.size : p.missing, p.ok]));
+ const missing = $derived(f.views.filter((v) => !v.ok));
+ const joins = joinery.map((j) => ({ label: j.label, value: j.id }));
+ </script>
+ {#snippet parts()}
+   <div class="flex flex-col gap-3">
+-    <p class="eyebrow">Parts · {f.objectSpec ? `${f.objectSpec.wMm} × ${f.objectSpec.dMm} × ${f.objectSpec.hMm} mm` : 'from the views'}</p>
++    <p class="eyebrow">{f.plan.length ? `Sheets · from your cut plan · ${f.plan.reduce((a, s) => a + s.pieces, 0)} pieces` : `Parts · ${f.objectSpec ? `${f.objectSpec.wMm} × ${f.objectSpec.dMm} × ${f.objectSpec.hMm} mm` : 'from the views'}`}</p>
+     <Card><dl class="divide-y divide-paper-edge -my-1">{#each rows as [k, v, ok] (k)}<div class="flex justify-between gap-3 min-h-11 items-center"><dt>{k}</dt><dd class="readout text-right {ok ? 'text-ink' : 'text-warning-ink'}">{v}</dd></div>{/each}</dl></Card>
+-    <p class="eyebrow mt-1">Joinery</p>
+-    <Toggle options={joins} value={f.joinery} label="Joinery" class="chips" onchange={(v) => f.setJoinery(v as Joinery)} />
++    {#if !f.plan.length}<p class="eyebrow mt-1">Joinery</p>
++    <Toggle options={joins} value={f.joinery} label="Joinery" class="chips" onchange={(v) => f.setJoinery(v as Joinery)} />{/if}
+   </div>
+ {/snippet}
+ <svelte:head><title>Katachi · Views</title></svelte:head>
+diff --git a/app/src/routes/(studio)/workshop/+page.svelte b/app/src/routes/(studio)/workshop/+page.svelte
+index 9af5220..3c77085 100644
+--- a/app/src/routes/(studio)/workshop/+page.svelte
++++ b/app/src/routes/(studio)/workshop/+page.svelte
+@@ -14,12 +14,14 @@ let files = $state<HTMLInputElement | null>(null);
+ // Upload: pick the pictures, then Capture shows them (one, or several views of an object) ready to Analyze
+ async function upload(list: FileList | null) {
+   if (!list?.length) return;
+-  app.startCraft('flat');
++  // a picture can be anything (layered art, separate pieces, a 3D object): the chat does not guess before Analyze
++  const n = list.length;
++  app.startCraft('flat', { say: n > 1 ? `${n} pictures in. Press Analyze: I’ll work out what they show — one object from several sides (and any cut plan among them), or separate crafts.` : 'Your picture is in. Press Analyze: I’ll work out what it is — layered art, separate pieces or a 3D object — and break it down.' });
+   await app.capture.uploadFiles([...list]);
+   app.fileName = list[0]?.name;
+   go('/capture');
+ }
+-const camera = () => { app.startCraft('flat'); app.capture.setSource('camera'); go('/capture'); };
++const camera = () => { app.startCraft('flat', { say: 'Take one picture, or several from different sides of an object. Then press Analyze and I’ll work out what it is.' }); app.capture.setSource('camera'); go('/capture'); };
+ const sketch = () => go(app.startCraft('sketch'));
+ type Filter = 'all' | 'draft' | 'finished';
+ let filter = $state<Filter>('all');
+diff --git a/app/tests/e2e/samples.spec.ts b/app/tests/e2e/samples.spec.ts
+new file mode 100644
+index 0000000..a5e05cf
+--- /dev/null
++++ b/app/tests/e2e/samples.spec.ts
+@@ -0,0 +1,133 @@
++import { test, expect, type Page, type Route } from '@playwright/test';
++import { readFileSync } from 'node:fs';
++import { uploadFromHome } from './start';
++
++// The sample crafts end to end, on the real photos. The Meta models are replayed (no key in CI): Spark's brief and
++// SAM's outlines are what they return for these photos (outlines placed by hand around each object); everything
++// after that — holes, engraving, straightening, filling in what neighbours hide, reading a cut plan, edits by name
++// or number, undo — is the app's own code running on the real pixels.
++const sample = (p: string) => readFileSync(new URL(`../../../samples/${p}`, import.meta.url));
++const main = (page: Page) => page.getByRole('main');
++const chat = (page: Page) => page.getByRole('complementary', { name: 'Katachi chat' });
++const steps = (page: Page) => chat(page).locator('[data-timeline-entry="step"]');
++const step = (page: Page, title: RegExp | string) => steps(page).filter({ hasText: title }).last();
++async function say(page: Page, text: string) {
++  const box = chat(page).locator('[data-chat-composer]').getByRole('textbox');
++  await box.fill(text); await box.press('Enter');
++}
++const rows = (page: Page) => page.getByLabel('Items and layers').locator('[data-layer-row]');
++
++/** Spark says "separate items" in wood; SAM gives each item its outline (0-1000 photo units) */
++async function replayItems(page: Page, { subject, names, outlines, realSizeMm, areaPct }: { subject: string; names: string[]; outlines: [number, number][][]; realSizeMm: { w: number; h: number; basis: string }; /** how much of the photo each item covers */ areaPct: number }) {
++  const brief = { subject, class: 'flat', arrangement: 'multiple-items', likelyMaterial: 'wood', subjectPrompt: subject,
++    regions: names.map((label, i) => ({ id: `i${i + 1}`, label, samPrompt: label, likelyBought: false, note: '' })), items: names, colourGroupsHint: 1, reference: null, topDownConfidence: 0.9, notes: '', realSizeMm };
++  await page.route('**/api/scene', (r: Route) => r.fulfill({ json: { brief, source: 'live', trace: [] } }));
++  await page.route('**/api/segment', async (r: Route) => {
++    const body = r.request().postDataJSON() ?? {};
++    if (Array.isArray(body.regions)) return r.fulfill({ json: { regions: body.regions.map((x: { id: string; label: string }, i: number) => ({ ...x, areaPct, paths: [outlines[i]], keep: true, itemId: x.id, itemName: x.label })), source: 'live', trace: [] } });
++    return r.fulfill({ json: { boxes: [{ x1: 30, y1: 30, x2: 970, y2: 970 }], masks: outlines.map((o) => ({ w: 320, h: 320, ones: 0, paths: [o] })), source: 'live', trace: [] } });
++  });
++  await page.route('**/api/convert', (r: Route) => r.fulfill({ json: { objective: subject, conversionClass: 'flat', pieces: [], variations: [], source: 'live', trace: [] } }));
++  // a free-text edit Spark cannot map to a mask op: the app's own stack commands take it
++  await page.route('**/api/layer-op', (r: Route) => r.fulfill({ json: { answer: { op: 'none', colour: '', other: '', reply: '' }, source: 'live', trace: [] } }));
++}
++// outlines from corner points measured on a picture of size w × h
++const quad = (w: number, h: number, pts: number[][]) => pts.map(([x, y]) => [Math.round((x / w) * 1000), Math.round((y / h) * 1000)] as [number, number]);
++const box = (w: number, h: number, x1: number, y1: number, x2: number, y2: number) => quad(w, h, [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]);
++
++test.describe('samples · end to end', () => {
++  test.use({ viewport: { width: 1440, height: 900 } });
++  test.setTimeout(180_000);
++
++  test('bookmarks: five overlapping fretwork items → holes cut, engraving, straightened, hidden edges filled; edits and undo', async ({ page }) => {
++    const names = ['Elephant bookmark', 'Fox bookmark', 'Whale bookmark', 'Butterfly bookmark', 'Phoenix bookmark'];
++    const W = 800, H = 640;
++    // SAM's mask is what shows: the whale lies under the fox and the butterfly, so its outline has a bite out of it
++    const outlines = [[[42, 183], [155, 157], [296, 555], [165, 597]], [[190, 125], [300, 103], [385, 515], [275, 535]], [[348, 85], [468, 78], [490, 495], [385, 500], [380, 440], [425, 430], [415, 300], [364, 290]],
++      [[500, 130], [625, 125], [580, 540], [425, 525]], [[645, 160], [770, 180], [690, 590], [525, 565]]].map((p) => quad(W, H, p));
++    await replayItems(page, { subject: 'five laser-cut wooden bookmarks', names, outlines, realSizeMm: { w: 50, h: 180, basis: 'a typical bookmark' }, areaPct: 9 });
++    await uploadFromHome(page, [{ name: 'bookmarks.avif', mimeType: 'image/avif', buffer: sample('multiple/bookmarks.avif') }]);
++    await expect(chat(page)).toContainText('Your picture is in. Press Analyze');
++    await main(page).getByRole('button', { name: 'Analyze' }).click();
++    await expect(page).toHaveURL(/\/make\/layers$/);
++    await expect(step(page, /Found 5 items/)).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
++    // the passes after the layers: align & straighten, then interpolation for the ones a neighbour lies over
++    await expect(step(page, 'Each of the 5 items is on its own sheet, upright')).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
++    await expect(step(page, 'Each of the 5 items is on its own sheet, upright')).toContainText(/turned .*°/);
++    await expect(step(page, /Filled in the hidden edges of .*Whale bookmark/)).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
++    // fretwork: each bookmark's sheet cuts its holes out
++    const aside = page.getByLabel('Items and layers');
++    for (const n of names) await expect(aside.getByRole('region', { name: `Item: ${n}` })).toBeVisible();
++    // the engraving of each bookmark is its own pass (the dark see-through areas are holes in the cut)
++    await expect(aside.locator('[data-layer-row]').filter({ hasText: /engraving/ })).not.toHaveCount(0);
++    // sized as cut: upright, so taller than wide
++    const size = (await aside.getByRole('region', { name: 'Item: Elephant bookmark' }).innerText()).match(/(\d+) × (\d+) mm/)!;
++    expect(Number(size[2])).toBeGreaterThan(Number(size[1]) * 2);
++    await page.screenshot({ path: 'test-results/samples/bookmarks-1-layers.png' });
++    const count = await rows(page).count();
++    expect(count).toBeGreaterThanOrEqual(5);
++    // edits by number, then undo puts it back
++    await say(page, 'delete layer 2');
++    await expect(step(page, /Deleted Fox bookmark · cut/)).toBeVisible();
++    await expect(rows(page)).toHaveCount(count - 1);
++    await say(page, 'undo');
++    await expect(step(page, /Undone: delete layer 2/)).toBeVisible();
++    await expect(rows(page)).toHaveCount(count);
++    await main(page).getByRole('toolbar', { name: 'Layer tools' }).getByRole('radio', { name: 'Its sheet' }).click();
++    await expect(main(page).locator('[data-cut-sheet]')).toBeVisible();
++    await page.screenshot({ path: 'test-results/samples/bookmarks-2-sheet.png' });
++  });
++
++  test('earrings: cut-through items, no empty engraving layers; merge by name, delete with the button, undo', async ({ page }) => {
++    const W = 800, H = 729;
++    const placed: [string, number[]][] = [['Lattice teardrop left', [36, 45, 132, 185]], ['Lattice teardrop right', [138, 45, 232, 185]], ['Open teardrop left', [385, 48, 482, 185]], ['Open teardrop right', [497, 48, 595, 185]],
++      ['Swirl drop left', [265, 365, 360, 522]], ['Swirl drop right', [372, 365, 468, 522]], ['Mandala circle left', [487, 370, 620, 530]], ['Mandala circle right', [632, 370, 768, 530]]];
++    await replayItems(page, { subject: 'laser-cut wooden earrings', names: placed.map(([n]) => n), outlines: placed.map(([, b]) => box(W, H, b[0], b[1], b[2], b[3])), realSizeMm: { w: 40, h: 70, basis: 'a typical drop earring' }, areaPct: 2 });
++    await uploadFromHome(page, [{ name: 'earrings.avif', mimeType: 'image/avif', buffer: sample('multiple/earrings.avif') }]);
++    await main(page).getByRole('button', { name: 'Analyze' }).click();
++    await expect(step(page, /Found 8 items/)).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
++    await expect(step(page, /Each of the 8 items is on its own sheet/)).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
++    // no layer that shows nothing
++    const pcts = await rows(page).evaluateAll((els) => els.map((e) => Number(e.textContent?.match(/([\d.]+)% shows/)?.[1] ?? '1')));
++    expect(pcts.filter((p) => p === 0)).toEqual([]);
++    await page.screenshot({ path: 'test-results/samples/earrings-1-layers.png' });
++    const count = await rows(page).count();
++    // two layers by name become one
++    await say(page, 'merge the swirl drop left and the swirl drop right');
++    await expect(rows(page)).toHaveCount(count - 1);
++    await say(page, 'undo');
++    await expect(rows(page)).toHaveCount(count);
++    // the layer's own Delete
++    await rows(page).first().getByRole('button').first().click();
++    await rows(page).first().getByRole('toolbar', { name: 'Layer actions' }).getByRole('button', { name: 'Delete this layer' }).click();
++    await expect(rows(page)).toHaveCount(count - 1);
++    await main(page).getByRole('toolbar', { name: 'Layer tools' }).getByRole('button', { name: 'Undo' }).click();
++    await expect(rows(page)).toHaveCount(count);
++    await page.screenshot({ path: 'test-results/samples/earrings-2-undo.png' });
++  });
++
++  test('castle: five pictures, one a cut plan → the pictures show on Views, the plan is read into its 11 sheets', async ({ page }) => {
++    const pictures = [{ index: 1, kind: 'view', angle: 'front', note: '' }, { index: 2, kind: 'view', angle: 'three-quarter', note: '' }, { index: 3, kind: 'detail', angle: 'unknown', note: 'lit windows' },
++      { index: 4, kind: 'view', angle: 'top', note: '' }, { index: 5, kind: 'plan', angle: 'unknown', note: 'parts layout, 11 sheets' }];
++    await page.route('**/api/views', (r: Route) => r.fulfill({ json: { brief: { subject: 'a lit wooden castle kit', likelyMaterial: 'wood', realSizeMm: { w: 300, h: 320, d: 300, basis: 'a desk-sized kit' }, pictures }, source: 'live', trace: [] } }));
++    await page.route('**/api/segment', (r: Route) => r.fulfill({ json: { boxes: [{ x1: 100, y1: 100, x2: 900, y2: 900 }], source: 'live', trace: [] } }));
++    await uploadFromHome(page, [1, 2, 3, 4, 5].map((i) => ({ name: `castle_${i}.webp`, mimeType: 'image/webp', buffer: sample(`3D/castle/castle_${i}.webp`) })));
++    await expect(chat(page)).toContainText('5 pictures in. Press Analyze');
++    await expect(chat(page)).not.toContainText('A layered picture');
++    await main(page).getByRole('button', { name: 'Analyze' }).click();
++    // five photos are downscaled and stored first
++    await expect(page).toHaveURL(/\/make\/views$/, { timeout: 30_000 });
++    // the pictures you gave, never stand-in drawings
++    await expect(main(page).locator('figure[data-picture] img')).toHaveCount(5, { timeout: 30_000 });
++    await expect(main(page).getByLabel('Picture 5: cut plan')).toBeVisible({ timeout: 30_000 });
++    await expect(step(page, 'Read 11 sheets from your cut plan')).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
++    await expect(step(page, 'Read 11 sheets from your cut plan')).toContainText(/A1 · A2 · A3 · A4 · B1 · B2 · B3 · B4 · B5 · B6 · B7/);
++    await expect(step(page, 'Read 11 sheets from your cut plan')).toContainText(/approximate/);
++    await page.screenshot({ path: 'test-results/samples/castle-1-views.png' });
++    await chat(page).getByRole('button', { name: 'Cut the parts' }).click();
++    // 22 passes of plan outlines to draw
++    await expect(page).toHaveURL(/\/make\/output$/, { timeout: 30_000 });
++    await expect.poll(async () => page.locator('[data-sheet-svg]').count(), { timeout: 60_000 }).toBeGreaterThanOrEqual(11);
++    await page.screenshot({ path: 'test-results/samples/castle-2-sheets.png', fullPage: true });
++  });
++});
+diff --git a/docs/CHECKPOINT.md b/docs/CHECKPOINT.md
+index efa7755..4704a58 100644
+--- a/docs/CHECKPOINT.md
++++ b/docs/CHECKPOINT.md
+@@ -1,5 +1,12 @@
+ # Checkpoint — Katachi · Snap → Make Phase 1
+ 
++- Slice 2026-10-29 e (design/13), checked on the four samples (cat, bookmarks, earrings, castle):
++  - Separate items: holes judged by what surrounds the item (dark marble or pale cloth), dark blobs = holes in shadow, thin lines = engraving, wall shadow ignored; full resolution, cropped per item; no 0% engraving layers.
++  - Passes after the layers, as chat steps: align & straighten (turns reported), interpolation (fills what a neighbour hid; holes kept). Item sizes measured upright.
++  - Castle: Views shows your pictures (never stand-ins); a cut-plan picture is read by code into its sheets (A1–A4, B1–B7, ~219 pieces), each a cut + engrave pass; approximate from a low-res picture (says so); first chat line waits for Analyze.
++  - Layer edits in the chat by name or number (delete, delete empty, merge, merge all engravings → one per item), Delete on the layer, Undo (chat or toolbar) for every edit; merged layers keep their role.
++  - Gates: 313 unit (lines 93.4%), verify clean, build ok, e2e samples + cat 8/8 (full suite: cat/multiple time out only under 3-worker load).
++
+ - Slice 2026-10-29 d (design/12, from the agreed mockup):
+   - Cutting program per sheet (domain/toolpath): inner shapes first, outline last, nearest next; G-code (GRBL) for lasers, blade moves for paper cutters; downloadable.
+   - Cut queue: machine bed (mat or honeycomb) with the run following the program, waste falls away, Next sheet; queue scrolls on its own; guidance + Start at the bottom; rail badge counts and pulses.
+diff --git a/docs/design/12-cutting-program-queue-assemble.md b/docs/design/12-cutting-program-queue-assemble.md
+index 5edb431..9d343be 100644
+--- a/docs/design/12-cutting-program-queue-assemble.md
++++ b/docs/design/12-cutting-program-queue-assemble.md
+@@ -48,6 +48,6 @@ A reload in the middle of a run puts that sheet back to "load the sheet".
+ 
+ - **A big card:** the empty outline of the piece on the left. On the right, the step for the layer being placed, with Play / Pause, Replay, speed (0.5×, 1×, 2×), Prev / Next and Save craft.
+ - **Below:** one card per layer: the cut sheet in its colour, "Layer n · back / middle / front", its name and its instruction. If the queue was used, a card says whether its sheet has been cut yet.
+-- **Play:** each sheet lifts off its own card below, arcs up onto the stage and lands exactly in place on the one before it, while its card lights up. When all layers are placed, the finished photo fades in.
++- **Play:** each sheet lifts off its own card below, arcs up onto the stage and lands exactly in place on the one before it, while its card lights up. When all layers are placed, the stack settles with its depth: the finished piece is the cut layers, not the photo. Separate items land each in its own cell.
+ - **Saving:** the step reached is saved with the craft.
+ - **3D crafts** keep the step-by-step list for now.
+diff --git a/docs/design/13-item-passes-cut-plans-edits.md b/docs/design/13-item-passes-cut-plans-edits.md
+new file mode 100644
+index 0000000..25850d9
+--- /dev/null
++++ b/docs/design/13-item-passes-cut-plans-edits.md
+@@ -0,0 +1,53 @@
++# 13 · Separate items, cut plans, layer edits and undo
++
++Status: built (2026-10-29). Follows 12. Checked end to end on the four samples (`tests/e2e/samples.spec.ts`,
++`cat-sample.spec.ts`), with the Meta replies replayed and every code step running on the real photos.
++
++## Separate items (bookmarks, earrings): fretwork and the two passes
++
++**Holes and engraving** (`domain/layering.woodPiece`), per item, at full photo resolution, cropped to the item:
++
++- **The surroundings** are measured in a ring just outside the item. A hole shows them, whether that is dark marble behind the bookmarks or pale cloth behind the earrings.
++- **The wood** is one of the two tones inside the item. If the other tone is the surroundings showing through, the wood is the tone that isn't. Otherwise the lighter tone is the wood, because engraving is burnt darker.
++- **Holes** are blobs that look like the surroundings or are dark. A small hole in shadow looks dark rather than like the cloth. Blobs are what survive an opening, which is sized to the item. Holes are kept on the region (`Region.holes`) and cut first, so reshaping or moving the outline keeps them.
++- **Engraving** is thin dark lines that are not against a hole or the outer edge. Dark pixels there are the cut wall's shadow.
++- **No empty layers:** an engraving layer is only made when it shows at least 0.5% of the photo. In heavy fretwork (more than 35% holes), anything under 4% is wall shadow and is not made into a layer.
++
++**The passes** (`AppState.itemPasses`) run after the layers, each as a step in the chat:
++
++1. **Align & straighten:** each item goes onto its own sheet, upright, turned along its long axis. The engraving turns with it. The step reports the turns, e.g. "Elephant 18.5°, Fox 11.7°".
++2. **Interpolation:** items a neighbour lay over in the photo have bites in their outline (`hiddenShare` of the outline above 0.12). For each, the `complete` op fills the bite back from the outline's hull. Only the bite is filled; the item's own holes stay.
++
++**Sizes** of separate items are measured as cut: upright, on their own sheet.
++
++## 3D kits with a cut plan (castle)
++
++- **Views:** Views shows the pictures you gave, in your order, until Muse has sorted them. It never shows stand-in drawings.
++- **Reading the plan** (`domain/layering.readPlan`, job `layers.readPlan`, code only). When Muse marks a picture as a cut plan:
++  - each framed sheet is found, and the frame's own edges are located;
++  - sheets are named the way the plan groups them (A1–A4, B1–B7);
++  - every region enclosed by the cut lines is labelled, and nesting decides what each region is: sheet edge → piece → hole → a piece inside the hole…;
++  - red and green marks become engraving.
++
++  Each sheet becomes a craft layer (engraving first, then the cut), sized at 300 mm by default.
++- **Accuracy:** a low-resolution plan gives approximate outlines, and the chat says so. For a precise cut, import the original SVG or DXF. The castle plan (1588 × 1294 px) reads as 11 sheets and about 219 pieces.
++- **Storage:** the plan (about 0.9 MB) is kept with the craft's heavy data in IndexedDB.
++- **First message:** the chat no longer opens with "A layered picture…" for every upload. It waits for Analyze.
++
++## Layer edits, by name or number, and undo
++
++Said in the chat (applied before Muse is asked to interpret), or from the layer's own actions:
++
++- **Delete the empty layers:** "remove the 0% layers" / "delete the empty layers".
++- **Delete:** "delete layer 5", "delete this layer", "remove the X and Y layers", or the trash button on the layer.
++- **Merge:** "merge layers 2 and 3", "merge layers 1-4", "merge the swirl drop left and the swirl drop right".
++- **Merge a kind:** "merge all the engravings (into one layer)". For separate items this makes one engraving per item, so each item keeps its own sheet.
++- **How names are matched:** a whole name said wins over shared words. A word inside a name ("Swirl **drop** left") is not a command.
++- **Merges keep their kind:** a merged layer keeps its cut or engrave role, and its item when both layers belong to the same item.
++- **Undo:** "undo" (or "undo that", "go back") or the toolbar's Undo button. Every stack edit, mask correction and automatic pass is checkpointed first. The last 30 edits in the session can be undone; switching crafts clears the list.
++- **Suggestions:** the chat suggests "Remove the empty layers", and "Merge all the engravings into one layer" when an item has more than one engraving.
++
++## Known limits
++
++- The Cut page draws every plan sheet in full and takes a few seconds for a 22-pass kit. Simplifying the paths for display would make it faster.
++- Holes smaller than about 3 px at full resolution (fine lattices) are missed.
+diff --git a/docs/design/README.md b/docs/design/README.md
+index 7c8bd73..3189c07 100644
+--- a/docs/design/README.md
++++ b/docs/design/README.md
+@@ -20,6 +20,7 @@ Read in order:
+ | [08-mixed-items-and-3d-stitching.md](08-mixed-items-and-3d-stitching.md) | Separate items (bookmarks) and six-view 3D stitching |
+ | [09-colour-layers-and-corrections.md](09-colour-layers-and-corrections.md) | Background removal and colour layers measured in code; one-layer corrections |
+ | [12-cutting-program-queue-assemble.md](12-cutting-program-queue-assemble.md) | **Cut and assemble.** The cutting program (G-code / blade moves), the cut queue's simulated run, Assemble's layers flying from their cards |
++| [13-item-passes-cut-plans-edits.md](13-item-passes-cut-plans-edits.md) | **Items, plans, edits.** Fretwork holes vs engraving, the straighten and interpolation passes, reading a cut-plan picture, layer edits by name or number, undo |
+ | [11-start-rail-and-cut-queue.md](11-start-rail-and-cut-queue.md) | **Current navigation.** Home = Upload/Camera + your crafts; craft steps in the rail (Layers · Cut · Assemble); a chat per craft; several views sorted by Muse; the cut queue; the usage ledger |
+ | [10-analyze-and-chat-first-layers.md](10-analyze-and-chat-first-layers.md) | **Current flow.** Capture → Analyze → Layers (Shape folded in); the breakdown live in the chat timeline; quotes; the layer toolbar, tools and sliders, every action through the chat |
+ 

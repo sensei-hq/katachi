@@ -1,0 +1,1473 @@
+diff --git a/app/src/lib/domain/actions/chat.spec.ts b/app/src/lib/domain/actions/chat.spec.ts
+new file mode 100644
+index 0000000..7df0428
+--- /dev/null
++++ b/app/src/lib/domain/actions/chat.spec.ts
+@@ -0,0 +1,52 @@
++import { describe, expect, it } from 'vitest';
++import { fastPath, optsIn, refsFromPlan, refsIn, toolList } from './chat';
++import { registerAll } from './defs';
++import { migrateV1 } from '../craft/migrate';
++
++registerAll();
++let k = 0;
++const rect = (x: number, y: number, w: number, h: number): [number, number][] => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
++const names = ['Swirl drop left', 'Swirl drop right', 'Leaf'];
++const doc = migrateV1({ id: 'e', name: 'E', createdAt: 1, updatedAt: 1, kind: 'flat' }, { aspect: 1, widthMm: 300,
++  regionList: names.map((n, i) => ({ id: `r${i}`, name: n, paths: [rect(50 + i * 300, 100, 100, 150)] })),
++  stack: names.map((n, i) => ({ n: i + 1, name: `${n} · cut`, colour: '#C89B6A', material: 'birch', visiblePct: i === 2 ? 0 : 3, hiddenPct: 0, regionId: `r${i}`, itemName: n, role: 'cut' as const })) }, () => `m${++k}`);
++
++describe('the chat fast path', () => {
++  it('undo / redo / again need no model', () => {
++    expect(fastPath('undo', doc)).toEqual({ kind: 'undo' });
++    expect(fastPath('Undo that.', doc)).toEqual({ kind: 'undo' });
++    expect(fastPath('redo', doc)).toEqual({ kind: 'redo' });
++    expect(fastPath('do that again', doc)).toEqual({ kind: 'again' });
++    expect(fastPath('same for the leaf', doc)).toEqual({ kind: 'again', refs: [{ name: 'Leaf' }] });
++  });
++  it('one plain action with its layers: by number, range, name, empty, this', () => {
++    expect(fastPath('delete layer 3', doc)).toEqual({ kind: 'calls', calls: [{ action: 'delete', refs: [{ n: 3 }], opts: {} }] });
++    expect(fastPath('merge layers 1-3', doc)).toMatchObject({ calls: [{ action: 'merge', refs: [{ n: 1 }, { n: 2 }, { n: 3 }] }] });
++    expect(fastPath('merge the swirl drop left and the swirl drop right', doc)).toMatchObject({ calls: [{ action: 'merge', refs: [{ name: 'Swirl drop right' }, { name: 'Swirl drop left' }] }] });
++    expect(fastPath('remove the 0% layers', doc)).toMatchObject({ calls: [{ action: 'delete', refs: [{ empty: true }] }] });
++    expect(fastPath('delete this layer', doc)).toMatchObject({ calls: [{ action: 'delete', refs: [{ selected: true }] }] });
++    expect(fastPath('straighten all the items', doc)).toMatchObject({ calls: [{ action: 'straighten', refs: [{ all: true }] }] });
++    expect(fastPath('make the leaf 40 mm tall', doc)).toMatchObject({ calls: [{ action: 'resize', refs: [{ name: 'Leaf' }], opts: { hMm: 40 } }] });
++  });
++  it('never a destructive guess; corrections and compound requests go to the planner', () => {
++    expect(fastPath('remove the wall from the gold layer', doc)).toBeNull();
++    expect(fastPath('remove the red parts', doc)).toBeNull();
++    expect(fastPath('merge them', doc)).toBeNull();
++    expect(fastPath('merge layer 1 and 2 and then smooth it', doc)).toBeNull();
++    expect(fastPath('what a lovely craft', doc)).toBeNull();
++  });
++  it('options from words; the registry as tools; planner refs', () => {
++    expect(optsIn('smooth', 'smooth it a lot')).toEqual({ strength: 4 });
++    expect(optsIn('smooth', 'smooth it slightly')).toEqual({ strength: 1 });
++    expect(optsIn('resize', 'scale to 50%')).toEqual({ scale: 0.5 });
++    expect(optsIn('resize', 'make it 4 cm wide')).toEqual({ wMm: 40 });
++    expect(optsIn('flip', 'flip it upside down')).toEqual({ axis: 'y' });
++    expect(optsIn('quantity', 'make 5 of these')).toEqual({ qty: 5 });
++    expect(optsIn('reorder', 'send it to the back')).toEqual({ to: 'back' });
++    expect(refsIn('layers 2, 3 and 5', doc)).toEqual([{ n: 2 }, { n: 3 }, { n: 5 }]);
++    const tools = toolList();
++    expect(tools.find((t) => t.id === 'reorder')!.options).toBe('to (front|back|forward|backward)');
++    expect(tools.find((t) => t.id === 'resize')!.options).toContain('hMm 5–2000');
++    expect(refsFromPlan([{ kind: 'n', value: '2' }, { kind: 'role', value: 'engrave' }, { kind: 'bogus', value: '' }, { kind: 'n', value: 'x' }])).toEqual([{ n: 2 }, { role: 'engrave' }]);
++  });
++});
+diff --git a/app/src/lib/domain/actions/chat.ts b/app/src/lib/domain/actions/chat.ts
+new file mode 100644
+index 0000000..8e1acc4
+--- /dev/null
++++ b/app/src/lib/domain/actions/chat.ts
+@@ -0,0 +1,79 @@
++// The chat's way into the actions (design/14 §7). First a fast path in code — the plain, unambiguous phrases need
++// no model ("undo", "delete layer 5", "merge layers 2-4", "smooth the fox a lot") — and only what it can't read
++// goes to Spark's planner. Both end as calls that run through ActionState.
++import { layersOf } from '../craft';
++import type { CraftDoc } from '../craft/types';
++import { allActions } from './registry';
++import type { ActionId, Ref } from './types';
++
++export type Said = { kind: 'undo' } | { kind: 'redo' } | { kind: 'again'; refs?: Ref[] } | { kind: 'calls'; calls: { action: ActionId; refs: Ref[]; opts: Record<string, unknown> }[] };
++
++const NUM = /\blayers?\s+((?:#?\d{1,2}\s*(?:,|and|&|to|through|-|–)?\s*)+)/gi;
++/** the layers a sentence names: numbers, ranges, names, items, roles, empty, all, this */
++export function refsIn(text: string, doc: CraftDoc): Ref[] {
++  const t = text.toLowerCase(), refs: Ref[] = [], layers = layersOf(doc);
++  for (const m of t.matchAll(NUM)) {
++    const part = m[1];
++    for (const r of part.matchAll(/(\d{1,2})\s*(?:-|–|to|through)\s*(\d{1,2})/g)) for (let k = Number(r[1]); k <= Number(r[2]); k++) refs.push({ n: k });
++    for (const d of part.replace(/(\d{1,2})\s*(?:-|–|to|through)\s*(\d{1,2})/g, '').matchAll(/\d{1,2}/g)) refs.push({ n: Number(d[0]) });
++  }
++  if (refs.length) return refs;
++  if (/(\b0\s*%|\bzero\b|\bempty\b|nothing (shows|visible)|\binvisible\b)/.test(t)) return [{ empty: true }];
++  if (/\ball (the )?engrav/.test(t)) return [{ role: 'engrave' }];
++  if (/\b(this|that|it|selected)\b(?! (one|layer) of)/.test(t) && !/\ball\b/.test(t) && !layers.some((l) => t.includes(l.part.name.toLowerCase()) || t.includes(l.item.name.toLowerCase()))) return [{ selected: true }];
++  if (/\b(all|every|everything|each)\b/.test(t) && !layers.some((l) => t.includes(l.part.name.toLowerCase()))) return [{ all: true }];
++  // names said whole ("the swirl drop left"), longest first so "swirl drop left" wins over "swirl"
++  const names = [...new Set(layers.flatMap((l) => [l.part.name, l.item.name]))].sort((a, b) => b.length - a.length);
++  let rest = t;
++  for (const n of names) { const low = n.toLowerCase(); if (low.length > 2 && rest.includes(low)) { refs.push({ name: n }); rest = rest.replace(low, ' '); } }
++  return refs;
++}
++
++/** options a sentence carries for the common actions (strength words, sizes, axes, counts) */
++export function optsIn(action: ActionId, text: string): Record<string, unknown> {
++  const t = text.toLowerCase(), o: Record<string, unknown> = {};
++  if (action === 'smooth') o.strength = /\b(a lot|lots|very|much|heavily|strongly|really)\b/.test(t) ? 4 : /\b(slightly|a bit|a little|gently|lightly)\b/.test(t) ? 1 : 2;
++  if (action === 'resize') {
++    const m = /(\d+(?:\.\d+)?)\s*(mm|cm|in(?:ch(?:es)?)?)\b(?:\s*(wide|width|across|tall|high|height))?/.exec(t), pct = /\bscale\b[^\d]*(\d+(?:\.\d+)?)\s*%/.exec(t);
++    if (pct) o.scale = Number(pct[1]) / 100;
++    else if (m) { const mm = Number(m[1]) * (m[2] === 'cm' ? 10 : m[2].startsWith('in') ? 25.4 : 1); o[/tall|high|height/.test(m[3] ?? '') ? 'hMm' : 'wMm'] = mm; }
++  }
++  if (action === 'flip' || action === 'mirror') o.axis = /\b(vertical|upside|top to bottom)\b/.test(t) ? 'y' : 'x';
++  if (action === 'quantity') { const m = /\b(\d{1,2})\s*(of|copies|times|x)\b/.exec(t); if (m) o.qty = Number(m[1]); }
++  if (action === 'reorder') o.to = /\bback\b/.test(t) ? 'back' : /\bbackward\b/.test(t) ? 'backward' : /\bforward\b/.test(t) ? 'forward' : 'front';
++  if (action === 'set-role') o.role = /\bcut\b/.test(t) && !/\bengrav/.test(t) ? 'cut' : 'engrave';
++  return o;
++}
++
++/** what the chat can do without a model, or null (then Spark plans it) */
++export function fastPath(text: string, doc: CraftDoc): Said | null {
++  const t = text.trim().toLowerCase();
++  if (/^(undo|undo (that|it|the last( change| edit)?)|go back|revert( that)?|put it back)[.!]?$/.test(t)) return { kind: 'undo' };
++  if (/^(redo|redo (that|it)|bring it back)[.!]?$/.test(t)) return { kind: 'redo' };
++  if (/^(again|do (that|it) again|same again|repeat( that)?)[.!]?$/.test(t)) return { kind: 'again' };
++  const again = /^(?:do )?(?:the )?same (?:for|to|on) (.+)$/.exec(t);
++  if (again) { const refs = refsIn(again[1], doc); if (refs.length) return { kind: 'again', refs }; }
++  // one action, said plainly, with its targets: anything with "and" between two verbs goes to the planner
++  if (/\b(and|then)\b.*\b(merge|delete|smooth|flip|mirror|resize|straighten|enhance|rotate)\b/.test(t) && /\b(merge|delete|smooth|flip|mirror|resize|straighten|enhance|rotate)\b.*\b(and|then)\b/.test(t)) return null;
++  // a layer's own name is not a command ("Swirl drop left" is not "drop")
++  const names = layersOf(doc).flatMap((l) => [l.part.name, l.item.name]).sort((a, b) => b.length - a.length);
++  const bare = names.reduce((acc, n) => (n.length > 2 ? acc.replace(new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' ') : acc), text);
++  const hits = allActions().filter((a) => a.says?.some((re) => re.test(bare)));
++  if (hits.length !== 1) return null;
++  const a = hits[0], refs = refsIn(text, doc);
++  // destructive actions need their layers named: "delete this layer", "delete layer 5", "the empty layers" —
++  // never a guess at the selection ("remove the red parts" is a colour edit, not a delete)
++  const said = refs.length && !(refs.length === 1 && 'selected' in refs[0] && !/\b(this|that)\s+(layer|one|item|piece)\b/.test(t));
++  if ((a.id === 'delete' || a.id === 'merge') && !said) return null;
++  if (!refs.length && a.scope === 'part' && a.arity !== 'any') return null;
++  return { kind: 'calls', calls: [{ action: a.id, refs: refs.length ? refs : [{ selected: true }], opts: optsIn(a.id, text) }] };
++}
++
++/** the registry as the planner's tool list */
++export function toolList() {
++  return allActions().map((a) => ({ id: a.id, hint: a.hint, options: Object.entries(a.schema.properties).map(([k, v]) => { const s = v as { enum?: string[]; minimum?: number; maximum?: number; type?: string }; return s.enum ? `${k} (${s.enum.join('|')})` : s.minimum !== undefined ? `${k} ${s.minimum}–${s.maximum}` : `${k}${s.type ? ` (${s.type})` : ''}`; }).join(', ') }));
++}
++/** a planner call's refs → the action refs */
++export function refsFromPlan(refs: { kind: string; value: string }[]): Ref[] {
++  return refs.map((r): Ref | null => (r.kind === 'n' && Number(r.value) ? { n: Number(r.value) } : r.kind === 'name' ? { name: r.value } : r.kind === 'item' ? { item: r.value } : r.kind === 'role' && ['cut', 'engrave', 'score'].includes(r.value) ? { role: r.value as 'cut' } : r.kind === 'empty' ? { empty: true } : r.kind === 'all' ? { all: true } : r.kind === 'selected' ? { selected: true } : null)).filter((r): r is Ref => Boolean(r));
++}
+diff --git a/app/src/lib/domain/actions/defs/analysis.ts b/app/src/lib/domain/actions/defs/analysis.ts
+new file mode 100644
+index 0000000..eea6e3d
+--- /dev/null
++++ b/app/src/lib/domain/actions/defs/analysis.ts
+@@ -0,0 +1,146 @@
++// The actions that look at an item as a whole (design/14 §6): straighten, interpolate (fill what a neighbour hid),
++// resize, enhance. They change an item's frame (turn, scale, tier) or re-measure its parts from the photo.
++import * as geo from '../../geo';
++import { frameSize } from '../../craft';
++import { TIER_PX, type CraftDoc, type ItemDoc, type OpDoc, type Tier } from '../../craft/types';
++import { hiddenShare, hullOf, uprightTurn, type Pt } from '../../toolpath';
++import { rasterisePaths, woodPiece } from '../../layering';
++import type { PixelImage } from '../../colour';
++import type { ActionDef, ActionResult } from '../types';
++
++const clone = <T>(x: T): T => structuredClone(x);
++const itemsOf = (doc: CraftDoc, ids: string[]) => doc.items.filter((i) => ids.includes(i.id));
++/** an item's outline: the cut op of its backmost part (stacked art: the backing) */
++const outlineOp = (item: ItemDoc): OpDoc | undefined => [...item.parts].sort((a, b) => a.z - b.z).flatMap((p) => p.ops).find((o) => o.kind === 'cut');
++const loopsOf = (op?: OpDoc): Pt[][] => (op ? geo.toLoops(op.geometry, 0.5) : []);
++const shoelace = (l: Pt[]) => Math.abs(l.reduce((a, p, i) => { const q = l[(i + 1) % l.length]; return a + p[0] * q[1] - q[0] * p[1]; }, 0)) / 2;
++const round1 = (n: number) => Math.round(n * 10) / 10;
++
++export const straighten: ActionDef<{ snapDeg: number }> = {
++  id: 'straighten', label: 'Straighten', icon: 'i-solar:ruler-angular-linear', scope: 'item', arity: 'any', kind: 'code',
++  hint: 'Turn items upright along their long axis (each onto its own sheet, its engraving with it).',
++  schema: { type: 'object', properties: { snapDeg: { type: 'number', minimum: 0.1, maximum: 15 } } }, defaults: { snapDeg: 0.5 },
++  says: [/\b(straighten|upright|level|tilted|crooked)\b/i],
++  can: (d, i) => (itemsOf(d, i.targets).some((it) => outlineOp(it)) ? true : 'Nothing with an outline to straighten'),
++  run(doc, { targets, opts }): ActionResult {
++    const turned: string[] = [];
++    // measured from the item as photographed (the geometry never turns), so straightening twice is the same as once
++    const items = itemsOf(doc, targets).filter((it) => outlineOp(it)).map((it) => {
++      const { turn } = uprightTurn(loopsOf(outlineOp(it)));
++      const deg = Math.round(turn / opts.snapDeg) * opts.snapDeg;
++      if (Math.abs(deg) >= opts.snapDeg) turned.push(`${it.name} ${round1(Math.abs(deg))}°`);
++      return { ...clone(it), frame: { ...clone(it.frame), fromSource: { ...clone(it.frame.fromSource), rotateDeg: Math.abs(deg) < opts.snapDeg ? 0 : deg } } };
++    });
++    return { items, summary: items.length > 1 ? `Each of the ${items.length} items is on its own sheet, upright` : `${items[0].name} is upright`, detail: turned.length ? `turned ${turned.join(', ')}` : 'already upright' };
++  }
++};
++
++export const interpolate: ActionDef<{ maxAddPct: number; onlyHidden: boolean }> = {
++  id: 'interpolate', label: 'Fill in hidden edges', icon: 'i-solar:magic-stick-3-linear', scope: 'item', arity: 'any', kind: 'code',
++  hint: 'Rebuild the edges of items a neighbour lay over in the photo (from the visible outline); their holes stay.',
++  schema: { type: 'object', properties: { maxAddPct: { type: 'number', minimum: 1, maximum: 60 }, onlyHidden: { type: 'boolean' } } }, defaults: { maxAddPct: 25, onlyHidden: true },
++  says: [/\b(complete|restore|recover|rebuild|fill in|interpolate)\b.*\b(hidden|edges?|corners?|missing|covered)\b|\bfill (the )?missing\b/i],
++  can: (d, i) => (itemsOf(d, i.targets).some((it) => outlineOp(it)) ? true : 'Nothing with an outline'),
++  run(doc, { targets, opts }): ActionResult {
++    const filled: string[] = [], skipped: string[] = [], items: ItemDoc[] = [];
++    for (const it of itemsOf(doc, targets)) {
++      const op = outlineOp(it), loops = loopsOf(op);
++      if (!op || !loops.length) continue;
++      if (opts.onlyHidden && hiddenShare(loops) <= 0.12) continue;
++      // the outer loop gets its hull back; the item's own holes (the other loops) stay as they are
++      const outer = loops.reduce((b, l) => (shoelace(l) > shoelace(b) ? l : b));
++      const hull = hullOf(outer), added = (shoelace(hull) - shoelace(outer)) / Math.max(1, shoelace(outer)) * 100;
++      if (added > opts.maxAddPct) { skipped.push(`${it.name} (+${Math.round(added)}%)`); continue; }
++      const keep = op.geometry.paths.filter((_, k) => loops[k] !== outer);
++      const geometry = { paths: [...geo.fromLoops([hull]).paths, ...keep] };
++      const next = clone(it);
++      for (const p of next.parts) p.ops = p.ops.map((o) => (o.id === op.id ? { ...o, geometry } : o));
++      items.push(next); filled.push(`${it.name} (+${round1(added)}%)`);
++    }
++    if (!items.length) return { items: [], summary: skipped.length ? `Didn’t fill ${skipped.join(', ')} — more than ${opts.maxAddPct}% would be guessed` : 'Nothing is hidden' };
++    return { items, summary: `Filled in the hidden edges of ${filled.map((f) => f.replace(/ \(.*/, '')).join(', ')}`, detail: `${filled.join(', ')}${skipped.length ? ` · left as photographed: ${skipped.join(', ')}` : ''} · holes kept` };
++  }
++};
++
++export const resize: ActionDef<{ wMm?: number; hMm?: number; scale?: number; keepAspect: boolean }> = {
++  id: 'resize', label: 'Resize', icon: 'i-solar:ruler-cross-pen-linear', scope: 'item', arity: 'any', kind: 'code',
++  hint: 'Set an item’s real size in mm (width, height or a scale); proportions kept unless told otherwise.',
++  schema: { type: 'object', properties: { wMm: { type: 'number', minimum: 5, maximum: 2000 }, hMm: { type: 'number', minimum: 5, maximum: 2000 }, scale: { type: 'number', minimum: 0.05, maximum: 20 }, keepAspect: { type: 'boolean' } } }, defaults: { keepAspect: true },
++  says: [/\b(\d+(?:\.\d+)?)\s*(mm|cm|in)\b.*\b(wide|tall|high|across)\b|\bscale\b.*\d+\s*%/i],
++  can: (_d, i) => (i.opts.wMm || i.opts.hMm || i.opts.scale ? (i.targets.length ? true : 'Pick what to resize') : 'Say the size (e.g. 40 mm tall)'),
++  run(doc, { targets, opts }): ActionResult {
++    const items = itemsOf(doc, targets).map((it) => {
++      const f = clone(it.frame), w = f.size[0] / f.pxPerMm, h = f.size[1] / f.pxPerMm;
++      if (opts.scale) f.pxPerMm /= opts.scale;
++      else if (!opts.keepAspect && opts.wMm && opts.hMm) {
++        // a new shape, not just a new size: the geometry stretches to the new proportions within the same frame width
++        const sy = (opts.hMm / h) / (opts.wMm / w), next = clone(it);
++        next.frame = { ...f, size: [f.size[0], Math.round(f.size[1] * sy)], pxPerMm: f.size[0] / opts.wMm };
++        for (const p of next.parts) p.ops = p.ops.map((o) => ({ ...o, geometry: geo.transform(o.geometry, geo.scale(1, sy)) }));
++        return next;
++      } else if (opts.wMm) f.pxPerMm = f.size[0] / opts.wMm;
++      else if (opts.hMm) f.pxPerMm = f.size[1] / opts.hMm;
++      return { ...clone(it), frame: f };
++    });
++    const s = items[0] ? `${round1(items[0].frame.size[0] / items[0].frame.pxPerMm)} × ${round1(items[0].frame.size[1] / items[0].frame.pxPerMm)} mm` : '';
++    return { items, summary: items.length > 1 ? `Resized ${items.length} items (the first is ${s})` : `${items[0]?.name} is now ${s}` };
++  }
++};
++
++/** a box of the photo resampled to w × h (bilinear) */
++function cropTo(img: PixelImage, box: { x: number; y: number; w: number; h: number }, w: number, h: number): PixelImage {
++  const data = new Uint8ClampedArray(w * h * 4), sx = (box.w / 1000) * img.w / w, sy = (box.h / 1000) * img.h / h, ox = (box.x / 1000) * img.w, oy = (box.y / 1000) * img.h;
++  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
++    const fx = Math.min(img.w - 1.001, Math.max(0, ox + (x + 0.5) * sx - 0.5)), fy = Math.min(img.h - 1.001, Math.max(0, oy + (y + 0.5) * sy - 0.5));
++    const x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
++    for (let c = 0; c < 4; c++) {
++      const at = (xx: number, yy: number) => img.data[(yy * img.w + xx) * 4 + c];
++      data[(y * w + x) * 4 + c] = (at(x0, y0) * (1 - tx) + at(x0 + 1, y0) * tx) * (1 - ty) + (at(x0, y0 + 1) * (1 - tx) + at(x0 + 1, y0 + 1) * tx) * ty;
++    }
++  }
++  return { w, h, data };
++}
++const NEXT: Record<Tier, Tier> = { S: 'M', M: 'L', L: 'XL', XL: 'XL' };
++
++export const enhance: ActionDef<{ tier: 'auto' | Tier; resegment: boolean }> = {
++  id: 'enhance', label: 'Enhance', icon: 'i-solar:magnifer-zoom-in-linear', scope: 'item', arity: 'any', kind: 'model',
++  hint: 'Look closer at small or fine items: the item is cropped from the original photo at a higher resolution, outlined again by SAM, and its holes and engraving re-measured.',
++  schema: { type: 'object', properties: { tier: { enum: ['auto', 'S', 'M', 'L', 'XL'] }, resegment: { type: 'boolean' } } }, defaults: { tier: 'auto', resegment: true },
++  says: [/\b(enhance|sharpen|upscale|closer look|more detail|higher res)\b/i],
++  can: (d, i) => (itemsOf(d, i.targets).some((it) => d.sources.some((s) => s.id === it.frame.fromSource.sourceId && s.kind !== 'kit-layout')) ? true : 'Only items from a photo can be enhanced'),
++  async run(doc, { targets, opts }, ctx): Promise<ActionResult> {
++    const items: ItemDoc[] = [], done: string[] = []; let cost = 0, ms = 0, sam = false;
++    for (const it of itemsOf(doc, targets)) {
++      const src = it.frame.fromSource, img = await ctx.pixels(src.sourceId, 4096);
++      if (!img) continue;
++      // one tier up (or the one asked for): the frame grows, the geometry with it, the size in mm stays
++      const tier = opts.tier === 'auto' ? NEXT[it.frame.tier] : opts.tier;
++      const wMm = it.frame.size[0] / it.frame.pxPerMm, hMm = it.frame.size[1] / it.frame.pxPerMm, size = frameSize(tier, wMm, hMm);
++      const k = size[0] / it.frame.size[0], next = clone(it);
++      next.frame = { ...next.frame, tier, size, pxPerMm: Math.max(...size) / Math.max(wMm, hMm) };
++      const crop = cropTo(img, src.box, size[0], size[1]);
++      const op = outlineOp(next);
++      let outline: Pt[][] = loopsOf(op).map((l) => l.map(([x, y]) => [x * k, y * k] as Pt));
++      if (opts.resegment && ctx.muse) {
++        const r = await ctx.muse.segmentCrop(crop, it.name);
++        if (r?.paths.length) { outline = r.paths.map((l) => l.map(([x, y]) => [(x / 1000) * size[0], (y / 1000) * size[1]] as Pt)); cost += r.costUsd; ms += r.latencyMs; sam = true; }
++      }
++      // holes and engraving measured again at the new resolution (design/13): fine lattices resolve here
++      const mask = rasterisePaths(outline.map((l) => l.map(([x, y]) => [(x / size[0]) * 1000, (y / size[1]) * 1000] as [number, number])), size[0], size[1]);
++      const wp = woodPiece(crop, mask);
++      const px = (paths: [number, number][][]) => paths.map((l) => l.map(([x, y]) => [(x / 1000) * size[0], (y / 1000) * size[1]] as Pt));
++      for (const p of next.parts) p.ops = p.ops.map((o) => (o.kind === 'cut' && o.id === op?.id ? { ...o, geometry: geo.fromLoops(px(wp.cutPaths.length ? wp.cutPaths : outline.map((l) => l.map(([x, y]) => [(x / size[0]) * 1000, (y / size[1]) * 1000] as [number, number])))) } : o.kind === 'cut' ? { ...o, geometry: geo.transform(o.geometry, geo.scale(k)) } : o));
++      const owner = next.parts.find((p) => p.ops.some((o) => o.id === op?.id));
++      if (owner) {
++        const engr = owner.ops.filter((o) => o.kind === 'engrave');
++        const fresh = wp.engravePct >= 2 && wp.engravePaths.length ? geo.fromLoops(px(wp.engravePaths)) : null;
++        owner.ops = [...(fresh ? [{ id: engr[0]?.id ?? ctx.newId(), kind: 'engrave' as const, geometry: fresh }] : engr.map((o) => ({ ...o, geometry: geo.transform(o.geometry, geo.scale(k)) }))), ...owner.ops.filter((o) => o.kind !== 'engrave')];
++      }
++      for (const p of next.parts.filter((x) => x !== owner)) p.ops = p.ops.map((o) => (o.kind === 'cut' ? o : { ...o, geometry: geo.transform(o.geometry, geo.scale(k)) }));
++      items.push(next); done.push(`${it.name} (${TIER_PX[it.frame.tier]} → ${TIER_PX[tier]} px, ${wp.holesPct}% holes)`);
++    }
++    return { items, summary: items.length ? `Enhanced ${items.length > 2 ? `${items.length} items` : items.map((i) => i.name).join(' and ')}` : 'Nothing could be enhanced (the photo isn’t available)', detail: done.join(' · '), ...(sam ? { model: { name: 'SAM 3.1', costUsd: cost, latencyMs: ms } } : {}) };
++  }
++};
++
++export const analysisActions = [straighten, interpolate, resize, enhance];
+diff --git a/app/src/lib/domain/actions/defs/index.ts b/app/src/lib/domain/actions/defs/index.ts
+index a00e42f..9ddfad1 100644
+--- a/app/src/lib/domain/actions/defs/index.ts
++++ b/app/src/lib/domain/actions/defs/index.ts
+@@ -1,6 +1,7 @@
+ // Every action, registered once (design/14). Task T3's geometry actions join this list as they land.
+ import { register } from '../registry';
+ import { structureActions } from './structure';
++import { analysisActions } from './analysis';
+ 
+ let done = false;
+-export function registerAll() { if (done) return; done = true; for (const a of structureActions) register(a as never); }
++export function registerAll() { if (done) return; done = true; for (const a of [...structureActions, ...analysisActions]) register(a as never); }
+diff --git a/app/src/lib/domain/actions/defs/structure.ts b/app/src/lib/domain/actions/defs/structure.ts
+index 3bb2c9b..95d5afd 100644
+--- a/app/src/lib/domain/actions/defs/structure.ts
++++ b/app/src/lib/domain/actions/defs/structure.ts
+@@ -6,6 +6,9 @@ import { indexCraft } from '../../craft';
+ import type { ActionDef, ActionResult } from '../types';
+ 
+ const clone = <T>(x: T): T => structuredClone(x);
++/** targets can be parts or (engraving rows) ops: the part ids they belong to */
++const partIds = (doc: CraftDoc, ids: Id[]) => { const ix = indexCraft(doc); return [...new Set(ids.map((id) => { const n = ix.get(id); return n?.kind === 'op' ? n.part.id : id; }))]; };
++const opTargets = (doc: CraftDoc, ids: Id[]) => { const ix = indexCraft(doc); return ids.map((id) => ix.get(id)).filter((n): n is Extract<ReturnType<typeof ix.get>, { kind: 'op' }> => n?.kind === 'op'); };
+ const itemOfPart = (doc: CraftDoc, partId: Id) => doc.items.find((i) => i.parts.some((p) => p.id === partId));
+ /** z back to 0, 1, 2… in the same order */
+ const renumber = (parts: PartDoc[]) => [...parts].sort((a, b) => a.z - b.z).map((p, z) => ({ ...p, z }));
+@@ -27,15 +30,34 @@ export const merge: ActionDef<{ name?: string }> = {
+   hint: 'Join two or more layers into one (their cut and engraving joined); it sits where the frontmost was.',
+   schema: { type: 'object', properties: { name: { type: 'string' } } }, defaults: {},
+   says: [/\b(merge|combine|join)\b/i],
+-  can: (_d, i) => (i.targets.length >= 2 ? true : 'Pick two or more layers to merge'),
++  can: (_d, i) => (i.targets.length >= 2 ? true : 'Nothing to merge — pick two or more layers'),
+   run(doc, { targets, opts }, ctx): ActionResult {
+     const ix = indexCraft(doc);
+-    const parts = targets.map((id) => ix.get(id)).filter((n) => n?.kind === 'part') as { node: PartDoc; item: ItemDoc }[];
++    // engraving rows only: they join within their own part (an item's engravings become one); never across items
++    const opRows = opTargets(doc, targets);
++    if (opRows.length === targets.length) {
++      const byPart = new Map<Id, typeof opRows>();
++      for (const o of opRows) byPart.set(o.part.id, [...(byPart.get(o.part.id) ?? []), o]);
++      const items = new Map<Id, ItemDoc>(), joined: string[] = [];
++      for (const [, list] of byPart) {
++        if (list.length < 2) continue;
++        const it = items.get(list[0].item.id) ?? clone(list[0].item); items.set(it.id, it);
++        const part = it.parts.find((p) => p.id === list[0].part.id)!, gone = new Set(list.slice(1).map((o) => o.node.id));
++        part.ops = part.ops.filter((o) => !gone.has(o.id)).map((o) => (o.id === list[0].node.id ? { ...o, geometry: join(list.map((x) => x.node.geometry)), shows: list.reduce((a, x) => a + (x.node.shows ?? 0), 0) } : o));
++        joined.push(part.name);
++      }
++      if (!items.size) return { items: [], summary: 'Each item’s engraving is already one layer' };
++      return { items: [...items.values()], summary: `Merged the engravings of ${joined.join(', ')} — one per item` };
++    }
++    const parts = partIds(doc, targets).map((id) => ix.get(id)).filter((n) => n?.kind === 'part') as { node: PartDoc; item: ItemDoc }[];
++    if (parts.length < 2) return { items: [], summary: 'Nothing to merge — pick two or more layers' };
+     // into the frontmost target's item, at its place
+     const into = parts[parts.length - 1].item, front = parts[parts.length - 1].node;
+     const byKind = (k: OpDoc['kind']) => parts.flatMap((p) => p.node.ops.filter((o) => o.kind === k).map((o) => reframe(o.geometry, p.item, into)));
+     const ops: OpDoc[] = (['engrave', 'score', 'cut'] as const).map((k) => byKind(k)).map((gs, i) => (gs.length ? { id: ctx.newId(), kind: (['engrave', 'score', 'cut'] as const)[i], geometry: join(gs) } : null)).filter((o): o is OpDoc => Boolean(o));
+-    const merged: PartDoc = { id: ctx.newId(), name: opts.name || parts.map((p) => p.node.name).join(' + '), z: front.z, material: front.material, colour: front.colour, ops };
++    const merged: PartDoc = { id: ctx.newId(), name: opts.name || parts.map((p) => p.node.name).join(' + '), z: front.z, material: front.material, colour: front.colour, ops,
++      // only parts of one item can come back as they were (other items' parts were re-framed into this one)
++      ...(parts.every((p) => p.item.id === into.id) ? { from: parts.map((p) => clone(p.node)) } : {}) };
+     const gone = new Set(parts.map((p) => p.node.id));
+     const items: ItemDoc[] = [], removed: Id[] = [];
+     for (const it of new Set(parts.map((p) => p.item))) {
+@@ -44,22 +66,27 @@ export const merge: ActionDef<{ name?: string }> = {
+       else if (left.length) items.push({ ...clone(it), parts: renumber(left) });
+       else removed.push(it.id);
+     }
+-    return { items, removed, summary: `Merged ${parts.length} layers into ${merged.name}`, select: [merged.id] };
++    return { items, removed, summary: parts.length === 2 ? `Merged ${parts[0].node.name} with ${parts[1].node.name}` : `Merged ${parts.length} layers into ${merged.name}`, select: [merged.id] };
+   }
+ };
+ 
+ export const del: ActionDef<Record<string, never>> = {
+   id: 'delete', label: 'Delete', icon: 'i-solar:trash-bin-minimalistic-linear', scope: 'part', arity: 'any', kind: 'code',
+   hint: 'Delete layers (an item with no layers left goes too).', schema: { type: 'object', properties: {} }, defaults: {},
+-  says: [/\b(delete|remove|drop|get rid of|discard)\b/i],
++  // "remove the wall from the gold layer" is a correction to a layer, not a delete
++  says: [/\b(delete|remove|drop|get rid of|discard)\b(?!.*\bfrom\b)/i],
+   can: (_d, i) => (i.targets.length ? true : 'Nothing to delete'),
+   run(doc, { targets }): ActionResult {
+-    const gone = new Set(targets), items: ItemDoc[] = [], removed: Id[] = [];
+-    for (const it of doc.items.filter((i) => i.parts.some((p) => gone.has(p.id)))) {
+-      const left = it.parts.filter((p) => !gone.has(p.id));
++    // an engraving row is an op of its part: deleting it leaves the part; a part with nothing left goes, and an
++    // item with no parts left goes too
++    const opRows = opTargets(doc, targets), ops = new Set(opRows.map((o) => o.node.id));
++    const gone = new Set(targets.filter((t) => !ops.has(t))), items: ItemDoc[] = [], removed: Id[] = [];
++    for (const it of doc.items) {
++      if (!it.parts.some((p) => gone.has(p.id) || p.ops.some((o) => ops.has(o.id)))) continue;
++      const left = it.parts.filter((p) => !gone.has(p.id)).map((p) => ({ ...clone(p), ops: p.ops.filter((o) => !ops.has(o.id)) })).filter((p) => p.ops.length);
+       if (left.length) items.push({ ...clone(it), parts: renumber(left) }); else removed.push(it.id);
+     }
+-    const names = doc.items.flatMap((i) => i.parts).filter((p) => gone.has(p.id)).map((p) => p.name);
++    const names = [...doc.items.flatMap((i) => i.parts).filter((p) => gone.has(p.id)).map((p) => p.name), ...opRows.map((o) => `${o.part.name} · engraving`)];
+     return { items, removed, summary: names.length > 2 ? `Deleted ${names.length} layers` : `Deleted ${names.join(' and ')}` };
+   }
+ };
+@@ -70,7 +97,7 @@ export const duplicate: ActionDef<Record<string, never>> = {
+   says: [/\b(duplicate|copy)\b/i],
+   can: (_d, i) => (i.targets.length === 1 ? true : 'Pick one layer to duplicate'),
+   run(doc, { targets }, ctx): ActionResult {
+-    const it = itemOfPart(doc, targets[0])!, p = it.parts.find((x) => x.id === targets[0])!;
++    const pid = partIds(doc, targets)[0], it = itemOfPart(doc, pid)!, p = it.parts.find((x) => x.id === pid)!;
+     const copy: PartDoc = { ...clone(p), id: ctx.newId(), name: `${p.name} copy`, z: p.z + 0.5, ops: p.ops.map((o) => ({ ...clone(o), id: ctx.newId() })) };
+     return { items: [{ ...clone(it), parts: renumber([...it.parts, copy]) }], summary: `Duplicated ${p.name}`, select: [copy.id] };
+   }
+@@ -80,9 +107,9 @@ export const reorder: ActionDef<{ to: 'front' | 'back' | 'forward' | 'backward'
+   id: 'reorder', label: 'Move in the stack', icon: 'i-solar:sort-vertical-linear', scope: 'part', arity: 'one', kind: 'code',
+   hint: 'Move a layer to the front or back of its item’s stack, or one step.', schema: { type: 'object', properties: { to: { enum: ['front', 'back', 'forward', 'backward'] } } }, defaults: { to: 'front' },
+   says: [/\b(bring|send|move)\b.*\b(front|back|forward|backward)\b/i],
+-  can: (d, i) => ((itemOfPart(d, i.targets[0])?.parts.length ?? 0) > 1 ? true : 'It is the only layer of its item'),
++  can: (d, i) => ((itemOfPart(d, partIds(d, i.targets)[0])?.parts.length ?? 0) > 1 ? true : 'It is the only layer of its item'),
+   run(doc, { targets, opts }): ActionResult {
+-    const it = itemOfPart(doc, targets[0])!, sorted = renumber(it.parts), at = sorted.findIndex((p) => p.id === targets[0]);
++    const pid = partIds(doc, targets)[0], it = itemOfPart(doc, pid)!, sorted = renumber(it.parts), at = sorted.findIndex((p) => p.id === pid);
+     const [p] = sorted.splice(at, 1);
+     const to = opts.to === 'front' ? sorted.length : opts.to === 'back' ? 0 : opts.to === 'forward' ? Math.min(sorted.length, at + 1) : Math.max(0, at - 1);
+     sorted.splice(to, 0, p);
+@@ -90,7 +117,7 @@ export const reorder: ActionDef<{ to: 'front' | 'back' | 'forward' | 'backward'
+   }
+ };
+ 
+-const editPart = (doc: CraftDoc, ids: Id[], f: (p: PartDoc) => PartDoc) => doc.items.filter((i) => i.parts.some((p) => ids.includes(p.id))).map((it) => ({ ...clone(it), parts: it.parts.map((p) => (ids.includes(p.id) ? f(clone(p)) : p)) }));
++const editPart = (doc: CraftDoc, raw: Id[], f: (p: PartDoc) => PartDoc) => { const ids = partIds(doc, raw); return doc.items.filter((i) => i.parts.some((p) => ids.includes(p.id))).map((it) => ({ ...clone(it), parts: it.parts.map((p) => (ids.includes(p.id) ? f(clone(p)) : p)) })); };
+ 
+ export const rename: ActionDef<{ name: string }> = {
+   id: 'rename', label: 'Rename', icon: 'i-solar:pen-linear', scope: 'part', arity: 'one', kind: 'code',
+@@ -139,4 +166,30 @@ export const ungroup: ActionDef<Record<string, never>> = {
+   }
+ };
+ 
+-export const structureActions = [merge, del, duplicate, reorder, rename, recolour, setRole, group, ungroup];
++const insidePoly = ([x, y]: [number, number], poly: [number, number][]) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
++/** a cut's separate pieces: each outline with the holes inside it */
++function pieces(g: geo.Geometry): geo.Geometry[] {
++  const loops = geo.toLoops(g, 0.5).filter((l) => l.length > 2);
++  const depth = loops.map((l, i) => loops.filter((o, j) => j !== i && insidePoly(l[0], o)).length);
++  return loops.map((l, i) => ({ l, i })).filter(({ i }) => depth[i] % 2 === 0).map(({ l, i }) => geo.fromLoops([l, ...loops.filter((h, j) => depth[j] === depth[i] + 1 && insidePoly(h[0], l))]));
++}
++export const split: ActionDef<Record<string, never>> = {
++  id: 'split', label: 'Split', icon: 'i-solar:scissors-linear', scope: 'part', arity: 'one', kind: 'code',
++  hint: 'Split a layer into its separate pieces (each piece with its own holes).', schema: { type: 'object', properties: {} }, defaults: {},
++  says: [/\bsplit\b|\bseparate (the )?pieces\b/i],
++  can(d, i) { const pid = partIds(d, i.targets)[0], p = d.items.flatMap((x) => x.parts).find((x) => x.id === pid); const cut = p?.ops.find((o) => o.kind === 'cut'); return p?.from?.length || (cut && pieces(cut.geometry).length > 1) ? true : 'One piece — nothing to split'; },
++  run(doc, { targets }, ctx): ActionResult {
++    const pid = partIds(doc, targets)[0], it = itemOfPart(doc, pid)!, p = it.parts.find((x) => x.id === pid)!, cut = p.ops.find((o) => o.kind === 'cut')!;
++    // a merged part gives back the parts it was made from, where they were
++    if (p.from?.length) {
++      const back = p.from.map((x, k) => ({ ...clone(x), z: p.z - (p.from!.length - 1 - k) / 100 }));
++      return { items: [{ ...clone(it), parts: renumber([...it.parts.filter((x) => x.id !== pid), ...back]) }], summary: `Split ${p.name} back into ${back.map((x) => x.name).join(' and ')}` };
++    }
++    const made: PartDoc[] = pieces(cut.geometry).map((g, k) => ({ ...clone(p), id: ctx.newId(), name: `${p.name} · ${k + 1}`, z: p.z + k / 100, ops: [{ id: ctx.newId(), kind: 'cut', geometry: g }] }));
++    // engraving stays with the first piece (it can't be told apart by piece without the photo)
++    const engr = p.ops.filter((o) => o.kind !== 'cut'); if (engr.length) made[0].ops = [...engr.map((o) => ({ ...clone(o), id: ctx.newId() })), ...made[0].ops];
++    return { items: [{ ...clone(it), parts: renumber([...it.parts.filter((x) => x.id !== pid), ...made]) }], summary: `Split ${p.name} into ${made.length} pieces` };
++  }
++};
++
++export const structureActions = [merge, del, duplicate, reorder, rename, recolour, setRole, group, ungroup, split];
+diff --git a/app/src/lib/domain/actions/resolve.ts b/app/src/lib/domain/actions/resolve.ts
+index cd1ce60..01f115d 100644
+--- a/app/src/lib/domain/actions/resolve.ts
++++ b/app/src/lib/domain/actions/resolve.ts
+@@ -1,30 +1,36 @@
+-// What a request names → ids (design/14 §4). The chat, the buttons and recipes all resolve through here.
+-import { layersOf } from '../craft';
++// What a request names → ids (design/14 §4). The chat, the buttons and recipes all resolve through here. Numbers
++// and names are the screen's rows (rowsOf): a separate item's engraving is its own row, so its id is the op's.
++import { rowsOf } from '../craft';
+ import type { CraftDoc, Id } from '../craft/types';
+ import type { Ref, Scope } from './types';
+ 
+-const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !['the', 'and', 'layer', 'layers', 'cut', 'left', 'right'].includes(w));
++const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !['the', 'and', 'layer', 'layers', 'cut', 'left', 'right', 'engraving'].includes(w));
+ 
+-/** parts (or items, for item actions) a list of refs names, back to front; `selected` is the screen's selection */
++/** rows (part ids, or op ids for engraving rows) — or their items, for item actions — back to front */
+ export function resolve(doc: CraftDoc, refs: Ref[], scope: Scope, selected: Id[] = []): Id[] {
+-  const layers = layersOf(doc), out: Id[] = [];
++  const rows = rowsOf(doc), out: Id[] = [];
++  const idOf = (r: (typeof rows)[number]) => (scope === 'item' ? r.item.id : r.op?.id ?? r.part.id);
+   const add = (ids: Id[]) => { for (const id of ids) if (!out.includes(id)) out.push(id); };
+-  const asScope = (partIds: Id[]) => (scope === 'part' ? partIds : [...new Set(partIds.map((pid) => layers.find((l) => l.part.id === pid)!.item.id))]);
++  const rowFor = (id: Id) => rows.find((r) => r.part.id === id || r.op?.id === id);
+   for (const r of refs) {
+-    if ('all' in r) add(scope === 'part' ? layers.map((l) => l.part.id) : doc.items.map((i) => i.id));
+-    else if ('selected' in r) add(scope === 'part' ? selected.filter((id) => layers.some((l) => l.part.id === id)) : asScope(selected.filter((id) => layers.some((l) => l.part.id === id))).concat(selected.filter((id) => doc.items.some((i) => i.id === id))));
+-    else if ('id' in r) add(doc.items.some((i) => i.id === r.id) ? (scope === 'item' ? [r.id] : doc.items.find((i) => i.id === r.id)!.parts.map((p) => p.id)) : asScope([r.id]));
+-    else if ('n' in r) { const l = layers[r.n - 1]; if (l) add(asScope([l.part.id])); }
+-    else if ('item' in r) { const t = r.item.toLowerCase(); const it = doc.items.filter((i) => i.name.toLowerCase() === t); const hit = it.length ? it : doc.items.filter((i) => words(i.name).length && words(i.name).every((w) => t.includes(w))); add(scope === 'item' ? hit.map((i) => i.id) : hit.flatMap((i) => i.parts.map((p) => p.id))); }
++    if ('all' in r) add(scope === 'part' ? rows.filter((x) => !x.op).map(idOf) : doc.items.map((i) => i.id));
++    else if ('selected' in r) add(selected.flatMap((id) => (doc.items.some((i) => i.id === id) ? (scope === 'item' ? [id] : rows.filter((x) => x.item.id === id && !x.op).map(idOf)) : rowFor(id) ? [scope === 'item' ? rowFor(id)!.item.id : id] : [])));
++    else if ('id' in r) add(doc.items.some((i) => i.id === r.id) ? (scope === 'item' ? [r.id] : rows.filter((x) => x.item.id === r.id && !x.op).map(idOf)) : rowFor(r.id) ? [scope === 'item' ? rowFor(r.id)!.item.id : r.id] : []);
++    else if ('n' in r) { const x = rows[r.n - 1]; if (x) add([idOf(x)]); }
++    else if ('item' in r) {
++      const t = r.item.toLowerCase(), it = doc.items.filter((i) => i.name.toLowerCase() === t);
++      const hit = it.length ? it : doc.items.filter((i) => words(i.name).length && words(i.name).every((w) => t.includes(w)));
++      add(scope === 'item' ? hit.map((i) => i.id) : rows.filter((x) => hit.includes(x.item) && !x.op).map(idOf));
++    }
+     else if ('name' in r) {
+       const t = r.name.toLowerCase();
+-      // a whole name said wins over shared words ("the swirl drop left"); shared words only when nothing matches whole
+-      const whole = layers.filter((l) => t.includes(l.part.name.toLowerCase()) || t.includes(l.item.name.toLowerCase()));
+-      const some = whole.length ? whole : layers.filter((l) => words(l.part.name).length && words(l.part.name).every((w) => t.includes(w)));
+-      add(asScope(some.map((l) => l.part.id)));
++      // a whole name said wins over shared words ("the swirl drop left"); an engraving row only when said
++      const whole = rows.filter((x) => t.includes(x.name.toLowerCase()) || (!x.op && (t.includes(x.part.name.toLowerCase()) || t.includes(x.item.name.toLowerCase()))));
++      const some = whole.length ? whole : rows.filter((x) => !x.op && words(x.part.name).length && words(x.part.name).every((w) => t.includes(w)));
++      add(some.map(idOf));
+     }
+-    else if ('role' in r) add(asScope(layers.filter((l) => l.part.ops.some((o) => o.kind === r.role)).map((l) => l.part.id)));
+-    else if ('empty' in r) add(asScope(layers.filter((l) => Math.round(l.part.measured?.visiblePct ?? 1) <= 0).map((l) => l.part.id)));
++    else if ('role' in r) add(rows.filter((x) => x.role === (r.role === 'score' ? 'engrave' : r.role)).map(idOf));
++    else if ('empty' in r) add(rows.filter((x) => Math.round(x.shows) <= 0).map(idOf));
+   }
+   return out;
+ }
+diff --git a/app/src/lib/domain/actions/types.ts b/app/src/lib/domain/actions/types.ts
+index e881824..3ab9adf 100644
+--- a/app/src/lib/domain/actions/types.ts
++++ b/app/src/lib/domain/actions/types.ts
+@@ -37,7 +37,8 @@ export interface ActionCtx {
+   /** the source picture's pixels at a long edge of `max` px (lazy, cached) */
+   pixels(sourceId: Id, max?: number): Promise<PixelImage | null>;
+   /** model calls (enhance re-segments a crop with SAM; interpolate 'model' asks Muse Image) */
+-  muse?: { segmentCrop(img: string, prompt: string): Promise<{ paths: [number, number][][] } | null> };
++  /** the item's crop (pixels), outlined again by SAM; paths in 0-1000 of the crop (the state layer encodes and sends it) */
++  muse?: { segmentCrop(img: PixelImage, prompt: string): Promise<{ paths: [number, number][][]; costUsd: number; latencyMs: number } | null> };
+   newId(): Id;
+   device?: { board: { wMm: number; hMm: number } };
+ }
+diff --git a/app/src/lib/domain/craft/bridge.spec.ts b/app/src/lib/domain/craft/bridge.spec.ts
+new file mode 100644
+index 0000000..845c758
+--- /dev/null
++++ b/app/src/lib/domain/craft/bridge.spec.ts
+@@ -0,0 +1,33 @@
++import { describe, expect, it } from 'vitest';
++import { craftToFlow } from './bridge';
++import { migrateV1, type V1Snapshot } from './migrate';
++import { rowsOf } from './index';
++
++const rect = (x: number, y: number, w: number, h: number): [number, number][] => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
++const project = { id: 'c', name: 'C', createdAt: 1, updatedAt: 1, kind: 'flat' };
++const ids = () => { let k = 0; return () => `x${++k}`; };
++const roundTrip = (snap: V1Snapshot) => { const a = migrateV1(project, snap, ids()); const f = craftToFlow(a); const b = migrateV1(project, { ...snap, ...f } as V1Snapshot, ids()); return { a, f, b }; };
++const strip = (d: ReturnType<typeof migrateV1>) => JSON.parse(JSON.stringify(d.items, (k, v) => (typeof v === 'number' ? Math.round(v) : k === 'regionId' ? undefined : v)));
++
++describe('craft → the screens’ shapes → craft', () => {
++  it('separate items: rows (cut, then its engravings) round-trip with the same ids and geometry', () => {
++    const snap: V1Snapshot = { aspect: 1, widthMm: 300,
++      regionList: [{ id: 'a', name: 'A', paths: [rect(100, 100, 100, 600)], holes: [rect(130, 200, 20, 20)] }, { id: 'a-e', name: 'Ae', paths: [rect(120, 400, 30, 30)] }, { id: 'b', name: 'B', paths: [rect(500, 100, 100, 600)] }],
++      stack: [{ n: 1, name: 'Fox · cut', colour: '#C89B6A', material: 'birch', visiblePct: 9, hiddenPct: 0, regionId: 'a', itemName: 'Fox', role: 'cut' }, { n: 2, name: 'Fox · engraving', colour: '#5A3A22', material: 'birch', visiblePct: 1, hiddenPct: 0, regionId: 'a-e', itemName: 'Fox', role: 'engrave' }, { n: 3, name: 'Owl · cut', colour: '#C89B6A', material: 'birch', visiblePct: 9, hiddenPct: 0, regionId: 'b', itemName: 'Owl', role: 'cut' }] };
++    const { a, f, b } = roundTrip(snap);
++    expect(f.stack.map((l) => [l.n, l.name, l.role, l.itemName])).toEqual([[1, 'Fox · cut', 'cut', 'Fox'], [2, 'Fox · engraving', 'engrave', 'Fox'], [3, 'Owl · cut', 'cut', 'Owl']]);
++    expect(f.regionList[0].holes).toHaveLength(1);
++    expect(rowsOf(b).map((r) => [r.n, r.name, r.part.id, r.op?.id])).toEqual(rowsOf(a).map((r) => [r.n, r.name, r.part.id, r.op?.id]));
++    expect(strip(b)).toEqual(strip(a));
++  });
++  it('stacked art: what shows and the whole sheet both survive; the layer list is the same', () => {
++    const snap: V1Snapshot = { build: 'stacked', aspect: 1, widthMm: 300,
++      regionList: [0, 1].map((i) => ({ id: `r${i}`, name: `R${i}`, paths: [rect(200 + i * 50, 200, 300, 300)], cutPaths: [rect(100, 100, 600, 600)] })),
++      stack: ['Gold', 'Black'].map((n, i) => ({ n: i + 1, name: n, colour: '#000000', material: 'card', visiblePct: 30, hiddenPct: 10, regionId: `r${i}` })) };
++    const { a, f, b } = roundTrip(snap);
++    expect(f.stack.map((l) => l.name)).toEqual(['Gold', 'Black']);
++    expect(f.regionList[1].paths[0][0]).toEqual([250, 200]);
++    expect(f.regionList[1].cutPaths![0][0]).toEqual([100, 100]);
++    expect(strip(b)).toEqual(strip(a));
++  });
++});
+diff --git a/app/src/lib/domain/craft/bridge.ts b/app/src/lib/domain/craft/bridge.ts
+new file mode 100644
+index 0000000..8237a99
+--- /dev/null
++++ b/app/src/lib/domain/craft/bridge.ts
+@@ -0,0 +1,39 @@
++// Until every screen reads the craft (task L3), the craft is written back into the shapes the screens read today
++// (LayerFlowState's layers and regions, 0-1000 photo units). Rows and ids match migrateV1, so reading the result
++// back gives the same craft, and one history covers both.
++import { toLoops, type Geometry } from '../geo';
++import type { Pt } from '../toolpath';
++import type { CraftDoc, ItemDoc } from './types';
++import { rowsOf } from './index';
++
++type Loops = [number, number][][];
++export interface FlowLayer { n: number; name: string; shapes: ['sky']; colour: string; material: string; visiblePct: number; hiddenPct: number; regionId: string; itemName?: string; role?: 'cut' | 'engrave'; tune?: { detail: number; weight: number } }
++export interface FlowRegion { id: string; name: string; pct: number; note: string; tone: 'ok' | 'ink'; keep: boolean; paths: Loops; cutPaths?: Loops; holes?: Loops; colour: string; itemId?: string; itemName?: string; role?: 'cut' | 'engrave' }
++
++const inside = ([x, y]: Pt, poly: Pt[]) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
++/** a frame's loops in photo units, split into outlines (even depth) and holes (odd depth) */
++function toPhoto(g: Geometry, item: ItemDoc): { outer: Loops; holes: Loops } {
++  const { box } = item.frame.fromSource, [w, h] = item.frame.size;
++  const loops = toLoops(g, 0.5).map((l) => l.map(([x, y]) => [Math.round((box.x + (x / w) * box.w) * 10) / 10, Math.round((box.y + (y / h) * box.h) * 10) / 10] as [number, number]));
++  const outer: Loops = [], holes: Loops = [];
++  loops.forEach((l, i) => { const depth = loops.filter((o, j) => j !== i && o.length > 2 && inside(l[0], o)).length; (depth % 2 ? holes : outer).push(l); });
++  return { outer, holes };
++}
++
++export function craftToFlow(doc: CraftDoc): { stack: FlowLayer[]; regionList: FlowRegion[] } {
++  const separate = doc.kind === 'items', stack: FlowLayer[] = [], regionList: FlowRegion[] = [];
++  for (const row of rowsOf(doc)) {
++    const { item, part, op } = row, measured = part.measured;
++    const id = op ? (op.id === `${part.id}:engrave` ? `p:${part.id}:e` : `p:${part.id}:${op.id}`) : `p:${part.id}`;
++    const geom = op?.geometry ?? part.ops.find((o) => o.kind === 'cut')?.geometry ?? part.ops[0]?.geometry ?? { paths: [] };
++    const { outer, holes } = toPhoto(geom, item);
++    const shows = !op && part.shows ? toPhoto(part.shows, item).outer : undefined;
++    const role = separate ? row.role : !part.ops.some((o) => o.kind === 'cut') ? 'engrave' : undefined;
++    regionList.push({ id, name: row.name, pct: row.shows, note: '', tone: op ? 'ink' : 'ok', keep: true, colour: op ? '#5A3A22' : part.colour,
++      ...(separate ? { paths: op ? [...outer, ...holes] : outer, ...(holes.length && !op ? { holes } : {}), itemId: item.id, itemName: item.name, role: row.role }
++        : shows ? { paths: shows, cutPaths: outer.concat(holes) } : { paths: outer.concat(holes), ...(role ? { role } : {}) }) });
++    stack.push({ n: row.n, name: row.name.replace(/ · cut$/, separate ? ' · cut' : ''), shapes: ['sky'], colour: op ? '#5A3A22' : part.colour, material: part.material, visiblePct: row.shows, hiddenPct: measured?.hiddenPct ?? 0, regionId: id,
++      ...(separate ? { itemName: item.name, role: row.role } : role ? { role } : {}), ...(measured?.tune && !op ? { tune: measured.tune } : {}) });
++  }
++  return { stack, regionList };
++}
+diff --git a/app/src/lib/domain/craft/index.ts b/app/src/lib/domain/craft/index.ts
+index f55a4fd..0923e8d 100644
+--- a/app/src/lib/domain/craft/index.ts
++++ b/app/src/lib/domain/craft/index.ts
+@@ -65,3 +65,19 @@ export function frameSize(tier: Tier, wMm: number, hMm: number): [number, number
+ export function layersOf(doc: CraftDoc): { item: ItemDoc; part: PartDoc }[] {
+   return doc.items.flatMap((item) => [...item.parts].sort((a, b) => a.z - b.z).map((part) => ({ item, part })));
+ }
++
++/** one row of the screen's layer list: a part, or (separate items) one of its engravings as its own row */
++export interface Row { n: number; item: ItemDoc; part: PartDoc; op?: OpDoc; name: string; role: 'cut' | 'engrave'; shows: number }
++/** the layer list as the screen numbers it ("layer 3"): items in order, parts back to front; a separate item's
++ *  part is "<name> · cut" with its engravings as their own rows after it */
++export function rowsOf(doc: CraftDoc): Row[] {
++  const rows: Omit<Row, 'n'>[] = [], separate = doc.kind === 'items';
++  for (const item of doc.items) for (const part of [...item.parts].sort((a, b) => a.z - b.z)) {
++    const cut = part.ops.find((o) => o.kind === 'cut'), engr = part.ops.filter((o) => o.kind !== 'cut');
++    if (separate) {
++      if (cut) rows.push({ item, part, name: `${part.name} · cut`, role: 'cut', shows: part.measured?.visiblePct ?? 0 });
++      for (const op of engr) rows.push({ item, part, op, name: `${part.name} · engraving`, role: 'engrave', shows: op.shows ?? part.measured?.visiblePct ?? 0 });
++    } else rows.push({ item, part, name: part.name, role: cut ? 'cut' : 'engrave', shows: part.measured?.visiblePct ?? 0 });
++  }
++  return rows.map((r, i) => ({ ...r, n: i + 1 }));
++}
+diff --git a/app/src/lib/domain/craft/migrate.ts b/app/src/lib/domain/craft/migrate.ts
+index 8d0c140..ded90e4 100644
+--- a/app/src/lib/domain/craft/migrate.ts
++++ b/app/src/lib/domain/craft/migrate.ts
+@@ -21,11 +21,15 @@ export interface V1Project { id: string; name: string; createdAt: number; update
+ 
+ const strip = (name: string) => name.replace(/\s*·\s*(cut|engrave|engraving)$/i, '').trim() || name;
+ 
++/** stable ids from what v1 already names (re-reading the same v1 state gives the same ids, so undo spans both);
++ *  `newId` only for what v1 can't name */
++const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'x';
++const partIdFor = (regionId: string | undefined, name: string) => (regionId?.startsWith('p:') ? regionId.slice(2).split(':')[0] : `pt-${regionId ? slug(regionId) : slug(name)}`);
+ export function migrateV1(project: V1Project, snap: V1Snapshot, newId: () => Id): CraftDoc {
+   const aspect = snap.aspect && snap.aspect > 0 ? snap.aspect : 1, widthMm = snap.widthMm && snap.widthMm > 0 ? snap.widthMm : 300;
+   const stack = snap.stack ?? [], regions = new Map((snap.regionList ?? []).map((r) => [r.id, r]));
+   const source = { id: 'src-0', kind: 'photo' as const, w: 1000, h: Math.round(1000 / aspect) };
+-  const op = (kind: OpDoc['kind'], loops: Loops): OpDoc => ({ id: newId(), kind, geometry: fromLoops(loops) });
++  const op = (kind: OpDoc['kind'], loops: Loops, owner?: Id): OpDoc => ({ id: owner ? `${owner}:${kind}` : newId(), kind, geometry: fromLoops(loops) });
+   const base = { v: 2 as const, id: project.id, name: project.name, createdAt: project.createdAt, updatedAt: project.updatedAt, rev: 0, groups: [] as GroupDoc[], history: { done: [], undone: [] } };
+ 
+   // a kit: its layout's sheets are the parts of one item (mm on 300 mm sheets → the frame at XL)
+@@ -65,9 +69,10 @@ export function migrateV1(project: V1Project, snap: V1Snapshot, newId: () => Id)
+       const cutLoops = loopsOf(cut.l, cut.i, 'cut');
+       const { turn } = cutLoops.length ? uprightTurn(toMm(cutLoops as Pt[][], widthMm, aspect)) : { turn: 0 };
+       const { frame, toFrame } = frameFor(bounds(cutLoops), turn);
+-      const ops = [...own.filter(({ l }) => l.role === 'engrave').map(({ l, i }) => op('engrave', toFrame(loopsOf(l, i, 'engrave')))), op('cut', toFrame(cutLoops))].filter((o) => o.geometry.paths.length);
+-      const part: PartDoc = { id: newId(), name: strip(cut.l.name), z: 0, material: cut.l.material, colour: cut.l.colour, ops, measured: measured(cut.l), ...(cut.l.regionId ? { regionId: cut.l.regionId } : {}) };
+-      return { id: newId(), name, build: 'single' as const, frame, parts: [part], joins: [] };
++      const pid = partIdFor(cut.l.regionId, name);
++      const ops = [...own.filter(({ l }) => l.role === 'engrave').map(({ l, i }, k) => ({ ...op('engrave', toFrame(loopsOf(l, i, 'engrave')), pid), ...(k ? { id: `${pid}:engrave${k}` } : {}), shows: l.visiblePct })), op('cut', toFrame(cutLoops), pid)].filter((o) => o.geometry.paths.length);
++      const part: PartDoc = { id: pid, name: strip(cut.l.name), z: 0, material: cut.l.material, colour: cut.l.colour, ops, measured: measured(cut.l), ...(cut.l.regionId ? { regionId: cut.l.regionId } : {}) };
++      return { id: `it-${slug(name)}`, name, build: 'single' as const, frame, parts: [part], joins: [] };
+     });
+     // left / right of the same design are a pair (cut together)
+     const groups: GroupDoc[] = [];
+@@ -75,7 +80,7 @@ export function migrateV1(project: V1Project, snap: V1Snapshot, newId: () => Id)
+     for (const it of items) {
+       if (!/\b(left|right)\b/i.test(it.name) || groups.some((g) => g.items.includes(it.id))) continue;
+       const mate = items.find((o) => o !== it && /\b(left|right)\b/i.test(o.name) && pairKey(o.name) === pairKey(it.name) && !groups.some((g) => g.items.includes(o.id)));
+-      if (mate) groups.push({ id: newId(), name: strip(it.name.replace(/\b(left|right)\b/i, '').trim()), kind: 'pair', items: [it.id, mate.id], rule: 'same-sheet' });
++      if (mate) groups.push({ id: `pair-${slug(it.name)}`, name: strip(it.name.replace(/\b(left|right)\b/i, '').trim()), kind: 'pair', items: [it.id, mate.id], rule: 'same-sheet' });
+     }
+     return { ...base, kind: 'items', items, groups, sources: [source] };
+   }
+@@ -85,8 +90,11 @@ export function migrateV1(project: V1Project, snap: V1Snapshot, newId: () => Id)
+   const { frame, toFrame } = frameFor(all.length ? bounds(all) : { x: 0, y: 0, w: 1000, h: 1000 }, 0);
+   const parts: PartDoc[] = stack.map((l, i) => {
+     const kind = l.role ?? (snap.build === 'engrave' && i > 0 ? 'engrave' : 'cut');
+-    return { id: newId(), name: strip(l.name), z: i, material: l.material, colour: l.colour, ops: [op(kind, toFrame(loopsOf(l, i, kind)))], measured: measured(l), ...(l.regionId ? { regionId: l.regionId } : {}) };
++    const pid = partIdFor(l.regionId, `${l.name}-${i}`), r = l.regionId ? regions.get(l.regionId) : undefined;
++    // what shows of it (the screen's preview), when it differs from the whole sheet it is cut from
++    const shows = kind === 'cut' && r?.paths?.length && r.cutPaths?.length ? { shows: fromLoops(toFrame(r.paths)) } : {};
++    return { id: pid, name: strip(l.name), z: i, material: l.material, colour: l.colour, ops: [op(kind, toFrame(loopsOf(l, i, kind)), pid)], measured: measured(l), ...shows, ...(l.regionId ? { regionId: l.regionId } : {}) };
+   });
+-  const item: ItemDoc = { id: newId(), name: snap.subject || project.name || 'Craft', build: snap.build ?? 'stacked', frame, parts, joins: [] };
++  const item: ItemDoc = { id: `it-${slug(project.id)}`, name: snap.subject || project.name || 'Craft', build: snap.build ?? 'stacked', frame, parts, joins: [] };
+   return { ...base, kind: 'layered', items: stack.length ? [item] : [], sources: [source] };
+ }
+diff --git a/app/src/lib/domain/craft/types.ts b/app/src/lib/domain/craft/types.ts
+index 2caffb4..5df8e0e 100644
+--- a/app/src/lib/domain/craft/types.ts
++++ b/app/src/lib/domain/craft/types.ts
+@@ -48,12 +48,16 @@ export interface PartDoc {
+   material: string; colour: string;
+   ops: OpDoc[];
+   measured?: { visiblePct: number; hiddenPct: number; tune?: { detail: number; weight: number } };
++  /** stacked art: the part of it that shows (the rest sits under the parts in front) — for the screen's preview */
++  shows?: Geometry;
+   /** kept from the analysis so a part can be re-measured from the photo */
+   regionId?: string;
++  /** a merged part remembers the parts it was made from, so split gives them back */
++  from?: PartDoc[];
+ }
+ export type OpKind = 'cut' | 'engrave' | 'score';
+ /** geometry is in the item's frame px */
+-export interface OpDoc { id: Id; kind: OpKind; geometry: Geometry; settings?: { feed?: number; power?: number; passes?: number } }
++export interface OpDoc { id: Id; kind: OpKind; geometry: Geometry; settings?: { feed?: number; power?: number; passes?: number }; /** how much of the photo it shows, % (an engraving's own row) */ shows?: number }
+ export interface JoinDoc { id: Id; a: Id; b: Id; type: 'finger' | 'tab' | 'slot' | 'glue' }
+ export interface GroupDoc { id: Id; name: string; kind: 'pair' | 'set'; items: Id[]; rule: 'same-sheet' | 'together' | 'none' }
+ 
+diff --git a/app/src/lib/server/meta/actions-plan.spec.ts b/app/src/lib/server/meta/actions-plan.spec.ts
+new file mode 100644
+index 0000000..2f0bdda
+--- /dev/null
++++ b/app/src/lib/server/meta/actions-plan.spec.ts
+@@ -0,0 +1,28 @@
++import { describe, expect, it } from 'vitest';
++import { planActions } from './actions-plan';
++import type { MetaClient } from './client';
++
++const actions = [{ id: 'merge', hint: 'Join layers', options: 'name' }, { id: 'smooth', hint: 'Smooth curves', options: 'strength 1-5' }];
++const layers = [{ n: 1, name: 'Fox', item: 'Fox bookmark', role: 'cut', shows: 9 }, { n: 2, name: 'Owl', item: 'Owl bookmark', role: 'cut', shows: 9 }];
++describe('the chat planner · Spark picks actions as tools', () => {
++  it('sends the actions and layers, and returns validated calls (unknown actions and bad options dropped)', async () => {
++    let asked = '';
++    const client = { sparkJson: async (_s: string, user: string) => { asked = user; return { data: { calls: [
++      { action: 'smooth', refs: [{ kind: 'item', value: 'Fox bookmark' }], optsJson: '{"strength":4}' },
++      { action: 'explode', refs: [], optsJson: '{}' },
++      { action: 'merge', refs: [{ kind: 'n', value: '1' }, { kind: 'n', value: '2' }], optsJson: 'not json' }
++    ], reply: 'Smoothing the fox a lot, then merging.', ask: '' }, costUsd: 0.002, latencyMs: 200 }; } } as unknown as MetaClient;
++    const r = await planActions({ META_API_KEY: 'k' }, { text: 'smooth the fox a lot and merge 1 and 2', layers, actions }, client);
++    expect(asked).toContain('- smooth: Smooth curves Options: strength 1-5');
++    expect(asked).toContain('1. Fox — item Fox bookmark, cut, 9% shows');
++    expect(r.source).toBe('live');
++    expect(r.answer.calls).toEqual([{ action: 'smooth', refs: [{ kind: 'item', value: 'Fox bookmark' }], opts: { strength: 4 } }, { action: 'merge', refs: [{ kind: 'n', value: '1' }, { kind: 'n', value: '2' }], opts: {} }]);
++    expect(r.trace[0].purpose).toBe('action_plan');
++  });
++  it('no key, no text, no actions, or a failure: no calls', async () => {
++    expect((await planActions({}, { text: 'x', actions })).answer.calls).toEqual([]);
++    expect((await planActions({ META_API_KEY: 'k' }, { text: '', actions })).source).toBe('fixture');
++    const broken = { sparkJson: async () => { throw new Error('down'); } } as unknown as MetaClient;
++    expect((await planActions({ META_API_KEY: 'k' }, { text: 'x', actions }, broken)).answer.calls).toEqual([]);
++  });
++});
+diff --git a/app/src/lib/server/meta/actions-plan.ts b/app/src/lib/server/meta/actions-plan.ts
+new file mode 100644
+index 0000000..d518e63
+--- /dev/null
++++ b/app/src/lib/server/meta/actions-plan.ts
+@@ -0,0 +1,54 @@
++// The chat's planner (design/14 §7): Muse Spark reads what was said and picks from the app's actions — which ones,
++// on which layers (by number, name, item, role…), with which options. Models reason; code runs the actions.
++// The action list comes from the client's registry, so adding an action needs no server change.
++import { MetaClient } from './client';
++
++export interface PlanRef { kind: 'n' | 'name' | 'item' | 'role' | 'empty' | 'all' | 'selected'; value: string }
++export interface PlanCall { action: string; refs: PlanRef[]; opts: Record<string, unknown> }
++export interface PlanAnswer { calls: PlanCall[]; reply: string; ask: string }
++export interface PlanBody { text?: string; layers?: { n: number; name: string; item: string; role: string; shows: number }[]; selected?: number[]; actions?: { id: string; hint: string; options: string }[] }
++
++const Schema = {
++  type: 'object', additionalProperties: false, required: ['calls', 'reply', 'ask'],
++  properties: {
++    calls: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['action', 'refs', 'optsJson'], properties: {
++      action: { type: 'string' },
++      refs: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['kind', 'value'], properties: { kind: { type: 'string', enum: ['n', 'name', 'item', 'role', 'empty', 'all', 'selected'] }, value: { type: 'string' } } } },
++      optsJson: { type: 'string' }
++    } } },
++    reply: { type: 'string' }, ask: { type: 'string' }
++  }
++} as const;
++const SYSTEM = `You are Katachi, a craft assistant for laser and blade cutting. The user is editing a craft made of layers (parts of items).
++Turn what they said into calls to the app's actions — only the actions listed, in order. Each call names its targets with refs:
++- n: a layer number as listed ("3"); name: a layer name; item: an item name; role: "cut" or "engrave"; empty: layers that show 0%; all: everything; selected: what is selected.
++Put options as a JSON object string in optsJson (only the listed options, "{}" for defaults). Prefer few calls.
++If it is unclear which layers are meant, return no calls and put one short question in "ask".
++If nothing fits, return no calls and say so in "reply". "reply" is one short sentence saying what you will do.`;
++
++export async function planActions(env: Record<string, string | undefined>, body: PlanBody, client?: MetaClient): Promise<{ answer: PlanAnswer; source: 'live' | 'fixture'; trace: { model: string; purpose: string; latencyMs: number; costUsd: number }[] }> {
++  const none: PlanAnswer = { calls: [], reply: '', ask: '' };
++  const text = String(body.text ?? '').slice(0, 500), actions = (body.actions ?? []).slice(0, 60);
++  if (!env.META_API_KEY || !text || !actions.length) return { answer: none, source: 'fixture', trace: [] };
++  try {
++    const c = client ?? new MetaClient(env.META_API_KEY);
++    const user = [
++      'Actions:', ...actions.map((a) => `- ${a.id}: ${a.hint}${a.options ? ` Options: ${a.options}` : ''}`),
++      'Layers (back to front):', ...(body.layers ?? []).slice(0, 80).map((l) => `${l.n}. ${l.name} — item ${l.item}, ${l.role}, ${l.shows}% shows`),
++      `Selected: ${(body.selected ?? []).join(', ') || 'none'}`,
++      `The user said: ${text}`
++    ].join('\n');
++    const r = await c.sparkJson(SYSTEM, user, Schema as unknown as Record<string, unknown>, 'ActionPlan');
++    const d = r.data as { calls?: { action?: string; refs?: PlanRef[]; optsJson?: string }[]; reply?: string; ask?: string };
++    const known = new Set(actions.map((a) => a.id));
++    const calls: PlanCall[] = (d.calls ?? []).filter((x) => x.action && known.has(x.action)).map((x) => {
++      let opts: Record<string, unknown> = {};
++      try { const o = JSON.parse(x.optsJson || '{}'); if (o && typeof o === 'object' && !Array.isArray(o)) opts = o; } catch { /* a bad options string: defaults */ }
++      return { action: x.action!, refs: (x.refs ?? []).filter((f) => f && typeof f.value === 'string'), opts };
++    });
++    return { answer: { calls, reply: String(d.reply ?? ''), ask: String(d.ask ?? '') }, source: 'live', trace: [{ model: 'muse-spark-1.3', purpose: 'action_plan', latencyMs: r.latencyMs, costUsd: r.costUsd }] };
++  } catch (e) {
++    console.error('action plan failed:', e instanceof Error ? e.message : String(e));
++    return { answer: none, source: 'fixture', trace: [] };
++  }
++}
+diff --git a/app/src/lib/state/app.svelte.ts b/app/src/lib/state/app.svelte.ts
+index 61714c9..843d664 100644
+--- a/app/src/lib/state/app.svelte.ts
++++ b/app/src/lib/state/app.svelte.ts
+@@ -15,6 +15,15 @@ import { downscale } from './photo';
+ import { parseLayerOp, translatePaths, type Box, type DrawnShape, type LayerOp } from '../domain/layering';
+ import { pointsToPath } from '../domain/vector';
+ import { hiddenShare } from '../domain/toolpath';
++import { CraftState, emptyCraft } from './craft/craft.svelte';
++import { ActionState, type Narrator, type Outcome } from './craft/actions.svelte';
++import { migrateV1, type V1Snapshot } from '../domain/craft/migrate';
++import { craftToFlow } from '../domain/craft/bridge';
++import { rowsOf, type CraftDoc } from '../domain/craft';
++import { fastPath, refsFromPlan, toolList, type Said } from '../domain/actions/chat';
++import type { ActionCtx, ActionId } from '../domain/actions/types';
++import { actionOf } from '../domain/actions/registry';
++import { loadPixels } from './photo';
+ 
+ /** what the layer toolbar asks for; every one is said in the chat first, then applied */
+ export type LayerAction =
+@@ -22,6 +31,8 @@ export type LayerAction =
+   | { kind: 'tune'; detail: number; weight: number } | { kind: 'shape'; shape: DrawnShape; mode: 'add' | 'erase' }
+   | { kind: 'smoothArea'; box: Box; strength: number } | { kind: 'move'; dx: number; dy: number } | { kind: 'remove' };
+ 
++/** the words that mean an action (merge, delete, flip…): what is worth asking the planner about */
++const ACTION_WORDS = /\b(merge|delete|remove|combine|join|duplicate|copy|straighten|rotate|flip|mirror|resize|enhance|sharpen|fill in|interpolate|group|pair|rename|recolou?r|engrave instead|again|same for|bring|send|undo|redo)\b/i;
+ /** "remove the background", "get rid of the textured wall", "no shadows"… — the user wants the backdrop gone */
+ export const BACKDROP_ASK = /\b(remove|drop|delete|erase|clear|get rid of|cut out|without|no|lose)\b[^.]*\b(background|backdrop|wall|shadows?|plants?|shelf|surroundings)\b|\b(background|backdrop|wall)\b[^.]*\b(removed|gone|out|needs to go|should go)\b/i;
+ 
+@@ -89,6 +100,10 @@ export class AppState {
+       this.usage.add({ craftId: this.project?.id ?? null, model: e.model, action: e.purpose.replace(/_/g, ' '), costUsd: e.costUsd, ms: e.latencyMs, status: 'live' });
+       this.flow.conversation.logCall({ model: e.model, action: e.purpose.replace(/_/g, ' '), costUsd: e.costUsd, ms: e.latencyMs, status: 'live' });
+     };
++    // every edit lands in the craft's one history (design/14): native actions record themselves; the older edits
++    // (mask corrections, splits, moves) are recorded right after they land
++    this.actions = new ActionState(this.craft, () => this.actionCtx(), this.narrator());
++    this.layers.onEdit = (label) => { if (this.engineOn) queueMicrotask(() => this.syncCraft(label)); };
+     this.muse.onFinish = (t) => {
+       const call = { model: t.model ?? agentJobs[t.job].model, action: t.summary, costUsd: t.costUsd ?? 0, ms: t.ms ?? 0, status: (t.status === 'failed' ? 'failed' : t.status === 'done' ? 'live' : 'placeholder') as 'live' | 'placeholder' | 'failed' };
+       this.usage.add({ craftId: t.craftId, ...call });
+@@ -100,6 +115,93 @@ export class AppState {
+     const saved = id ? store.load(id) : null;
+     if (saved) this.apply(saved);
+   }
++  // ── The craft (design/15) and its actions (design/14). Until every screen reads the craft (task L3), the craft is
++  // kept in step with LayerFlowState both ways: read from it after analysis, written back after every action.
++  readonly craft = new CraftState();
++  private savedRev = -1;
++  private lastCraftDoc: CraftDoc | null = null;
++  readonly actions!: ActionState;
++  private narrated = 0;
++  /** the engine runs edits for one-piece art and separate items (kits keep the older path until L3) */
++  get engineOn() { return this.craft.doc.items.length > 0 && this.craft.doc.kind !== '3d' && !this.layers.plan.length; }
++  private actionCtx(): ActionCtx {
++    return { newId: () => `a${Date.now().toString(36)}${(this.narrated++).toString(36)}${Math.random().toString(36).slice(2, 6)}`,
++      pixels: (_source, max) => loadPixels(this.photo, max ?? 1600),
++      muse: { segmentCrop: (img, prompt) => this.muse.segmentCrop(img, prompt) } };
++  }
++  private narrator(): Narrator {
++    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping, never rendered
++    const c = () => this.flow.conversation, keys = new Map<string, string>();
++    const k = (key: string) => keys.get(key) ?? (() => { const u = `${this.project?.id ?? 'craft'}:${key}:${c().log.length}:${this.narrated++}`; keys.set(key, u); return u; })();
++    return {
++      think: (key, title) => { const u = `${this.project?.id ?? 'craft'}:${key}:${c().log.length}:${this.narrated++}`; keys.set(key, u); c().think(u, title); c().work(u); },
++      done: (key, title, detail) => { c().done(k(key), title, detail ? { detail } : {}); keys.delete(key); },
++      fail: (key, title, detail) => { c().fail(k(key), title, detail ?? ''); keys.delete(key); }
++    };
++  }
++  /** read the craft from what the screens hold now; `label` records the change as one undoable step */
++  syncCraft(label?: string, { fresh = false } = {}) {
++    const p = this.project;
++    if (!p) return;
++    const snap = this.layers.snapshot() as unknown as V1Snapshot;
++    const next: CraftDoc = migrateV1({ id: p.id, name: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt, kind: p.kind }, snap, () => `s${(this.narrated++).toString(36)}`);
++    const cur = this.craft.doc.id === p.id && !fresh ? this.craft.toJSON() : null;
++    // what only the craft knows (a turn, a flip, how many, the model's call) stays when the screens' state is re-read
++    if (cur) for (const it of next.items) { const was = cur.items.find((x) => x.id === it.id); if (was) { it.frame = { ...it.frame, fromSource: { ...it.frame.fromSource, rotateDeg: was.frame.fromSource.rotateDeg }, ...(was.frame.flipX ? { flipX: true } : {}), ...(was.frame.flipY ? { flipY: true } : {}) }; if (was.qty) it.qty = was.qty; if (was.needsEnhance) it.needsEnhance = was.needsEnhance; } }
++    if (cur && label) { this.actions.adopt({ ...next, groups: cur.groups.length ? cur.groups : next.groups }, label); return; }
++    this.craft.load({ ...next, history: cur?.history ?? { done: [], undone: [] }, rev: cur?.rev ?? 0 });
++  }
++  /** after an action: the screens' state is written from the craft */
++  private writeBack() {
++    if (!this.engineOn) return;
++    const f = this.layers, v = craftToFlow(this.craft.doc);
++    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping, never rendered
++    const used = new Set(f.stack.map((l) => l.regionId));
++    f.regionList = [...f.regionList.filter((r) => !used.has(r.id) && !r.id.startsWith('p:')), ...(v.regionList as unknown as typeof f.regionList)];
++    f.stack = v.stack as unknown as typeof f.stack;
++    f.sel = Math.min(Math.max(1, f.sel), f.stack.length) || 1;
++    f.sheetPaths = []; f.overrides = {}; f.hiddenLayers = [];
++    this.save();
++  }
++  /** the screen's selected row, for "this layer" */
++  private selectRow(n = this.layers.selected.n) { const r = rowsOf(this.craft.doc)[n - 1]; this.actions.selected = r ? [r.op?.id ?? r.part.id] : []; }
++  /** run calls through the actions, then write the result back for the screens */
++  async act(action: ActionId, refs: Parameters<ActionState['perform']>[1], opts: Record<string, unknown> = {}, via: 'chat' | 'button' | 'pass' = 'button'): Promise<Outcome> {
++    this.selectRow();
++    const r = await this.actions.perform(action, refs, opts, via);
++    if (r.ok) this.writeBack();
++    return r;
++  }
++  /** what the chat said, as the actions read it (undo / redo / again / calls) */
++  private async runSaid(said: Said) {
++    if (said.kind === 'undo') { this.undoLast({ echo: false }); return; }
++    if (said.kind === 'redo') { this.redoLast(); return; }
++    this.selectRow();
++    const r = said.kind === 'again' ? await this.actions.again(said.refs) : await this.actions.performAll(said.calls, 'chat');
++    if (r.ok) this.writeBack();
++    // straightened items are seen on their own sheets
++    if (r.ok && said.kind === 'calls' && said.calls.some((c) => c.action === 'straighten') && this.layers.separateItems) { this.layers.setView('cut'); this.save(); }
++  }
++  redoLast() { if (this.actions.redo()) this.writeBack(); }
++  /** can this row be split (the engine's split: a merged layer, or one with separate pieces) */
++  canSplit(n: number) {
++    if (!this.engineOn) return this.layers.canSplit(n);
++    const r = rowsOf(this.craft.doc)[n - 1], def = actionOf('split');
++    return Boolean(r && def && def.can(this.craft.doc, { targets: [r.op?.id ?? r.part.id], opts: {} }) === true);
++  }
++  /** Spark reads the request into action calls (design/14 §7); false = nothing it could plan */
++  private async planAndRun(text: string): Promise<boolean> {
++    const craft = this.project?.id; if (!craft) return false;
++    const rows = rowsOf(this.craft.doc), c = this.flow.conversation;
++    const a = await this.muse.planActions(craft, { text, layers: rows.map((r) => ({ n: r.n, name: r.name, item: r.item.name, role: r.role, shows: Math.round(r.shows) })), selected: [this.layers.selected.n].filter((n) => n > 0), actions: toolList() }).catch(() => null);
++    if (!a) return false;
++    if (a.ask) { c.say(a.ask); return true; }
++    if (!a.calls.length) return false;
++    this.selectRow();
++    const r = await this.actions.performAll(a.calls.map((x) => ({ action: x.action as ActionId, refs: refsFromPlan(x.refs), opts: x.opts })), 'chat', a.reply || undefined);
++    if (r.ok) this.writeBack();
++    return true;
++  }
+   /** The invite code is the user_id (demo-grade identity): crafts live under that user's storage namespace. */
+   userId = $state('guest');
+   bindUser(userId: string | null | undefined) {
+@@ -123,6 +225,7 @@ export class AppState {
+     this.watch.reset();
+     this.capture = new CaptureState();
+     this.layers.restore({ ...LayerFlowState.defaults(), ...p.choices });
++    this.craft.load(emptyCraft(p.id, p.name));
+     // Import, Cutout and Segment are part of Layers now: a craft saved on one of them reopens there
+     this.project = /^\/make\/(import|cutout|segment)$/.test(p.path) ? { ...p, path: flowPath('layers'), reached: Math.max(p.reached, steps.findIndex((s) => s.id === 'layers')) } : p;
+     // the captured photos and the heavy results (traced paths) come back from IndexedDB; steps wait for them
+@@ -130,10 +233,13 @@ export class AppState {
+       getMedia(p.id).then((media) => { if (media.length && this.project?.id === p.id) this.capture.hydrate(media, p.kind === '3d' ? 'multi' : 'single'); }),
+       p.choices?.heavyStored ? getCraftData(p.id).then((heavy) => {
+         if (!heavy || this.project?.id !== p.id) return;
+-        const { chat, ...rest } = heavy as Record<string, unknown> & { chat?: import('./conversation.svelte').LogEntry[] };
++        const { chat, craftDoc, ...rest } = heavy as Record<string, unknown> & { chat?: import('./conversation.svelte').LogEntry[]; craftDoc?: CraftDoc };
+         this.layers.restore(rest);
++        // the craft (and its history) as saved; then re-read from the screens' state (stable ids: no change)
++        if (craftDoc?.v === 2) this.craft.load(craftDoc);
++        this.syncCraft();
+         if (Array.isArray(chat)) this.flow.conversation.log = [...chat, ...this.flow.conversation.log];
+-      }) : Promise.resolve()
++      }) : Promise.resolve().then(() => { if (this.project?.id === p.id) this.syncCraft(); })
+     ]).then(() => undefined);
+   }
+   /** The best image for the stage views: the in-session capture, else the saved thumbnail. */
+@@ -152,6 +258,7 @@ export class AppState {
+     this.layers.restore(LayerFlowState.defaults());
+     this.layers.setDevice(this.defaultDevice);
+     this.project = { id: crypto.randomUUID(), name: '', createdAt: now, updatedAt: now, reached: -1, kind: 'flat', path: '/capture', image: '', choices: {}, status: 'draft' };
++    this.craft.load(emptyCraft(this.project.id, '', now));
+   }
+   /** Home · a new craft from a starting point (or from what was said or typed): Capture opens set up for it. */
+   startCraft(from: StartId | string, { heard = false, say }: { heard?: boolean; /** what the chat opens with instead of the start's own line */ say?: string } = {}): string {
+@@ -413,7 +520,7 @@ export class AppState {
+     })
+       .then(async (r) => {
+         if (!r || this.project?.id !== craft) return;
+-        f.applyLayers(r); this.save();
++        f.applyLayers(r); this.syncCraft(undefined, { fresh: true }); this.save();
+         const swatches = f.layers.map((l) => ({ hex: l.colour, label: l.name, n: l.n }));
+         // eslint-disable-next-line svelte/prefer-svelte-reactivity -- counted once, not reactive state
+         const itemsN = new Set(f.layers.map((l) => l.itemName).filter(Boolean)).size;
+@@ -431,6 +538,13 @@ export class AppState {
+    */
+   async itemPasses(craft: string) {
+     const f = this.layers, c = this.flow.conversation;
++    if (this.engineOn) {
++      // the same actions as the chat and the buttons (design/14 §9 recipe): each a step, each undoable
++      await this.act('straighten', [{ all: true }], {}, 'pass');
++      const hidden = this.hiddenItems();
++      if (hidden.length && this.project?.id === craft) await this.act('interpolate', hidden.map((item) => ({ item })), { maxAddPct: 40 }, 'pass');
++      return;
++    }
+     const straighten = this.stepKey('straighten');
+     c.think(straighten, 'Aligning and straightening each item', { thought: 'Code finds each item’s long axis and turns it upright onto its own sheet; its engraving turns with it.' });
+     c.work(straighten);
+@@ -568,7 +682,10 @@ export class AppState {
+     const light = Object.fromEntries(Object.entries(choices).filter(([k]) => !(HEAVY as readonly string[]).includes(k)));
+     const record: ProjectRecord = { ...$state.snapshot(p) as ProjectRecord, updatedAt: Date.now(), choices: { ...light, heavyStored: true } };
+     // the craft's chat is kept with it (a new craft starts a new chat; reopening one brings its chat back)
+-    void putCraftData(record.id, { ...heavy, chat: $state.snapshot(this.flow.conversation.log) });
++    // the craft (with its history) only when it changed since the last save: autosave runs on every edit
++    const craftDoc = this.craft.doc.id === record.id && this.craft.doc.rev !== this.savedRev ? this.craft.toJSON() : this.lastCraftDoc;
++    if (craftDoc && craftDoc.id === record.id) { this.savedRev = craftDoc.rev; this.lastCraftDoc = craftDoc; }
++    void putCraftData(record.id, { ...heavy, chat: $state.snapshot(this.flow.conversation.log), ...(craftDoc?.id === record.id ? { craftDoc } : {}) });
+     this.store.save(record);
+     this.store.setCurrent(record.id);
+     this.projects = this.store.list();
+@@ -780,7 +897,7 @@ export class AppState {
+     // Cut: "play the whole run" / "start cutting" runs every pass, said in the chat
+     if (path === '/make/output' && /\b(play|run|start cutting|cut (them|it|all)|simulate)\b/i.test(t)) { this.flow.conversation.ingestTranscript(t); void this.playRun(); return null; }
+     if (step && this.project) {
+-      this.refine(t, path, quote);
++      await this.refine(t, path, quote);
+       // a change to the breakdown (background, layer count, a layer's mask) is seen on Layers: go there
+       const breakdown = BACKDROP_ASK.test(t) || /\b\d{1,2}\s+(colour |color )?layers\b/i.test(t) || Boolean(parseLayerOp(t));
+       return breakdown && !/^\/make\/(layers|gaps)$/.test(path) && this.canVisit('layers') && this.layers.kind !== '3d' ? '/make/layers' : null;
+@@ -871,12 +988,18 @@ export class AppState {
+   undoLast({ echo = true } = {}) {
+     const f = this.layers, c = this.flow.conversation;
+     if (echo) c.ingestTranscript('Undo');
++    if (this.engineOn) { const e = this.actions.undo(); if (e) this.writeBack(); return Boolean(e); }
++    // kits (until L3): the older snapshots
+     const what = f.undo(), key = `${this.project?.id ?? 'craft'}:undo:${c.log.length}`;
+     if (!what) { c.done(key, 'Nothing to undo', { detail: 'Edits made in this session can be undone, one at a time.' }); return false; }
+     this.save();
+     c.done(key, `Undone: ${what}`, { detail: `${f.layers.length} layers${f.canUndo ? ` · ${f.history.length} more to undo` : ''}` });
+     return true;
+   }
++  get canUndo() { return this.engineOn ? this.actions.canUndo : this.layers.canUndo; }
++  get canRedo() { return this.engineOn && this.actions.canRedo; }
++  get undoLabel() { return this.engineOn ? this.actions.lastLabel : this.layers.history.at(-1)?.label; }
++
+   /** the layers a text names ("the gold and the red layers"), back to front */
+   namedLayers(text: string) {
+     const t = text.toLowerCase(), f = this.layers;
+@@ -957,6 +1080,14 @@ export class AppState {
+     if (!viaRefine) c.ingestTranscript(said[a.kind], this.layerQuote(n));
+     const key = `${this.project?.id ?? 'craft'}:act:${n}:${c.log.length}`;
+     const done = (title: string, detail?: string) => { this.save(); c.done(key, title, { detail }); };
++    // the stack's own edits run as actions (one history with the chat)
++    if (this.engineOn && a.kind === 'split') { await this.act('split', [{ n }]); return; }
++    if (this.engineOn && (a.kind === 'remove' || a.kind === 'duplicate' || a.kind === 'mergeWith' || a.kind === 'merge')) {
++      if (a.kind === 'merge' && !f.canMergeDown(n)) return done(`${name} is already the front layer`);
++      const refs = a.kind === 'mergeWith' ? [{ n }, { n: a.other }] : a.kind === 'merge' ? [{ n }, { n: n + 1 }] : [{ n }];
++      await this.act(a.kind === 'remove' ? 'delete' : a.kind === 'duplicate' ? 'duplicate' : 'merge', refs);
++      return;
++    }
+     if (['mergeWith', 'duplicate', 'merge', 'split', 'move', 'remove'].includes(a.kind)) f.checkpoint(`${said[a.kind].replace('this layer', name)}`);
+     switch (a.kind) {
+       case 'hide': case 'show': if (f.isLayerVisible(n) === (a.kind === 'hide')) f.toggleLayerVisible(n); return done(`${a.kind === 'hide' ? 'Hidden' : 'Showing'} · ${name}`, a.kind === 'hide' ? 'Still cut on Sheets; show it again from the list.' : undefined);
+@@ -1018,13 +1149,17 @@ export class AppState {
+     await this.refineLayer(n, text, { echo: false, op });
+   }
+   /** A chat refinement on a craft step: applied at once when it is a plain command, else noted against the step/layer. */
+-  refine(text: string, path: string, quote: Quote | null = null) {
++  /** returns the work it started (the chat need not wait; tests and recipes can) */
++  refine(text: string, path: string, quote: Quote | null = null): Promise<unknown> | void {
+     const step = journeyStepFor(path)?.label ?? 'Craft';
+     const quoted = quote?.kind === 'layer' && quote.n ? this.layers.layers[quote.n - 1] : undefined;
+     if (quoted) this.layers.selectLayer(quoted.n);
+     const layer = /^\/make\/(layers|gaps)$/.test(path) && this.layers.selected.n > 0 ? this.layers.selected.name : undefined;
+     // "undo" / "undo that" / "go back": the last edit is put back
+     if (/^\s*(undo|undo (that|it|the last( change| edit)?)|go back|revert( that)?|put it back)\s*[.!]?\s*$/i.test(text)) { this.flow.conversation.ingestTranscript(text, quote); this.undoLast({ echo: false }); return; }
++    // redo / again / one plain action with its layers (design/14 §7): the actions, no model
++    const said = this.engineOn && /^\/make\/(layers|gaps|output)$/.test(path) && !BACKDROP_ASK.test(text) ? fastPath(text, this.craft.doc) : null;
++    if (said && !(said.kind === 'calls' && said.calls[0].action === 'resize' && !this.layers.separateItems)) { this.flow.conversation.ingestTranscript(text, quote); return this.runSaid(said); }
+     this.flow.conversation.ingestTranscript(text, quote);
+     // "use 3 layers": regroup the whole picture's colours
+     const count = /\b(\d{1,2})\s+(colour |color )?layers\b/i.exec(text);
+@@ -1053,6 +1188,9 @@ export class AppState {
+       return;
+     }
+     // "straighten each bookmark / lay them out separately": separate items already are — say how
++    if (this.layers.separateItems && this.engineOn && /\b(straighten|upright|tilt(ed)?|separate(ly)?|apart|own sheet|lay (them )?out)\b/i.test(text)) {
++      return this.act('straighten', [{ all: true }], {}, 'chat').then(() => { this.layers.setView('cut'); this.save(); });
++    }
+     if (this.layers.separateItems && /\b(straighten|upright|rotat(e|ed|ion)|tilt(ed)?|separate(ly)?|apart|own sheet|lay (them )?out)\b/i.test(text)) {
+       const c = this.flow.conversation, turns = this.itemTurns(), hidden = this.hiddenItems();
+       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- counted once, not reactive state
+@@ -1073,6 +1211,8 @@ export class AppState {
+         const area = this.layers.area;
+         if (op && this.layers.regionForLayer(target)?.paths?.length) { void this.refineLayer(target.n, text, { echo: false, op: op.kind === 'smoother' && area ? { kind: 'smoothArea', box: area, strength: /jitter|wobbl/i.test(text) ? 3 : 2 } : undefined }); return; }
+         // free text the keywords do not cover: Muse Spark reads it as one edit, code applies it
++        // an action the fast path couldn't read plainly (several steps, or layers named loosely): Spark plans it
++        if (this.engineOn && ACTION_WORDS.test(text)) return this.planAndRun(text).then((done) => (done ? undefined : this.interpretAndApply(target.n, text, path, step, layer)));
+         if (this.project && this.layers.regionForLayer(target)?.paths?.length) { void this.interpretAndApply(target.n, text, path, step, layer); return; }
+         this.refineFallback(text, path, step, layer);
+         return;
+diff --git a/app/src/lib/state/craft/actions.spec.ts b/app/src/lib/state/craft/actions.spec.ts
+index 28b6059..5531c32 100644
+--- a/app/src/lib/state/craft/actions.spec.ts
++++ b/app/src/lib/state/craft/actions.spec.ts
+@@ -61,7 +61,7 @@ describe('ActionState', () => {
+     a.undo();
+     expect(c.layers.map((l) => l.name)).toEqual(['Gold', 'Black', 'Red', 'White']);
+     expect((await a.perform('merge', [{ n: 1 }])).ok).toBe(false);
+-    expect(log.at(-1)).toBe('✗ Pick two or more layers to merge');
++    expect(log.at(-1)).toBe('✗ Nothing to merge — pick two or more layers');
+     expect((await a.perform('reorder', [{ n: 1 }], { to: 'sideways' })).ok).toBe(false);
+     expect((await a.perform('nope' as never, [])).ok).toBe(false);
+     expect(a.done).toHaveLength(0);
+diff --git a/app/src/lib/state/craft/actions.svelte.ts b/app/src/lib/state/craft/actions.svelte.ts
+index a10cbdf..ac11852 100644
+--- a/app/src/lib/state/craft/actions.svelte.ts
++++ b/app/src/lib/state/craft/actions.svelte.ts
+@@ -65,6 +65,14 @@ export class ActionState {
+     this.say.done?.(key, entry.summary, children.length > 1 ? `${children.length} steps · one undo` : undefined);
+     return { ok: true, entry };
+   }
++  /** an edit made outside the actions (a mask re-measured from the photo) lands in the same history */
++  adopt(next: CraftDoc, summary: string, action = 'detail', via: EntryDoc['via'] = 'chat'): EntryDoc | null {
++    const cur = this.craft.toJSON(), d = diff(cur, next);
++    if (isEmpty(d.after)) { this.craft.load({ ...next, history: cur.history, rev: cur.rev }); return null; }
++    const entry: EntryDoc = { id: this.ctx().newId(), action, opts: {}, targets: Object.keys(d.after.items), via, summary, at: Date.now(), before: d.before, after: d.after };
++    this.craft.commit({ ...next, history: { done: [...cur.history.done, entry].slice(-KEEP), undone: [] } });
++    return entry;
++  }
+   /** put back what the last step changed */
+   undo(): EntryDoc | null {
+     const d = this.craft.toJSON(), e = d.history.done.at(-1);
+diff --git a/app/src/lib/state/craft/analysis.spec.ts b/app/src/lib/state/craft/analysis.spec.ts
+new file mode 100644
+index 0000000..51ccbe8
+--- /dev/null
++++ b/app/src/lib/state/craft/analysis.spec.ts
+@@ -0,0 +1,96 @@
++import { describe, expect, it } from 'vitest';
++import { CraftState } from './craft.svelte';
++import { ActionState } from './actions.svelte';
++import { migrateV1 } from '../../domain/craft/migrate';
++import { bbox, toLoops } from '../../domain/geo';
++
++let k = 0;
++const rect = (x: number, y: number, w: number, h: number): [number, number][] => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
++// a tilted bookmark, and one with a bite taken out of its corner (a neighbour lay over it)
++const tilted: [number, number][] = [[100, 100], [200, 80], [300, 700], [200, 720]];
++const bitten: [number, number][] = [[500, 100], [600, 100], [600, 400], [530, 400], [530, 700], [500, 700]];
++function craft() {
++  const doc = migrateV1({ id: 'b', name: 'Bookmarks', createdAt: 1, updatedAt: 1, kind: 'flat' }, {
++    aspect: 1, widthMm: 300,
++    regionList: [{ id: 'a', name: 'A', paths: [tilted] }, { id: 'b', name: 'B', paths: [bitten], holes: [rect(540, 200, 20, 20)] }],
++    stack: [{ n: 1, name: 'Fox · cut', colour: '#C89B6A', material: 'birch', visiblePct: 9, hiddenPct: 0, regionId: 'a', itemName: 'Fox', role: 'cut' }, { n: 2, name: 'Owl · cut', colour: '#C89B6A', material: 'birch', visiblePct: 9, hiddenPct: 0, regionId: 'b', itemName: 'Owl', role: 'cut' }]
++  }, () => `m${++k}`);
++  const c = new CraftState(() => 1); c.load(doc);
++  return c;
++}
++// the photo: wood-coloured items on a dark table, the Owl with a dark see-through hole
++function photo(w = 400, h = 400) {
++  const data = new Uint8ClampedArray(w * h * 4);
++  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
++    const u = (x / w) * 1000, v = (y / h) * 1000, i = (y * w + x) * 4;
++    const inOwl = u >= 500 && u <= 600 && v >= 100 && v <= 700 && !(u >= 540 && u <= 560 && v >= 200 && v <= 220) && !(u > 530 && v > 400);
++    const c = inOwl ? [205, 160, 110] : [30, 25, 22];
++    data[i] = c[0]; data[i + 1] = c[1]; data[i + 2] = c[2]; data[i + 3] = 255;
++  }
++  return { w, h, data };
++}
++
++describe('analysis actions', () => {
++  it('straighten turns each item upright; twice is the same as once; undo puts the tilt back', async () => {
++    const c = craft(), a = new ActionState(c, () => ({ newId: () => `n${++k}`, pixels: async () => null }));
++    // as if it had never been straightened
++    const d = c.toJSON(); d.items.forEach((i) => { i.frame.fromSource.rotateDeg = 0; }); c.load(d);
++    const r = await a.perform('straighten', [{ all: true }]);
++    expect(r.ok).toBe(true);
++    const turn = c.items[0].turnDeg;
++    expect(Math.abs(turn)).toBeGreaterThan(5);
++    expect(Math.abs(c.items[1].turnDeg)).toBeLessThan(Math.abs(turn));
++    await a.perform('straighten', [{ all: true }]);
++    expect(c.items[0].turnDeg).toBe(turn);
++    expect(a.done).toHaveLength(1); // the second changed nothing, so it is not a step
++    a.undo();
++    expect(c.items[0].turnDeg).toBe(0);
++  });
++  it('interpolate fills the bite in the Owl (its hole kept), leaves the Fox alone, and refuses big guesses', async () => {
++    const c = craft(), a = new ActionState(c, () => ({ newId: () => `n${++k}`, pixels: async () => null }));
++    const owl = c.items[1];
++    const loops0 = toLoops(owl.parts[0].cut!.geometry);
++    const r = await a.perform('interpolate', [{ all: true }], { maxAddPct: 40 });
++    expect(r.ok && r.entry.summary).toBe('Filled in the hidden edges of Owl');
++    const loops = toLoops(owl.parts[0].cut!.geometry);
++    expect(loops).toHaveLength(2); // the outline + its hole
++    expect(loops0).toHaveLength(2);
++    const area = (l: number[][]) => Math.abs(l.reduce((s, p, i) => s + p[0] * l[(i + 1) % l.length][1] - l[(i + 1) % l.length][0] * p[1], 0)) / 2;
++    expect(Math.max(...loops.map(area))).toBeGreaterThan(Math.max(...loops0.map(area)));
++    a.undo();
++    const strict = await a.perform('interpolate', [{ all: true }], { maxAddPct: 2 });
++    expect(strict.ok && strict.entry.summary).toMatch(/^Didn’t fill Owl/);
++  });
++  it('resize: width, height, scale keep the proportions; both sizes without keepAspect stretch it', async () => {
++    const c = craft(), a = new ActionState(c, () => ({ newId: () => `n${++k}`, pixels: async () => null }));
++    const owl = c.items[1];
++    await a.perform('resize', [{ item: 'Owl' }], { hMm: 90 });
++    expect(owl.sizeMm.hMm).toBeCloseTo(90, 0);
++    const ratio = owl.sizeMm.wMm / owl.sizeMm.hMm;
++    await a.perform('resize', [{ item: 'Owl' }], { scale: 2 });
++    expect(owl.sizeMm.hMm).toBeCloseTo(180, 0);
++    expect(owl.sizeMm.wMm / owl.sizeMm.hMm).toBeCloseTo(ratio, 2);
++    await a.perform('resize', [{ item: 'Owl' }], { wMm: 40, hMm: 100, keepAspect: false });
++    expect(owl.sizeMm.wMm).toBeCloseTo(40, 0); expect(owl.sizeMm.hMm).toBeCloseTo(100, 0);
++    expect((await a.perform('resize', [{ item: 'Owl' }], { hMm: 1 })).ok).toBe(false);
++    expect((await a.perform('resize', [{ item: 'Owl' }], {})).ok).toBe(false);
++  });
++  it('enhance: one tier up, cropped from the photo; SAM (when there) outlines again; holes re-measured; the size in mm stays', async () => {
++    const c = craft(), img = photo();
++    let asked = 0;
++    const a = new ActionState(c, () => ({ newId: () => `n${++k}`, pixels: async () => img, muse: { segmentCrop: async () => { asked++; return { paths: [rect(0, 0, 1000, 1000)], costUsd: 0.0025, latencyMs: 10 }; } } }));
++    const owl = c.items[1], size0 = owl.sizeMm, tier0 = owl.doc.frame.tier;
++    const r = await a.perform('enhance', [{ item: 'Owl' }]);
++    expect(r.ok).toBe(true);
++    expect(asked).toBe(1);
++    expect(owl.doc.frame.tier).not.toBe(tier0);
++    expect(owl.sizeMm.hMm).toBeCloseTo(size0.hMm, 0);
++    // the cut now carries the hole it measured (and the bite, as photographed): more than one loop
++    expect(toLoops(owl.parts[0].cut!.geometry).length).toBeGreaterThanOrEqual(2);
++    expect(bbox(owl.parts[0].cut!.geometry)!.h).toBeGreaterThan(owl.doc.frame.size[1] * 0.8);
++    // no photo: nothing to enhance, said plainly
++    const b = new ActionState(craft(), () => ({ newId: () => `n${++k}`, pixels: async () => null }));
++    const none = await b.perform('enhance', [{ all: true }]);
++    expect(none.ok && none.entry?.summary).toMatch(/Nothing could be enhanced/);
++  });
++});
+diff --git a/app/src/lib/state/craft/craft.spec.ts b/app/src/lib/state/craft/craft.spec.ts
+index 8eacddd..f7e053b 100644
+--- a/app/src/lib/state/craft/craft.spec.ts
++++ b/app/src/lib/state/craft/craft.spec.ts
+@@ -36,7 +36,7 @@ describe('CraftState', () => {
+     c.load(bookmarks());
+     const d = c.toJSON();
+     c.commit({ ...d, items: d.items.slice(0, 1), groups: [{ id: 'g', name: 'pair', kind: 'pair', items: [d.items[0].id, d.items[1].id], rule: 'same-sheet' }] });
+-    expect(c.doc.rev).toBe(1); expect(c.doc.updatedAt).toBe(500);
++    expect(c.doc.rev).toBe(2); expect(c.doc.updatedAt).toBe(500);
+     expect(c.items).toHaveLength(1);
+     expect(c.groups).toEqual([]);
+     expect(JSON.parse(JSON.stringify(c.toJSON())).v).toBe(2);
+diff --git a/app/src/lib/state/craft/craft.svelte.ts b/app/src/lib/state/craft/craft.svelte.ts
+index ce5e99d..a1982e6 100644
+--- a/app/src/lib/state/craft/craft.svelte.ts
++++ b/app/src/lib/state/craft/craft.svelte.ts
+@@ -18,7 +18,7 @@ export class CraftState {
+   constructor(private clock: () => number = () => Date.now()) {}
+ 
+   /** open a craft (replaces everything; the history comes with it) */
+-  load(doc: CraftDoc) { this.doc = doc; this.items$.clear(); this.parts$.clear(); }
++  load(doc: CraftDoc) { this.doc = { ...doc, rev: doc.rev + 1 }; this.items$.clear(); this.parts$.clear(); }
+   /** the document as saved */
+   toJSON(): CraftDoc { return $state.snapshot(this.doc) as CraftDoc; }
+   /** the one place a changed document lands (actions call this): links pruned, rev and time moved on */
+diff --git a/app/src/lib/state/layer-flow.svelte.ts b/app/src/lib/state/layer-flow.svelte.ts
+index ba7dec6..e6b8d06 100644
+--- a/app/src/lib/state/layer-flow.svelte.ts
++++ b/app/src/lib/state/layer-flow.svelte.ts
+@@ -294,7 +294,10 @@ export class LayerFlowState {
+   history = $state<{ label: string; at: Record<string, unknown> }[]>([]);
+   private static readonly UNDOABLE = ['stack', 'regionList', 'keep', 'sheetPaths', 'overrides', 'hiddenLayers', 'sel', 'plan', 'view'] as const;
+   /** remember the craft as it is now, before `label` changes it */
++  /** told about every edit just before it lands (the app records it in the craft's history) */
++  onEdit: ((label: string) => void) | null = null;
+   checkpoint(label: string) {
++    this.onEdit?.(label);
+     const at = Object.fromEntries(LayerFlowState.UNDOABLE.map((k) => [k, $state.snapshot(this[k])]));
+     this.history = [...this.history.slice(-29), { label, at }];
+   }
+diff --git a/app/src/lib/state/muse.svelte.ts b/app/src/lib/state/muse.svelte.ts
+index bb3405e..5e19509 100644
+--- a/app/src/lib/state/muse.svelte.ts
++++ b/app/src/lib/state/muse.svelte.ts
+@@ -281,6 +281,24 @@ export class MuseAgents {
+     const parts: Part[] = fixtureParts.map((p) => ({ ...p, needs: [...p.needs] }));
+     return this.run('layers.unfold', craftId, async () => { await tick(); return { result: parts, summary: `${parts.length} part groups · front, back, sides, roof, floor` }; });
+   }
++  /** enhance (design/14): an item's crop, outlined again by SAM. The crop is encoded here (browser), never in domain/ */
++  async segmentCrop(img: import('../domain/colour').PixelImage, prompt: string): Promise<{ paths: [number, number][][]; costUsd: number; latencyMs: number } | null> {
++    if (typeof document === 'undefined') return null;
++    const canvas = document.createElement('canvas'); canvas.width = img.w; canvas.height = img.h;
++    const ctx = canvas.getContext('2d'); if (!ctx) return null;
++    ctx.putImageData(new ImageData(new Uint8ClampedArray(img.data), img.w, img.h), 0, 0);
++    const t = performance.now(), j = await post('/api/segment', { imageDataUrl: canvas.toDataURL('image/jpeg', 0.92), prompt });
++    const paths = ((j?.masks ?? []) as { paths?: [number, number][][] }[]).flatMap((m) => m.paths ?? []) as [number, number][][];
++    return paths.length ? { paths, costUsd: traceCost(j) ?? 0, latencyMs: Math.round(performance.now() - t) } : null;
++  }
++  /** the chat's planner (design/14 §7): Muse Spark picks from the actions; code runs them */
++  planActions(craftId: string, body: { text: string; layers: { n: number; name: string; item: string; role: string; shows: number }[]; selected: number[]; actions: { id: string; hint: string; options: string }[] }) {
++    return this.run('layers.refine', craftId, async () => {
++      const j = await post('/api/actions/plan', body);
++      const answer = (j?.answer ?? { calls: [], reply: '', ask: '' }) as { calls: { action: string; refs: { kind: string; value: string }[]; opts: Record<string, unknown> }[]; reply: string; ask: string };
++      return { result: answer, summary: answer.calls.length ? `Planned ${answer.calls.map((c) => c.action).join(', ')}` : answer.ask ? 'Asked which layers' : `Read “${body.text}” as a note`, source: j?.source === 'live' ? 'live' as const : 'fixture' as const, costUsd: traceCost(j) };
++    });
++  }
+   /** A 3D kit's cut plan, read by code from its picture (design/13): each framed sheet, its pieces (what the cut
+    *  lines close off) and its engraving. A low-resolution picture gives approximate outlines. */
+   readCutPlan(craftId: string, url: string | undefined) {
+diff --git a/app/src/lib/state/photo-flow.spec.ts b/app/src/lib/state/photo-flow.spec.ts
+index 86e18e7..326b911 100644
+--- a/app/src/lib/state/photo-flow.spec.ts
++++ b/app/src/lib/state/photo-flow.spec.ts
+@@ -163,7 +163,7 @@ describe('photo → outline → colour layers in AppState (code measures; no SAM
+     await app.layerAction(1, { kind: 'merge' }); expect(f.layers.length).toBe(count);
+     await app.layerAction(1, { kind: 'split' }); expect(f.layers.length).toBe(count + 1);
+     await app.layerAction(f.layers.length, { kind: 'merge' }); expect(last().step?.title).toContain('already the front layer');
+-    await app.layerAction(f.layers.length, { kind: 'split' }); expect(last().step?.title).toContain('one piece');
++    await app.layerAction(f.layers.length, { kind: 'split' }); expect(last().step?.title).toMatch(/one piece/i);
+     await app.layerAction(99, { kind: 'hide' });
+     expect(app.layerPath(1)).toMatch(/^M/);
+     // show only this layer: a view of one layer, said in the chat
+@@ -180,7 +180,11 @@ describe('photo → outline → colour layers in AppState (code measures; no SAM
+     expect(f.cutPathFor(merged.n)).toMatch(/^M/);
+     expect(last().step?.title).toContain(`Merged ${a.name} with ${b.name}`);
+     await app.layerAction(1, { kind: 'mergeWith', other: 1 }); expect(last().step?.title).toContain('Nothing to merge');
+-    f.split(merged.n); expect(f.layers.length).toBe(count0);
++    await app.layerAction(merged.n, { kind: 'split' }); expect(f.layers.length).toBe(count0);
++    expect(f.layers.map((l) => l.name)).toContain(a.name);
++    // one history: undo the split, then the merge
++    app.undoLast(); expect(f.layers.length).toBe(count0 - 1);
++    app.undoLast(); expect(f.layers.map((l) => l.name)).toEqual(expect.arrayContaining([a.name, b.name]));
+   }, 20_000);
+ 
+   it('separate items (bookmarks): found as items, one layer each, grouped by item; a failed outline says so', async () => {
+diff --git a/app/src/routes/(studio)/make/layers/+page.svelte b/app/src/routes/(studio)/make/layers/+page.svelte
+index 0645e85..9add265 100644
+--- a/app/src/routes/(studio)/make/layers/+page.svelte
++++ b/app/src/routes/(studio)/make/layers/+page.svelte
+@@ -81,7 +81,8 @@ $effect(() => { void sel.n; merging = false; });
+       <Button size="sm" style="outline" icon="i-solar:magic-stick-3-linear" label="Smooth" onclick={() => void app.layerAction(sel.n, { kind: 'smoothArea', box: f.area!, strength: 2 })} />
+       <Button size="sm" style="outline" label="Reduce jitter" onclick={() => void app.layerAction(sel.n, { kind: 'smoothArea', box: f.area!, strength: 3 })} />
+     {/if}
+-    <Button size="sm" style="ghost" icon="i-solar:undo-left-round-linear" title={f.canUndo ? `Undo: ${f.history.at(-1)?.label}` : 'Nothing to undo'} aria-label="Undo" disabled={!f.canUndo} onclick={() => app.undoLast()} />
++    <Button size="sm" style="ghost" icon="i-solar:undo-left-round-linear" title={app.canUndo ? `Undo: ${app.undoLabel}` : 'Nothing to undo'} aria-label="Undo" disabled={!app.canUndo} onclick={() => app.undoLast()} />
++    <Button size="sm" style="ghost" icon="i-solar:undo-right-round-linear" title={app.canRedo ? `Redo: ${app.actions.undone.at(-1)?.summary}` : 'Nothing to redo'} aria-label="Redo" disabled={!app.canRedo} onclick={() => app.redoLast()} />
+     <span class="w-px h-5 bg-paper-edge mx-1.5"></span>
+     <Toggle options={views} value={f.view} label="View" class="seg" onchange={(v) => { f.setView(v as 'all' | 'only' | 'exploded' | 'cut'); app.save(); }} />
+     <span class="w-px h-5 bg-paper-edge mx-1.5"></span>
+@@ -97,7 +98,7 @@ $effect(() => { void sel.n; merging = false; });
+     <Button size="sm" style="ghost" icon="i-solar:reply-linear" title="Quote this layer in the chat" aria-label="Quote this layer in the chat" onclick={() => app.quoteLayer(sel.n)} />
+     <Button size="sm" style="ghost" icon="i-solar:copy-linear" title="Duplicate this layer" aria-label="Duplicate this layer" onclick={() => void app.layerAction(sel.n, { kind: 'duplicate' })} />
+     <Button size="sm" style={merging ? 'default' : 'ghost'} icon="i-solar:layers-minimalistic-linear" title="Merge with another layer" aria-label="Merge with…" aria-expanded={merging} disabled={f.layers.length < 2} onclick={() => (merging = !merging)} />
+-    <Button size="sm" style="ghost" icon="i-solar:scissors-linear" title={f.canSplit(sel.n) ? 'Split into its pieces' : 'One piece — nothing to split'} aria-label="Split" disabled={!f.canSplit(sel.n)} onclick={() => void app.layerAction(sel.n, { kind: 'split' })} />
++    <Button size="sm" style="ghost" icon="i-solar:scissors-linear" title={app.canSplit(sel.n) ? 'Split into its pieces' : 'One piece — nothing to split'} aria-label="Split" disabled={!app.canSplit(sel.n)} onclick={() => void app.layerAction(sel.n, { kind: 'split' })} />
+     <Button size="sm" style="ghost" icon="i-solar:trash-bin-minimalistic-linear" title="Delete this layer" aria-label="Delete this layer" disabled={f.layers.length < 2} onclick={() => void app.layerAction(sel.n, { kind: 'remove' })} />
+     <Button size="sm" style="ghost" icon="i-solar:checklist-minimalistic-linear" title="Add this sheet to the cut queue" aria-label="Add to the cut queue" onclick={() => app.queueSheets([sel.n])} />
+   </div>
+diff --git a/app/src/routes/api/actions/plan/+server.ts b/app/src/routes/api/actions/plan/+server.ts
+new file mode 100644
+index 0000000..99ccbe9
+--- /dev/null
++++ b/app/src/routes/api/actions/plan/+server.ts
+@@ -0,0 +1,7 @@
++import { json } from '@sveltejs/kit';
++import { env } from '$env/dynamic/private';
++import { planActions } from '$lib/server/meta/actions-plan';
++export async function POST({ request }) {
++  const body = await request.json().catch(() => ({}));
++  return json(await planActions({ META_API_KEY: env.META_API_KEY }, body));
++}
+diff --git a/app/tests/e2e/layers.spec.ts b/app/tests/e2e/layers.spec.ts
+index e5f8912..f3c6711 100644
+--- a/app/tests/e2e/layers.spec.ts
++++ b/app/tests/e2e/layers.spec.ts
+@@ -97,7 +97,8 @@ test.describe('image → layers · studio (1280×800)', () => {
+     await composer.getByRole('textbox').fill('split it in two');
+     await chat.getByRole('button', { name: 'Send' }).click();
+     await expect(chat.locator('[data-timeline-entry="user"]').last().locator('[data-quote-card]')).toContainText('Sky');
+-    await expect(chat).toContainText('Noted for Sky');
++    // a plain action said in the chat runs (or says why it can't): never just "noted"
++    await expect(chat).toContainText('One piece — nothing to split');
+     await expect(composer.locator('[data-quote-card]')).toHaveCount(0);
+   });
+ 
+diff --git a/docs/tasks/README.md b/docs/tasks/README.md
+index 28981ee..4291285 100644
+--- a/docs/tasks/README.md
++++ b/docs/tasks/README.md
+@@ -32,8 +32,8 @@ Claude (the lead in this repo) owns the contracts and reviews every hand-back.
+ 
+ | Id | Task | Depends on | Size | Who |
+ |---|---|---|---|---|
+-| T1 | Geometry library (`domain/geo`) | contracts only | ~1 day | delegate |
+-| T2 | Cut plan: profiles, `planCut`, queue adapter (`domain/cutplan`) | contracts; T1's core (already implemented) | ~1 day | delegate |
++| T1 | Geometry library (`domain/geo`) — **accepted, one fix: ragged smoothing** (see `T1-review.md`) | contracts only | ~1 day | delegate |
++| T2 | Cut plan: profiles, `planCut`, queue adapter (`domain/cutplan`) — **accepted** (`T2-review.md`) | contracts; T1's core (already implemented) | ~1 day | delegate |
+ | T3 | Geometry actions as `ActionDef`s (`domain/actions/defs`) | T1 | ~1 day | delegate, after T1 |
+ | L1 | Craft state classes, v1 → v2 migration, `LocalRepository` — **done** (`domain/craft`, `state/craft`) | contracts | ~1.5 days | Claude |
+ | L2 | Action registry, `perform` / undo / redo / again, history in the doc — **done**, with merge, delete, duplicate, reorder, rename, recolour, set-role, group, ungroup (`domain/actions`, `state/craft/actions.svelte.ts`); straighten / interpolate / resize / enhance next | L1 | ~1 day | Claude |
+diff --git a/docs/tasks/T1-review.md b/docs/tasks/T1-review.md
+new file mode 100644
+index 0000000..b8365b7
+--- /dev/null
++++ b/docs/tasks/T1-review.md
+@@ -0,0 +1,56 @@
++# T1 review (Claude, 2026-10-30)
++
++**Status:** accepted, with one fix needed: smoothing ragged outlines (below). Everything else checks out on real shapes.
++
++## Checked
++
++**Contracts:** `geo/types.ts`, `cutplan/types.ts` and the core in `geo/index.ts` are unchanged.
++
++**On real shapes:**
++
++- A 10 mm square offset by 1 has area 143.14, exactly 100 + 40 + π. The `clipper2-js` offset fix works. Pinning 1.2.4 with the subclass and a note is the right call.
++- An "O" (outer, hole, island) has 1 island; after `bridge` it has 0.
++- Strict containment for depths in the booleans is good: loops that touch stay on the same level.
++
++**Gates:** check, lint, and 39 geo + cutplan tests pass. The whole app's 378 unit tests pass with T1 in (merge now uses the real `union`).
++
++## Fix needed: `smooth` does nothing to ragged outlines
++
++The spec's jittery circle is a smooth 7-lobe wobble (`0.4 · sin 7a`). Real traced outlines are ragged *at every vertex*:
++
++- a pixel staircase, from tracing a mask;
++- noise that alternates from one vertex to the next.
++
++On those, `smooth` returns the input unchanged:
++
++| Input | tol | Result |
++|---|---|---|
++| staircase circle, r 40, 320 pts | 0.5 | 188 segs, hausdorff 0.00 |
++| staircase circle, r 40, 320 pts | 1 | 300 segs, hausdorff 0.00 |
++| per-vertex ±0.4 jitter, r 50, 200 pts | 0.5 and 1 | 200 segs, hausdorff 0.00 |
++
++**Cause:** every stair step or zigzag turns more than `cornerDeg`, so every vertex becomes a corner anchor, and the fit between neighbouring anchors is the input itself. The resample "always keeping the original vertices" makes it certain.
++
++**Fix:** a corner is a turn that lasts. Features smaller than `tol` are not corners.
++
++- Measure the turn at i between chords that reach at least `max(3 samples, 3·tol)` *of arc length* each way, not 3 samples.
++- Or find corners on a pre-smoothed copy (e.g. RDP at `tol`, then the turn test), then snap each corner to the nearest original sample.
++- Don't force the original vertices into the resample when they are within `tol / 2` of the chord.
++
++## Tests to add (all must pass)
++
++- **Staircase circle,** r 40 (the one above), tol 0.5: ≤ 16 `C` segments, hausdorff ≤ 0.75, and no point of the result is more than 0.75 from the true circle.
++- **Per-vertex ±0.4 jitter,** r 50, 200 pts, tol 0.5: ≤ 16 `C` segments, hausdorff ≤ 0.75.
++- **Staircase square** (a 40 × 40 square rotated 20°, traced to a pixel staircase), tol 0.5: still 4 sharp corners (end points within 0.75 of the true corners), ≤ 12 `C` segments.
++- **The existing tests** still pass (wobbly circle, square, open stroke).
++
++Generator for the staircase circle:
++
++```ts
++const stairs: Pt[] = [];
++for (let a = 0; a < 360; a++) {
++  const x = Math.round(50 + 40 * Math.cos(a * Math.PI / 180)), y = Math.round(50 + 40 * Math.sin(a * Math.PI / 180));
++  const l = stairs.at(-1);
++  if (!l || l[0] !== x || l[1] !== y) { if (l && l[0] !== x && l[1] !== y) stairs.push([x, l[1]]); stairs.push([x, y]); }
++}
++```
+diff --git a/docs/tasks/T2-review.md b/docs/tasks/T2-review.md
+new file mode 100644
+index 0000000..e00adea
+--- /dev/null
++++ b/docs/tasks/T2-review.md
+@@ -0,0 +1,18 @@
++# T2 review (Claude, 2026-10-30)
++
++**Status:** accepted.
++
++## Checked
++
++**Contracts:** unchanged. 15 cutplan tests pass, and the whole app's unit tests pass with T2 in.
++
++**On real shapes:** two earrings in a pair, laid out `groups-together` on the xTool bed, go on 1 sheet with 2 placements. The passes are hole, hole, outline, outline: holes before outlines, as asked.
++
++**Judgment calls, both agreed:**
++
++- **One cut pass per loop,** ordered by depth. It keeps holes first even across parts, and the queue's program builds per pass anyway.
++- **Pairs stay together** across sheet breaks (pack, then flush); **sets spill freely** through `nestParts`.
++
++## Note for L3 (Claude, not a T2 change)
++
++`one-part-per-sheet` places each part at its own bounding box, which is right for cutting. Assemble needs the parts *registered* (stacked art lines up layer on layer), so Assemble will draw from the item frame, not from the sheets' placements.

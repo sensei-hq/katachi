@@ -6,7 +6,10 @@
 export type LayerSetId = 'paper' | 'wood';
 export type LayerShape = 'sky' | 'sun' | 'far' | 'ridge' | 'hills' | 'pines';
 /** One cut layer: one or more shapes (islands) in one colour and material. A merged layer keeps its parts so Split can restore them. */
-export interface Layer { n: number; name: string; shapes: LayerShape[]; colour: string; visiblePct: number; hiddenPct: number; material: string; flag?: string; parts?: Layer[]; /** the SAM region this layer was built from (its traced paths + photo colour) */ regionId?: string }
+export interface Layer { n: number; name: string; shapes: LayerShape[]; colour: string; visiblePct: number; hiddenPct: number; material: string; flag?: string; parts?: Layer[]; /** the SAM region this layer was built from (its traced paths + photo colour) */ regionId?: string; /** owning item in a multiple-items photo (bookmarks etc.) */ itemName?: string; /** the layer's sliders (detail 1 blocky … 5 fine, weight -3 … +3) once moved */ tune?: { detail: number; weight: number }; /** separate items: cut through, or engraved (engraving runs first) */ role?: 'cut' | 'engrave'; /** a sheet read from a cut plan (3D kits): its index in the plan */ planSheet?: number; /** the item's frame is flipped over (e2e hook only; views don't mirror yet) */ flipped?: boolean }
+/** a layer's name without a model's own numbering ("Layer 4 - Gold Vine Skeleton" → "Gold Vine Skeleton"): the
+ *  stack order is the position, so the name never carries a number */
+export function cleanLayerName(name: string): string { return name.replace(/^\s*layer\s*\d+\s*(\((back|mid|front)\))?\s*[-–—:·.)]?\s*/i, '').trim() || name; }
 export interface LayerSet {
   label: string; project: string; headline: string; device: string; spacer: string; mmPerLayer: number;
   /** layers that carry the stack under the "smart" gap rule (doc 01 · S6) */

@@ -37,20 +37,25 @@ export const ImageBriefSchema = z.object({
   likelyMaterial: z.enum(['paper', 'wood', 'acrylic', 'mixed', 'unknown']),
   subjectPrompt: z.string(),
   regions: z.array(z.object({ id: z.string(), label: z.string(), samPrompt: z.string(), likelyBought: z.boolean(), note: z.string() }).strict()),
+  items: z.array(z.object({ id: z.string(), label: z.string(), samPrompt: z.string(), arrangement: z.enum(['stacked', 'single-item']), regions: z.array(z.object({ id: z.string(), label: z.string(), samPrompt: z.string(), likelyBought: z.boolean(), note: z.string() }).strict()) }).strict()),
   colourGroupsHint: z.number().int().min(1).max(12),
   reference: z.object({ kind: z.string(), samPrompt: z.string() }).strict().nullable(),
-  topDownConfidence: z.number().min(0).max(1), notes: z.string()
+  topDownConfidence: z.number().min(0).max(1), notes: z.string(),
+  /** the real size Spark estimates from what it is (a photo has no scale): the whole piece, or one typical item */
+  realSizeMm: z.object({ w: z.number().positive(), h: z.number().positive(), basis: z.string() }).strict().optional()
 }).strict();
 export type ImageBrief = z.infer<typeof ImageBriefSchema>;
 export const ImageBriefJsonSchema = {
-  type: 'object', additionalProperties: false, required: ['subject', 'class', 'arrangement', 'likelyMaterial', 'subjectPrompt', 'regions', 'colourGroupsHint', 'reference', 'topDownConfidence', 'notes'],
+  type: 'object', additionalProperties: false, required: ['subject', 'class', 'arrangement', 'likelyMaterial', 'subjectPrompt', 'regions', 'items', 'colourGroupsHint', 'reference', 'topDownConfidence', 'notes', 'realSizeMm'],
   properties: {
     subject: { type: 'string' }, class: { type: 'string', enum: ['layered', 'composite-3d', 'pattern-shape', 'fit-target'] }, arrangement: { type: 'string', enum: ['stacked', 'multiple-items', 'single-item', 'assembly-3d'] },
     likelyMaterial: { type: 'string', enum: ['paper', 'wood', 'acrylic', 'mixed', 'unknown'] }, subjectPrompt: { type: 'string' },
     regions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'label', 'samPrompt', 'likelyBought', 'note'], properties: { id: { type: 'string' }, label: { type: 'string' }, samPrompt: { type: 'string' }, likelyBought: { type: 'boolean' }, note: { type: 'string' } } } },
+    items: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'label', 'samPrompt', 'arrangement', 'regions'], properties: { id: { type: 'string' }, label: { type: 'string' }, samPrompt: { type: 'string' }, arrangement: { type: 'string', enum: ['stacked', 'single-item'] }, regions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'label', 'samPrompt', 'likelyBought', 'note'], properties: { id: { type: 'string' }, label: { type: 'string' }, samPrompt: { type: 'string' }, likelyBought: { type: 'boolean' }, note: { type: 'string' } } } } } } },
     colourGroupsHint: { type: 'integer' },
     reference: { anyOf: [{ type: 'object', additionalProperties: false, required: ['kind', 'samPrompt'], properties: { kind: { type: 'string' }, samPrompt: { type: 'string' } } }, { type: 'null' }] },
-    topDownConfidence: { type: 'number' }, notes: { type: 'string' }
+    topDownConfidence: { type: 'number' }, notes: { type: 'string' },
+    realSizeMm: { type: 'object', additionalProperties: false, required: ['w', 'h', 'basis'], properties: { w: { type: 'number' }, h: { type: 'number' }, basis: { type: 'string' } } }
   }
 } as const;
 

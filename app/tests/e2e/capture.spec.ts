@@ -2,9 +2,9 @@ import { test, expect } from '@playwright/test';
 
 test.describe('capture wizard (studio)', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
-  test('six sides: shoot, see which side is next, retake, view full size', async ({ page }) => {
+  test('several views: shoot, see which side is next, retake, view full size', async ({ page }) => {
     await page.goto('/capture'); await page.waitForLoadState('networkidle');
-    await page.getByRole('radio', { name: '6 sides' }).click();
+    await page.getByRole('radio', { name: 'Several views' }).click();
     await expect(page.getByText('Shoot the front · 1 of 6')).toBeVisible();
     await page.getByRole('button', { name: 'Take photo' }).click();
     await page.getByRole('button', { name: 'Take photo' }).click();
@@ -19,11 +19,12 @@ test.describe('capture wizard (studio)', () => {
 
   test('upload mixes with camera shots in the same slots', async ({ page }) => {
     await page.goto('/capture'); await page.waitForLoadState('networkidle');
-    await page.getByRole('radio', { name: '6 sides' }).click();
+    await page.getByRole('radio', { name: 'Several views' }).click();
     await page.getByRole('button', { name: 'Take photo' }).click();
     await page.getByRole('radio', { name: 'Upload' }).click();
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
     await page.setInputFiles('input[type="file"][multiple]', [{ name: 'a.png', mimeType: 'image/png', buffer: png }, { name: 'b.png', mimeType: 'image/png', buffer: png }]);
-    await expect(page.getByText('Shoot the left · 4 of 6')).toBeVisible();
+    await expect(page.getByText(/3 views in — add more, or analyze/)).toBeVisible();
+    await expect(page.getByRole('main').getByRole('button', { name: 'Analyze 3 views' })).toBeEnabled();
   });
 });

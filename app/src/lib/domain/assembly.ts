@@ -14,11 +14,18 @@ const joinText: Record<Joinery, string> = {
 /** Stacked layers, back → front; joined parts for a 3D object. */
 export function assemblySteps({ kind, layers, set, joinery, multiple = false }: { kind: Kind; layers: Layer[]; set: Pick<LayerSet, 'spacer' | 'mmPerLayer'> & { label: string }; joinery: Joinery; multiple?: boolean }): AssemblyStep[] {
   if (multiple) {
-    return [
-      { title: 'Cut each item separately', detail: `${layers.length} independent cuts: ${layers.map((l) => l.name).join(', ')}. Each sits on its own sheet outline.` },
-      ...layers.map((l) => ({ layer: l.n, title: `Cut ${l.name}`, detail: `One ${l.material} sheet, outline from its own mask. Weed the inside pieces and lift it off whole.` })),
-      { title: 'Finish and attach', detail: 'Sand the edges, seal if you like, then add the bought parts (tassels, cords, findings) through the top hole.' }
-    ];
+    const steps: AssemblyStep[] = [{ title: 'Cut each item separately', detail: `${[...new Set(layers.map((l) => l.itemName ?? l.name))].length} independent objects. Work one item at a time so pieces do not mix.` }];
+    const groups = new Map<string, Layer[]>();
+    for (const l of layers) { const k = l.itemName ?? l.name; groups.set(k, [...(groups.get(k) ?? []), l]); }
+    for (const [item, ls] of groups) {
+      if (ls.length === 1) steps.push({ layer: ls[0].n, title: `Cut ${item}`, detail: `One ${ls[0].material} sheet, outline from its own mask. Weed the inside pieces and lift it off whole.` });
+      else {
+        steps.push({ layer: ls[0].n, title: `Stack ${item}`, detail: `${ls.length} layers, back to front: ${ls.map((l) => l.name).join(' · ')}. Glue each on the registration pins before the next.` });
+        for (const l of ls) steps.push({ layer: l.n, title: `Add ${l.name} (${item})`, detail: `One ${l.material} sheet from its own traced mask. Line it up and press down.` });
+      }
+    }
+    steps.push({ title: 'Finish and attach', detail: 'Sand the edges, seal if you like, then add the bought parts (tassels, cords, findings) through the top hole.' });
+    return steps;
   }
   if (kind === '3d') {
     return [

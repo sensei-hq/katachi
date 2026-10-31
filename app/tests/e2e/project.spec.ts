@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { cameraFromHome, uploadFromHome } from './start';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
@@ -11,45 +12,35 @@ test.describe('a project: start, name, gate, save, reopen (1280×800)', () => {
     await expect(page.getByRole('region', { name: 'Start a craft' })).toBeVisible();
   });
 
-  test('Layered picture → capture an upload → named from the file → steps unlock as you go → reopened from Recent crafts', async ({ page }) => {
-    await page.goto('/workshop'); await page.waitForLoadState('networkidle');
-    await page.getByRole('button', { name: /Layered picture/ }).click();
-    await expect(page).toHaveURL(/\/capture$/);
-    await expect(page.getByRole('radio', { name: 'Upload' })).toHaveAttribute('aria-checked', 'true');
-    await expect(page.getByRole('main').getByRole('button', { name: /Choose/ })).toHaveCount(1);
-    await page.setInputFiles('input[type="file"]', [{ name: 'alpine-forest.png', mimeType: 'image/png', buffer: png }]);
-    await page.getByRole('main').getByRole('button', { name: 'Continue' }).click();
-    await expect(page).toHaveURL(/\/make\/import$/);
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Alpine forest');
-    const tabs = page.getByRole('navigation', { name: 'Craft steps' });
-    await expect(tabs.getByRole('link', { name: /Layers/ })).toHaveCount(0);
-    await page.goto('/make/gaps'); await page.waitForLoadState('networkidle');
-    await expect(page).toHaveURL(/\/make\/import$/);
-    await page.getByRole('main').getByRole('button', { name: 'Find the outline' }).click();
-    await page.getByRole('main').getByRole('button', { name: 'Find the objects' }).click();
-    await page.getByRole('main').getByRole('button', { name: /Separate into layers/ }).click();
+  test('Upload on Home → named from the file → Analyze → Cut opens once the layers are in → reopened from Your crafts', async ({ page }) => {
+    await uploadFromHome(page, [{ name: 'alpine-forest.png', mimeType: 'image/png', buffer: png }]);
+    await page.getByRole('main').getByRole('button', { name: 'Analyze' }).click();
     await expect(page).toHaveURL(/\/make\/layers$/);
-    await expect(tabs.getByRole('link', { name: /Layers/ })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Alpine forest');
+    const craft = page.getByRole('navigation', { name: 'Studio sections' }).getByRole('region', { name: 'Current craft' });
+    await expect(craft.getByRole('link', { name: 'Layers' })).toBeVisible();
+    // Cut and Assemble open as soon as the craft has its layers
+    await expect(page.getByLabel('Layer stack, back to front').locator('[data-layer-row]').first()).toBeVisible({ timeout: 60_000 });
+    await craft.getByRole('link', { name: 'Cut', exact: true }).click();
+    await expect(page).toHaveURL(/\/make\/output$/);
     await page.reload(); await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Alpine forest');
     await page.getByRole('navigation', { name: 'Studio sections' }).getByRole('link', { name: 'Home', exact: true }).click();
-    await expect(page.getByRole('region', { name: 'Continue' })).toContainText('Step 3 of 5 · Layers');
-    await page.getByRole('region', { name: 'Recent crafts' }).getByRole('button', { name: 'Open Alpine forest' }).click();
-    await expect(page).toHaveURL(/\/make\/layers$/);
+    const card = page.getByRole('region', { name: 'Your crafts' }).getByRole('article', { name: 'Alpine forest' });
+    await expect(card).toContainText('Step 3 of 4 · Cut');
+    await card.getByRole('button', { name: 'Open Alpine forest' }).click();
+    await expect(page).toHaveURL(/\/make\/output$/);
   });
 
   test('the rail opens the current craft where you left it', async ({ page }) => {
-    await page.goto('/workshop'); await page.waitForLoadState('networkidle');
-    await page.getByRole('button', { name: /3D object/ }).click();
-    await page.getByRole('radio', { name: 'Single shot' }).click();
+    await cameraFromHome(page);
     await page.getByRole('button', { name: 'Take photo' }).click();
-    await page.getByRole('main').getByRole('button', { name: 'Continue' }).click();
+    await page.getByRole('main').getByRole('button', { name: 'Analyze' }).click();
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(/^Photo · /);
-    await page.getByRole('main').getByRole('button', { name: 'Find the outline' }).click();
-    await expect(page).toHaveURL(/\/make\/cutout$/);
-    await page.getByRole('navigation', { name: 'Studio sections' }).getByRole('link', { name: 'Work area' }).click();
-    await expect(page).toHaveURL(/\/canvas$/);
-    await page.getByRole('navigation', { name: 'Studio sections' }).getByRole('link', { name: 'Current craft' }).click();
-    await expect(page).toHaveURL(/\/make\/cutout$/);
+    await expect(page).toHaveURL(/\/make\/layers$/);
+    await page.getByRole('navigation', { name: 'Studio sections' }).getByRole('link', { name: 'Home', exact: true }).click();
+    await expect(page).toHaveURL(/\/workshop$/);
+    await page.getByRole('navigation', { name: 'Studio sections' }).getByRole('link', { name: /^Current craft: / }).click();
+    await expect(page).toHaveURL(/\/make\/layers$/);
   });
 });

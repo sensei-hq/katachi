@@ -1,4 +1,10 @@
-# Katachi — Snap → Make
+<p align="center">
+  <img src="katachi.svg" alt="The Katachi mark: a K made of an ink bar and three stacked layers" width="128" height="128">
+</p>
+
+<h1 align="center">Katachi</h1>
+
+<p align="center"><em>形 · shape, form</em> — Snap → Make</p>
 
 > **Show it. Say it. Burn it.**
 > Point your phone at a sketch and an object and say what you want. Katachi turns it into a measured, cut-ready design, a photoreal preview and laser G-code, then watches the burn.
@@ -7,11 +13,32 @@ Katachi is a voice-first workshop buddy for people who own a desktop laser cutte
 
 Built for the **Meta Global AI Developer Hackathon** (Oct 26 – Nov 4, 2026), Indie track, theme *Build for Your World*. This repo contains only work built during the event (see [What was built during the hackathon](#what-was-built-during-the-hackathon)). Product requirements are the single source of truth in [`docs/prd/`](docs/prd/README.md); the implementation plan and tracked checklist live in [`docs/plans/`](docs/plans/2026-10-27-snap-make-phase1-plan.md) with per-stage specs in [`docs/roadmap/`](docs/roadmap/README.md).
 
+## Why "Katachi"
+
+**形 (katachi)** is Japanese for *shape* or *form*: the form a thing takes. That is the whole job. You show Katachi a picture of something that inspires you (layered paper art, a fretwork bookmark, a tray of earrings, a wooden castle kit), and it finds the shapes inside it: the layers, the pieces, the holes and the engraving. It turns them into forms you can actually cut, on paper with a blade cutter or on wood with a laser.
+
+**The mark** is a K drawn with what Katachi makes:
+
+- **The ink bar on the left** is the stroke a cutter follows.
+- **The three diamonds** are three sheets stacked in an isometric view, the layered piece every craft becomes:
+  - **charcoal** `#25282D`: card, and the ink;
+  - **birch** `#D8AE82`: plywood;
+  - **paper** `#DDD8D0`.
+
+Together they read as a K, and as a stack of cut layers. The same three colours are fixed brand tokens in the app (see `app/src/lib/components/KatachiMark.svelte`), in light and dark themes alike.
+
+**The names it has had:**
+
+1. **Burn-E** was a laser-only design tool.
+2. **Snap → Make** was the hackathon feature: from a photo to cut-ready parts.
+3. **Katachi** is the product once it covered paper and wood, layered art, separate items and 3D kits. *Snap → Make* stays as the one-line description of what it does.
+
 ## Links
 
 | | |
 |---|---|
-| Live demo | https://snap-to-make.sensei-hq.com (invite code shared privately) |
+| Live demo | https://katachi.sensei-hq.com (invite code shared privately) |
+| Code | https://github.com/sensei-hq/katachi |
 | Hackathon | [Meta Global AI Developer Hackathon](https://dev.meta.ai/events/global-hackathon) · [event page on Cerebral Valley](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) · [submission](https://cerebralvalley.ai/e/meta-ai-developer-hackathon/hackathon/submit) |
 | Meta Model API | [Product page](https://developer.meta.com/ai/products/meta-model-api/) · [Build with Muse Spark](https://developer.meta.com/ai/resources/blog/build-with-muse-spark/) · [dev.meta.ai](https://dev.meta.ai/) · base URL `https://api.meta.ai/v1` |
 | Product docs | [PRD](docs/prd/README.md) · [Plan](docs/plans/2026-10-27-snap-make-phase1-plan.md) · [Roadmap](docs/roadmap/README.md) · [Submission package](docs/submission/README.md) |
@@ -41,7 +68,7 @@ The design flow is **Object → Impl**: one measured design, many fabrication ta
 
 ## Try it
 
-**Live demo:** https://snap-to-make.sensei-hq.com — enter your invite code (shared privately) and the three ticks at the gate. Live Muse Spark scene analysis is enabled on the server.
+**Live demo:** https://katachi.sensei-hq.com — enter your invite code (shared privately) and the three ticks at the gate. Live Muse Spark scene analysis is enabled on the server.
 
 ```bash
 cd app
@@ -57,7 +84,7 @@ Meta calls need a server-side key: copy `app/.env.example` to `app/.env` and set
 ## Code organization
 
 ```
-snap-to-make/
+katachi/
 ├── app/                 # The Snap → Make PWA (SvelteKit 2 + Svelte 5 + Rokkit). Start here.
 │   └── src/
 │       ├── routes/      # / (gate) · (studio): workshop (New / Open) → capture → make/{import, cutout, segment, layers,
@@ -110,6 +137,9 @@ All commands run from `app/` and are defined in its `package.json` — no ad-hoc
 | Full local gate | `bun run verify` · everything incl. build + e2e: `bun run verify:full` |
 | Database (from `database/`) | `bun run db:inspect` · `bun run db:deploy` · `bun run db:import` |
 | Deploy (Cloudflare Worker) | `bun run deploy:dry` to validate · `bun run deploy` |
+| Version bump (bumpp) | `bun run bump --patch\|--minor\|--major` — bumps `package.json`, commits `release: vX.Y.Z` and tags it; push with `git push --follow-tags` |
+
+The running version (`vX.Y.Z · commit`) shows in Settings → About, at the foot of the studio rail and in the landing footer, and is served at `/api/version`.
 
 Development is test-driven: failing test first, then implementation, with a Playwright suite covering the hero journey, playback-without-a-device, device switching, the invite/budget gate, Burn Watch, and batch. Auth is intentionally absent in Phase 1 (invite code + 18+ attestation); Kavach + Supabase Auth arrive in Phase 2 with saved projects and subscriptions.
 

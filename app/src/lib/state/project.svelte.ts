@@ -61,13 +61,15 @@ export class ProjectStore {
     } catch { return []; }
   }
   private write(list: ProjectRecord[]) {
-    try { this.storage.setItem(this.listKey(), JSON.stringify(list)); }
-    catch {
-      // Quota: drop the oldest finished craft's thumbnail and retry once.
-      const slim = [...list].sort((a, b) => a.updatedAt - b.updatedAt);
-      const victim = slim.find((p) => p.status === 'finished' && p.image);
-      if (victim) { victim.image = ''; this.storage.setItem(this.listKey(), JSON.stringify(list)); }
+    try { this.storage.setItem(this.listKey(), JSON.stringify(list)); return; } catch { /* quota: slim down below */ }
+    // Quota: drop thumbnails of the oldest crafts (the photos stay in IndexedDB) until the list fits; never throw.
+    const slim = [...list].sort((a, b) => a.updatedAt - b.updatedAt);
+    for (const victim of slim) {
+      if (!victim.image || victim === slim[slim.length - 1]) continue;
+      victim.image = '';
+      try { this.storage.setItem(this.listKey(), JSON.stringify(list)); return; } catch { /* keep slimming */ }
     }
+    console.error('Katachi: browser storage is full; this craft list could not be saved');
   }
   /** newest first */
   list(): ProjectRecord[] { return this.read().sort((a, b) => b.updatedAt - a.updatedAt); }

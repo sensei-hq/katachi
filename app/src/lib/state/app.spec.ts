@@ -6,7 +6,7 @@ describe('AppState (one per app, shared by every section)', () => {
     const app = new AppState();
     expect(app.trace).toBe(app.flow.trace);
     app.trace.add({ model: 'muse-spark-1.3', purpose: 'analyze_scene', latencyMs: 10, costUsd: 0.02 });
-    expect(app.costPill).toBe('$0.02 · 1 models');
+    expect(app.costPill).toBe('$0.02 · 1 model');
   });
 
   it('keeps section state alive across navigation (same instances)', () => {
@@ -83,16 +83,13 @@ describe('AppState (one per app, shared by every section)', () => {
     expect(app.info).toBeNull();
   });
 
-  it('guides each layers step once in the chat, with Previous / Next and the step’s suggestions', () => {
+  it('guides each step once in the chat (moving between steps is the rail and the suggestions)', () => {
     const app = new AppState();
-    app.guideStep('segment');
-    app.guideStep('segment');
-    const steps = app.messages.filter((m) => m.data?.actions?.some((a) => a.label.startsWith('Next')));
-    expect(steps).toHaveLength(1);
-    expect(steps[0].data?.actions).toEqual([
-      { label: 'Previous · Cutout', href: '/make/cutout' },
-      { label: 'Next · Layers', href: '/make/layers' }
-    ]);
+    app.guideStep('gaps');
+    app.guideStep('gaps');
+    app.guideStep('layers');
+    expect(app.flow.conversation.log.filter((e) => e.role === 'assistant')).toHaveLength(1);
+    expect(app.messages.some((m) => m.data?.actions?.length)).toBe(false);
     expect(app.suggestions.length).toBeGreaterThan(0);
   });
 
@@ -116,11 +113,13 @@ describe('AppState (one per app, shared by every section)', () => {
     app.newProject();
     expect(app.project?.name).toBe('');
     app.startFromCapture({ fileName: 'alpine-forest.png', images: ['data:image/png;base64,AAAA'], mode: 'single' });
-    expect(app.project).toMatchObject({ name: 'Alpine forest', kind: 'flat', reached: 0 });
+    // Analyze opens Layers straight away: the background, items and layers are worked out there
+    expect(app.project).toMatchObject({ name: 'Alpine forest', kind: 'flat', reached: 3, path: '/make/layers' });
     expect(app.title).toBe('Alpine forest');
-    expect([app.canVisit('import'), app.canVisit('cutout'), app.canVisit('layers')]).toEqual([true, true, false]);
-    app.visit('cutout'); app.visit('segment');
-    expect([app.canVisit('layers'), app.canVisit('gaps')]).toEqual([true, false]);
+    expect([app.canVisit('layers'), app.canVisit('gaps'), app.canVisit('output')]).toEqual([true, false, false]);
+    // once the layers are in, Cut and Assemble open straight away (no walking through every step)
+    app.layers.applyLayers([{ n: 1, name: 'Back', shapes: ['sky'], colour: '#888888', visiblePct: 50, hiddenPct: 0, material: 'card' }]);
+    expect([app.canVisit('output'), app.canVisit('assemble')]).toEqual([true, true]);
     expect(store.list().map((p) => p.name)).toEqual(['Alpine forest']);
   });
 

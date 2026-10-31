@@ -15,29 +15,28 @@ test.describe('three parts: nav · work area · assistant (1280×800)', () => {
     await seedProject(page);
     await page.goto('/make/layers'); await page.waitForLoadState('networkidle');
     const assistant = page.getByRole('complementary', { name: 'Katachi chat' });
-    await assistant.getByRole('textbox').fill('merge sun and sky');
+    await assistant.locator('[data-chat-composer]').getByRole('textbox').fill('merge sun and sky');
     await assistant.getByRole('button', { name: 'Send' }).click();
     await expect(assistant.getByRole('log')).toContainText('merge sun and sky');
     await expect(assistant.getByRole('button', { name: 'Voice input' })).toBeVisible();
   });
-  test('the assistant is Rokkit ChatShell: default messages, suggestions and send in the composer', async ({ page }) => {
+  test('the assistant is Rokkit ChatShell with a timeline: Katachi and you each have an icon, suggestions sit inline after the last entry', async ({ page }) => {
     await page.goto('/workshop'); await page.waitForLoadState('networkidle');
     const assistant = page.getByRole('complementary', { name: 'Katachi chat' });
     await expect(assistant.locator('[data-chat-shell]')).toHaveCount(1);
-    await expect(assistant.locator('[data-chat-message][data-role="assistant"] [data-chat-body]').first()).toContainText('what are we making today');
-    const composer = assistant.locator('[data-chat-composer]');
-    await expect(composer.getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'A layered mountain picture' })).toBeVisible();
-    await expect(composer.getByRole('button', { name: 'Send' })).toBeVisible();
+    await expect(assistant.locator('[data-timeline-entry="katachi"]').first()).toContainText('what are we making today');
+    await expect(assistant.getByRole('log').getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'A layered mountain picture' })).toBeVisible();
+    await expect(assistant.locator('[data-chat-composer]').getByRole('button', { name: 'Send' })).toBeVisible();
   });
   test('on Home, what you type starts a craft: Katachi replies in the assistant and Capture opens set up for it', async ({ page }) => {
     await page.goto('/workshop'); await page.waitForLoadState('networkidle');
-    await page.getByRole('textbox', { name: 'Say it or type it' }).fill('a birdhouse like the one in the garden');
-    await page.getByRole('textbox', { name: 'Say it or type it' }).press('Enter');
-    await expect(page).toHaveURL(/\/capture$/);
     const assistant = page.getByRole('complementary', { name: 'Katachi chat' });
+    await assistant.locator('[data-chat-composer]').getByRole('textbox').fill('a birdhouse like the one in the garden');
+    await assistant.getByRole('button', { name: 'Send' }).click();
+    await expect(page).toHaveURL(/\/capture$/);
     await expect(assistant).toContainText('a birdhouse like the one in the garden');
-    await expect(assistant).toContainText('Shoot all six sides');
-    await expect(page.getByRole('radio', { name: '6 sides' })).toHaveAttribute('aria-checked', 'true');
+    await expect(assistant).toContainText('any number, in any order');
+    await expect(page.getByRole('radio', { name: 'Several views' })).toHaveAttribute('aria-checked', 'true');
   });
 });
 

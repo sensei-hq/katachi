@@ -3,27 +3,29 @@ import { howItWorks, journey, journeyPath, journeyStepFor, journeyStrip, startFo
 import { steps } from './layers';
 
 describe('the craft journey (docs/design/07 §1)', () => {
-  it('has five steps with the same names everywhere', () => {
-    expect(journey.map((j) => j.label)).toEqual(['Capture', 'Shape', 'Layers', 'Sheets', 'Assemble']);
+  it('has four steps with the same names everywhere (Shape folded into Layers: Analyze)', () => {
+    expect(journey.map((j) => j.label)).toEqual(['Capture', 'Layers', 'Cut', 'Assemble']);
   });
 
   it('owns every flow route exactly once', () => {
     const owned = journey.flatMap((j) => j.routes);
     expect(new Set(owned).size).toBe(owned.length);
-    for (const s of steps) expect(owned).toContain(s.path);
+    for (const s of steps.filter((x) => !['import', 'cutout', 'segment'].includes(x.id))) expect(owned).toContain(s.path);
+    expect(owned).not.toContain('/make/cutout');
     expect(owned).toEqual(expect.arrayContaining(['/capture', '/make/views', '/make/reference']));
   });
 
   it('maps a route to its step and outside the flow to nothing', () => {
-    expect(journeyStepFor('/make/cutout')?.id).toBe('shape');
+    expect(journeyStepFor('/make/layers')?.id).toBe('layers');
+    expect(journeyStepFor('/make/reference')?.id).toBe('layers');
     expect(journeyStepFor('/make/gaps')?.id).toBe('layers');
     expect(journeyStepFor('/make/views')?.id).toBe('layers');
     expect(journeyStepFor('/canvas')).toBeNull();
   });
 
-  it('phone strip: "02 / 05 · Shape · outline", next named; 3D names parts & joins', () => {
-    expect(journeyStrip('/make/cutout')).toEqual({ n: 2, total: 5, label: 'Shape', sub: 'outline', next: 'layers' });
-    expect(journeyStrip('/make/import', '3d')?.next).toBe('parts & joins');
+  it('phone strip: "02 / 04 · Layers · items & layers", next named', () => {
+    expect(journeyStrip('/make/layers')).toEqual({ n: 2, total: 4, label: 'Layers', sub: 'items & layers', next: 'cut' });
+    expect(journeyStrip('/capture', '3d')?.next).toBe('parts & joins');
     expect(journeyStrip('/make/assemble')?.next).toBeNull();
     expect(journeyStrip('/watch')).toBeNull();
   });

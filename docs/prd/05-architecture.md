@@ -16,7 +16,7 @@
 │ Mic: browser SpeechRecognition (fallback) · speechSynthesis (local TTS) ──── fetch /api/* ──┐        │
 └─────────────────────────────────────────────────────────────────────────────────────────────┼────────┘
                                                                                               ▼
-┌──────────────────────── Cloudflare Worker `snap-to-make` (SvelteKit server routes) ──────────────────┐
+┌──────────────────────── Cloudflare Worker `katachi` (SvelteKit server routes) ──────────────────┐
 │ /api/gate    invite + 18+ → session      │ /api/scene    Spark analyse → SAM → measure (code)        │
 │ /api/design  DesignSpec → Object → Impl  │ /api/segment  SAM 3.1 boxes/masks for a prompt            │
 │ /api/art     Muse Image edit / generate  │ /api/preview  Muse Image responses                        │
@@ -34,7 +34,7 @@ Without `META_API_KEY` the server routes return clearly labelled demo fixtures, 
 
 ## 5.3 Repository layout
 ```
-snap-to-make/
+katachi/
 ├── docs/prd/                     ← this PRD
 ├── app/                          ← the app
 │   ├── rokkit.config.js  uno.config.js  svelte.config.js  wrangler.jsonc  worker-entry.js
@@ -73,7 +73,7 @@ snap-to-make/
 - Respect the Muse API ToS: no reselling access, label AI-generated previews ("AI preview").
 
 ## 5.7 Deployment (hackathon)
-- One Cloudflare Worker (`app/wrangler.jsonc`, name `snap-to-make`, custom domain `snap-to-make.sensei-hq.com`) serves the PWA assets and the `/api/*` routes: `bun run deploy:dry` to validate, `bun run deploy` to ship.
+- One Cloudflare Worker (`app/wrangler.jsonc`, name `katachi`, custom domain `katachi.sensei-hq.com`) serves the PWA assets and the `/api/*` routes: `bun run deploy:dry` to validate, `bun run deploy` to ship.
 - Database: Supabase Postgres, schema deployed and seeded with `dbd deploy -d $DATABASE_URL -e dev --scope snap` (`bun run db:deploy`).
 - Demo laptop runs everything locally as a backup (`bun run dev` + local Glimmer).
 

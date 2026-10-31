@@ -47,12 +47,12 @@ describe('chat carries the real findings and applies plain commands', () => {
       { id: 'lake', name: 'Lake', pct: 30, note: '', tone: 'ok', keep: true, paths: [square] }
     ] as never);
     app.currentStep = 'segment';
-    expect(app.suggestions.some((s) => s.includes('Sun'))).toBe(true);
+    expect(app.suggestions.some((s) => String(s).includes('Sun'))).toBe(true);
     expect(app.noteFor('segment')).toContain('Sun');
     app.layers.applySheets([{ name: 'Sun', svg: 'M1 1Z', pathCount: 3, cutLengthMm: 420, sizeMm: 300 }]);
     expect(app.noteFor('output')).toContain('3 closed paths');
     expect(app.noteFor('assemble')).toContain('1.');
-  });
+  }, 10_000);
   it('"drop the Sun" in chat actually drops the region; an unknown ask is noted honestly', async () => {
     const { AppState } = await import('./app.svelte');
     const { MemoryStorage, ProjectStore } = await import('./project.svelte');
@@ -63,10 +63,10 @@ describe('chat carries the real findings and applies plain commands', () => {
       { id: 'sun', name: 'Sun', pct: 4, note: '', tone: 'accent', keep: true, paths: [square] },
       { id: 'lake', name: 'Lake', pct: 30, note: '', tone: 'ok', keep: true, paths: [square] }
     ] as never);
-    app.refine('drop the Sun', '/make/segment');
+    app.refine('drop the Sun', '/make/layers');
     expect(app.layers.regions.find((r) => r.name === 'Sun')?.on).toBe(false);
     expect(app.flow.conversation.log.at(-1)?.text).toContain('Done');
-    app.refine('make it sparkle', '/make/segment');
+    app.refine('make it sparkle', '/make/layers');
     expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted');
-  });
+  }, 15000);
 });

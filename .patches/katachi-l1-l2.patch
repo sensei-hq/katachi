@@ -1,0 +1,949 @@
+diff --git a/app/src/lib/domain/actions/defs/index.ts b/app/src/lib/domain/actions/defs/index.ts
+new file mode 100644
+index 0000000..a00e42f
+--- /dev/null
++++ b/app/src/lib/domain/actions/defs/index.ts
+@@ -0,0 +1,6 @@
++// Every action, registered once (design/14). Task T3's geometry actions join this list as they land.
++import { register } from '../registry';
++import { structureActions } from './structure';
++
++let done = false;
++export function registerAll() { if (done) return; done = true; for (const a of structureActions) register(a as never); }
+diff --git a/app/src/lib/domain/actions/defs/structure.ts b/app/src/lib/domain/actions/defs/structure.ts
+new file mode 100644
+index 0000000..3bb2c9b
+--- /dev/null
++++ b/app/src/lib/domain/actions/defs/structure.ts
+@@ -0,0 +1,142 @@
++// The stack's own actions (design/14 §6): merge, delete, duplicate, reorder, rename, recolour, set-role, group,
++// ungroup. They re-arrange parts and items; geometry is only carried (merge joins it).
++import * as geo from '../../geo';
++import type { CraftDoc, GroupDoc, Id, ItemDoc, OpDoc, PartDoc } from '../../craft/types';
++import { indexCraft } from '../../craft';
++import type { ActionDef, ActionResult } from '../types';
++
++const clone = <T>(x: T): T => structuredClone(x);
++const itemOfPart = (doc: CraftDoc, partId: Id) => doc.items.find((i) => i.parts.some((p) => p.id === partId));
++/** z back to 0, 1, 2… in the same order */
++const renumber = (parts: PartDoc[]) => [...parts].sort((a, b) => a.z - b.z).map((p, z) => ({ ...p, z }));
++/** geometry from one item's frame into another's (both are crops of the same photo; turns apply at cut time) */
++function reframe(g: geo.Geometry, from: ItemDoc, to: ItemDoc): geo.Geometry {
++  if (from.id === to.id) return g;
++  const a = from.frame, b = to.frame;
++  const m = geo.mul(geo.scale(b.size[0] / b.fromSource.box.w, b.size[1] / b.fromSource.box.h), geo.mul(geo.translate(a.fromSource.box.x - b.fromSource.box.x, a.fromSource.box.y - b.fromSource.box.y), geo.scale(a.fromSource.box.w / a.size[0], a.fromSource.box.h / a.size[1])));
++  return geo.transform(g, m);
++}
++/** join geometries: a true union once the geometry library has it, else the paths side by side (even-odd) */
++function join(gs: geo.Geometry[]): geo.Geometry {
++  const all: geo.Geometry = { paths: gs.flatMap((g) => g.paths) };
++  try { return gs.length > 1 ? gs.slice(1).reduce((acc, g) => geo.union(acc, g), gs[0]) : all; } catch { return all; }
++}
++
++export const merge: ActionDef<{ name?: string }> = {
++  id: 'merge', label: 'Merge', icon: 'i-solar:layers-minimalistic-linear', scope: 'part', arity: 'many', kind: 'code',
++  hint: 'Join two or more layers into one (their cut and engraving joined); it sits where the frontmost was.',
++  schema: { type: 'object', properties: { name: { type: 'string' } } }, defaults: {},
++  says: [/\b(merge|combine|join)\b/i],
++  can: (_d, i) => (i.targets.length >= 2 ? true : 'Pick two or more layers to merge'),
++  run(doc, { targets, opts }, ctx): ActionResult {
++    const ix = indexCraft(doc);
++    const parts = targets.map((id) => ix.get(id)).filter((n) => n?.kind === 'part') as { node: PartDoc; item: ItemDoc }[];
++    // into the frontmost target's item, at its place
++    const into = parts[parts.length - 1].item, front = parts[parts.length - 1].node;
++    const byKind = (k: OpDoc['kind']) => parts.flatMap((p) => p.node.ops.filter((o) => o.kind === k).map((o) => reframe(o.geometry, p.item, into)));
++    const ops: OpDoc[] = (['engrave', 'score', 'cut'] as const).map((k) => byKind(k)).map((gs, i) => (gs.length ? { id: ctx.newId(), kind: (['engrave', 'score', 'cut'] as const)[i], geometry: join(gs) } : null)).filter((o): o is OpDoc => Boolean(o));
++    const merged: PartDoc = { id: ctx.newId(), name: opts.name || parts.map((p) => p.node.name).join(' + '), z: front.z, material: front.material, colour: front.colour, ops };
++    const gone = new Set(parts.map((p) => p.node.id));
++    const items: ItemDoc[] = [], removed: Id[] = [];
++    for (const it of new Set(parts.map((p) => p.item))) {
++      const left = it.parts.filter((p) => !gone.has(p.id));
++      if (it.id === into.id) items.push({ ...clone(it), parts: renumber([...left, merged]) });
++      else if (left.length) items.push({ ...clone(it), parts: renumber(left) });
++      else removed.push(it.id);
++    }
++    return { items, removed, summary: `Merged ${parts.length} layers into ${merged.name}`, select: [merged.id] };
++  }
++};
++
++export const del: ActionDef<Record<string, never>> = {
++  id: 'delete', label: 'Delete', icon: 'i-solar:trash-bin-minimalistic-linear', scope: 'part', arity: 'any', kind: 'code',
++  hint: 'Delete layers (an item with no layers left goes too).', schema: { type: 'object', properties: {} }, defaults: {},
++  says: [/\b(delete|remove|drop|get rid of|discard)\b/i],
++  can: (_d, i) => (i.targets.length ? true : 'Nothing to delete'),
++  run(doc, { targets }): ActionResult {
++    const gone = new Set(targets), items: ItemDoc[] = [], removed: Id[] = [];
++    for (const it of doc.items.filter((i) => i.parts.some((p) => gone.has(p.id)))) {
++      const left = it.parts.filter((p) => !gone.has(p.id));
++      if (left.length) items.push({ ...clone(it), parts: renumber(left) }); else removed.push(it.id);
++    }
++    const names = doc.items.flatMap((i) => i.parts).filter((p) => gone.has(p.id)).map((p) => p.name);
++    return { items, removed, summary: names.length > 2 ? `Deleted ${names.length} layers` : `Deleted ${names.join(' and ')}` };
++  }
++};
++
++export const duplicate: ActionDef<Record<string, never>> = {
++  id: 'duplicate', label: 'Duplicate', icon: 'i-solar:copy-linear', scope: 'part', arity: 'one', kind: 'code',
++  hint: 'Copy a layer; the copy sits just in front of it.', schema: { type: 'object', properties: {} }, defaults: {},
++  says: [/\b(duplicate|copy)\b/i],
++  can: (_d, i) => (i.targets.length === 1 ? true : 'Pick one layer to duplicate'),
++  run(doc, { targets }, ctx): ActionResult {
++    const it = itemOfPart(doc, targets[0])!, p = it.parts.find((x) => x.id === targets[0])!;
++    const copy: PartDoc = { ...clone(p), id: ctx.newId(), name: `${p.name} copy`, z: p.z + 0.5, ops: p.ops.map((o) => ({ ...clone(o), id: ctx.newId() })) };
++    return { items: [{ ...clone(it), parts: renumber([...it.parts, copy]) }], summary: `Duplicated ${p.name}`, select: [copy.id] };
++  }
++};
++
++export const reorder: ActionDef<{ to: 'front' | 'back' | 'forward' | 'backward' }> = {
++  id: 'reorder', label: 'Move in the stack', icon: 'i-solar:sort-vertical-linear', scope: 'part', arity: 'one', kind: 'code',
++  hint: 'Move a layer to the front or back of its item’s stack, or one step.', schema: { type: 'object', properties: { to: { enum: ['front', 'back', 'forward', 'backward'] } } }, defaults: { to: 'front' },
++  says: [/\b(bring|send|move)\b.*\b(front|back|forward|backward)\b/i],
++  can: (d, i) => ((itemOfPart(d, i.targets[0])?.parts.length ?? 0) > 1 ? true : 'It is the only layer of its item'),
++  run(doc, { targets, opts }): ActionResult {
++    const it = itemOfPart(doc, targets[0])!, sorted = renumber(it.parts), at = sorted.findIndex((p) => p.id === targets[0]);
++    const [p] = sorted.splice(at, 1);
++    const to = opts.to === 'front' ? sorted.length : opts.to === 'back' ? 0 : opts.to === 'forward' ? Math.min(sorted.length, at + 1) : Math.max(0, at - 1);
++    sorted.splice(to, 0, p);
++    return { items: [{ ...clone(it), parts: sorted.map((x, z) => ({ ...x, z })) }], summary: `Moved ${p.name} ${opts.to === 'front' || opts.to === 'back' ? `to the ${opts.to}` : opts.to}` };
++  }
++};
++
++const editPart = (doc: CraftDoc, ids: Id[], f: (p: PartDoc) => PartDoc) => doc.items.filter((i) => i.parts.some((p) => ids.includes(p.id))).map((it) => ({ ...clone(it), parts: it.parts.map((p) => (ids.includes(p.id) ? f(clone(p)) : p)) }));
++
++export const rename: ActionDef<{ name: string }> = {
++  id: 'rename', label: 'Rename', icon: 'i-solar:pen-linear', scope: 'part', arity: 'one', kind: 'code',
++  hint: 'Rename a layer.', schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }, defaults: { name: '' },
++  can: (_d, i) => (i.targets.length === 1 && i.opts.name.trim() ? true : 'Say the new name'),
++  run: (doc, { targets, opts }) => ({ items: editPart(doc, targets, (p) => ({ ...p, name: opts.name.trim() })), summary: `Renamed to ${opts.name.trim()}` })
++};
++
++export const recolour: ActionDef<{ colour?: string; material?: string }> = {
++  id: 'recolour', label: 'Colour / material', icon: 'i-solar:palette-linear', scope: 'part', arity: 'any', kind: 'code',
++  hint: 'Change the colour or material a layer is cut from (it moves to that material’s sheets).', schema: { type: 'object', properties: { colour: { type: 'string' }, material: { type: 'string' } } }, defaults: {},
++  can: (_d, i) => (i.targets.length && (i.opts.colour || i.opts.material) ? true : 'Say the colour or material'),
++  run: (doc, { targets, opts }) => ({ items: editPart(doc, targets, (p) => ({ ...p, ...(opts.colour ? { colour: opts.colour } : {}), ...(opts.material ? { material: opts.material } : {}) })), summary: `Now ${[opts.colour, opts.material].filter(Boolean).join(', ')}` })
++};
++
++export const setRole: ActionDef<{ role: 'cut' | 'engrave' }> = {
++  id: 'set-role', label: 'Cut or engrave', icon: 'i-solar:scissors-linear', scope: 'part', arity: 'any', kind: 'code',
++  hint: 'Make a layer cut through, or engraved only.', schema: { type: 'object', properties: { role: { enum: ['cut', 'engrave'] } } }, defaults: { role: 'engrave' },
++  says: [/\b(engrave|etch|burn)\b.*\binstead\b|\bmake (it|this) (an )?(engrav|cut)/i],
++  can: (_d, i) => (i.targets.length ? true : 'Pick a layer'),
++  run: (doc, { targets, opts }) => ({ items: editPart(doc, targets, (p) => ({ ...p, ops: p.ops.map((o) => (o.kind === (opts.role === 'cut' ? 'engrave' : 'cut') ? { ...o, kind: opts.role } : o)) })), summary: `Now ${opts.role === 'cut' ? 'cut through' : 'engraved'}` })
++};
++
++export const group: ActionDef<{ kind: 'pair' | 'set'; name?: string }> = {
++  id: 'group', label: 'Group', icon: 'i-solar:link-linear', scope: 'item', arity: 'many', kind: 'code',
++  hint: 'Make items a pair (cut together) or a set.', schema: { type: 'object', properties: { kind: { enum: ['pair', 'set'] }, name: { type: 'string' } } }, defaults: { kind: 'set' },
++  says: [/\b(pair|group)\b.*\b(together|up)\b/i],
++  can: (_d, i) => (i.targets.length >= 2 && (i.opts.kind !== 'pair' || i.targets.length === 2) ? true : i.opts.kind === 'pair' ? 'A pair is two items' : 'Pick two or more items'),
++  run(doc, { targets, opts }, ctx): ActionResult {
++    // an item is in one group at a time: it leaves any other
++    const groups = doc.groups.filter((g) => g.items.some((i) => targets.includes(i))).map((g) => ({ ...g, items: g.items.filter((i) => !targets.includes(i)) }));
++    const names = targets.map((id) => doc.items.find((i) => i.id === id)?.name ?? '');
++    const g: GroupDoc = { id: ctx.newId(), name: opts.name || names.join(' + '), kind: opts.kind, items: targets, rule: 'same-sheet' };
++    return { items: [], groups: [...groups, g], summary: `${opts.kind === 'pair' ? 'Paired' : 'Grouped'} ${names.join(' and ')} — cut together` };
++  }
++};
++
++export const ungroup: ActionDef<Record<string, never>> = {
++  id: 'ungroup', label: 'Ungroup', icon: 'i-solar:link-broken-linear', scope: 'item', arity: 'any', kind: 'code',
++  hint: 'Take items out of their pair or set.', schema: { type: 'object', properties: {} }, defaults: {},
++  says: [/\bungroup|unpair|separate them\b/i],
++  can: (d, i) => (d.groups.some((g) => g.items.some((x) => i.targets.includes(x))) ? true : 'Not in a pair or set'),
++  run(doc, { targets }): ActionResult {
++    const touched = doc.groups.filter((g) => g.items.some((i) => targets.includes(i)));
++    return { items: [], groups: touched.map((g) => ({ ...g, items: g.items.filter((i) => !targets.includes(i)) })), summary: `Ungrouped ${targets.length} item${targets.length > 1 ? 's' : ''}` };
++  }
++};
++
++export const structureActions = [merge, del, duplicate, reorder, rename, recolour, setRole, group, ungroup];
+diff --git a/app/src/lib/domain/actions/history.ts b/app/src/lib/domain/actions/history.ts
+new file mode 100644
+index 0000000..4dade32
+--- /dev/null
++++ b/app/src/lib/domain/actions/history.ts
+@@ -0,0 +1,43 @@
++// Undo / redo data (design/14 §5): only what an action changed, item by item, so a long history stays small.
++import type { CraftDoc, EntryDoc, GroupDoc, Id, ItemDoc, Patch } from '../craft/types';
++import type { ActionResult } from './types';
++
++/** apply an action's result to a doc (pure): changed items replaced or added, removed ones dropped, order kept */
++export function applyResult(doc: CraftDoc, r: ActionResult): CraftDoc {
++  const changed = new Map(r.items.map((i) => [i.id, i])), removed = new Set(r.removed ?? []);
++  let items = doc.items.filter((i) => !removed.has(i.id)).map((i) => changed.get(i.id) ?? i);
++  for (const i of r.items) if (!doc.items.some((x) => x.id === i.id)) items.push(i);
++  if (r.order) items = r.order.map((id) => items.find((i) => i.id === id)).filter((i): i is ItemDoc => Boolean(i));
++  const gChanged = new Map((r.groups ?? []).map((g) => [g.id, g])), gRemoved = new Set(r.removedGroups ?? []);
++  const groups = doc.groups.filter((g) => !gRemoved.has(g.id)).map((g) => gChanged.get(g.id) ?? g);
++  for (const g of r.groups ?? []) if (!doc.groups.some((x) => x.id === g.id)) groups.push(g);
++  return { ...doc, items, groups };
++}
++/** what changed between two docs, as the before / after patches of one history entry */
++export function diff(before: CraftDoc, after: CraftDoc): { before: Patch; after: Patch } {
++  const b: Patch = { items: {}, groups: {} }, a: Patch = { items: {}, groups: {} };
++  const bi = new Map(before.items.map((i) => [i.id, i])), ai = new Map(after.items.map((i) => [i.id, i]));
++  for (const id of new Set([...bi.keys(), ...ai.keys()])) {
++    const x = bi.get(id) ?? null, y = ai.get(id) ?? null;
++    if (x !== y && JSON.stringify(x) !== JSON.stringify(y)) { b.items[id] = x; a.items[id] = y; }
++  }
++  const bg = new Map(before.groups.map((g) => [g.id, g])), ag = new Map(after.groups.map((g) => [g.id, g]));
++  for (const id of new Set([...bg.keys(), ...ag.keys()])) {
++    const x = bg.get(id) ?? null, y = ag.get(id) ?? null;
++    if (JSON.stringify(x) !== JSON.stringify(y)) { b.groups![id] = x; a.groups![id] = y; }
++  }
++  const bo = before.items.map((i) => i.id), ao = after.items.map((i) => i.id);
++  if (bo.join() !== ao.join()) { b.order = bo; a.order = ao; }
++  return { before: b, after: a };
++}
++/** put a patch onto a doc (undo puts `before`, redo puts `after`) */
++export function applyPatch(doc: CraftDoc, p: Patch): CraftDoc {
++  let items = doc.items.map((i) => (i.id in p.items ? p.items[i.id] : i)).filter((i): i is ItemDoc => Boolean(i));
++  for (const [id, i] of Object.entries(p.items)) if (i && !doc.items.some((x) => x.id === id)) items.push(i);
++  if (p.order) items = p.order.map((id) => items.find((i) => i.id === id)).filter((i): i is ItemDoc => Boolean(i));
++  const groups = doc.groups.map((g) => (p.groups && g.id in p.groups ? p.groups[g.id] : g)).filter((g): g is GroupDoc => Boolean(g));
++  for (const [id, g] of Object.entries(p.groups ?? {})) if (g && !doc.groups.some((x) => x.id === id)) groups.push(g);
++  return { ...doc, items, groups };
++}
++export const isEmpty = (p: Patch) => !Object.keys(p.items).length && !Object.keys(p.groups ?? {}).length && !p.order;
++export type { EntryDoc, Id };
+diff --git a/app/src/lib/domain/actions/registry.ts b/app/src/lib/domain/actions/registry.ts
+new file mode 100644
+index 0000000..544f337
+--- /dev/null
++++ b/app/src/lib/domain/actions/registry.ts
+@@ -0,0 +1,20 @@
++// The action registry (design/14): every action is registered once and found by id; buttons, chat and recipes
++// list and run them from here.
++import type { ActionDef, ActionId } from './types';
++
++const defs = new Map<ActionId, ActionDef<never>>();
++export function register<O>(def: ActionDef<O>) { defs.set(def.id, def as unknown as ActionDef<never>); return def; }
++export function actionOf<O = Record<string, unknown>>(id: ActionId): ActionDef<O> | undefined { return defs.get(id) as unknown as ActionDef<O> | undefined; }
++export function allActions(): ActionDef[] { return [...defs.values()] as unknown as ActionDef[]; }
++
++/** options with their defaults filled, and bounds checked against the schema (a reason when out of range) */
++export function withDefaults<O>(def: ActionDef<O>, opts: Partial<O> = {}): { opts: O } | { error: string } {
++  const merged = { ...def.defaults, ...opts } as O;
++  for (const [k, spec] of Object.entries(def.schema.properties) as [string, { minimum?: number; maximum?: number; enum?: unknown[] }][]) {
++    const v = (merged as Record<string, unknown>)[k];
++    if (v === undefined) continue;
++    if (typeof v === 'number' && ((spec.minimum !== undefined && v < spec.minimum) || (spec.maximum !== undefined && v > spec.maximum))) return { error: `${k} must be between ${spec.minimum ?? '−∞'} and ${spec.maximum ?? '∞'}` };
++    if (spec.enum && !spec.enum.includes(v)) return { error: `${k} must be one of ${spec.enum.join(', ')}` };
++  }
++  return { opts: merged };
++}
+diff --git a/app/src/lib/domain/actions/resolve.ts b/app/src/lib/domain/actions/resolve.ts
+new file mode 100644
+index 0000000..cd1ce60
+--- /dev/null
++++ b/app/src/lib/domain/actions/resolve.ts
+@@ -0,0 +1,30 @@
++// What a request names → ids (design/14 §4). The chat, the buttons and recipes all resolve through here.
++import { layersOf } from '../craft';
++import type { CraftDoc, Id } from '../craft/types';
++import type { Ref, Scope } from './types';
++
++const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !['the', 'and', 'layer', 'layers', 'cut', 'left', 'right'].includes(w));
++
++/** parts (or items, for item actions) a list of refs names, back to front; `selected` is the screen's selection */
++export function resolve(doc: CraftDoc, refs: Ref[], scope: Scope, selected: Id[] = []): Id[] {
++  const layers = layersOf(doc), out: Id[] = [];
++  const add = (ids: Id[]) => { for (const id of ids) if (!out.includes(id)) out.push(id); };
++  const asScope = (partIds: Id[]) => (scope === 'part' ? partIds : [...new Set(partIds.map((pid) => layers.find((l) => l.part.id === pid)!.item.id))]);
++  for (const r of refs) {
++    if ('all' in r) add(scope === 'part' ? layers.map((l) => l.part.id) : doc.items.map((i) => i.id));
++    else if ('selected' in r) add(scope === 'part' ? selected.filter((id) => layers.some((l) => l.part.id === id)) : asScope(selected.filter((id) => layers.some((l) => l.part.id === id))).concat(selected.filter((id) => doc.items.some((i) => i.id === id))));
++    else if ('id' in r) add(doc.items.some((i) => i.id === r.id) ? (scope === 'item' ? [r.id] : doc.items.find((i) => i.id === r.id)!.parts.map((p) => p.id)) : asScope([r.id]));
++    else if ('n' in r) { const l = layers[r.n - 1]; if (l) add(asScope([l.part.id])); }
++    else if ('item' in r) { const t = r.item.toLowerCase(); const it = doc.items.filter((i) => i.name.toLowerCase() === t); const hit = it.length ? it : doc.items.filter((i) => words(i.name).length && words(i.name).every((w) => t.includes(w))); add(scope === 'item' ? hit.map((i) => i.id) : hit.flatMap((i) => i.parts.map((p) => p.id))); }
++    else if ('name' in r) {
++      const t = r.name.toLowerCase();
++      // a whole name said wins over shared words ("the swirl drop left"); shared words only when nothing matches whole
++      const whole = layers.filter((l) => t.includes(l.part.name.toLowerCase()) || t.includes(l.item.name.toLowerCase()));
++      const some = whole.length ? whole : layers.filter((l) => words(l.part.name).length && words(l.part.name).every((w) => t.includes(w)));
++      add(asScope(some.map((l) => l.part.id)));
++    }
++    else if ('role' in r) add(asScope(layers.filter((l) => l.part.ops.some((o) => o.kind === r.role)).map((l) => l.part.id)));
++    else if ('empty' in r) add(asScope(layers.filter((l) => Math.round(l.part.measured?.visiblePct ?? 1) <= 0).map((l) => l.part.id)));
++  }
++  return out;
++}
+diff --git a/app/src/lib/domain/craft/index.ts b/app/src/lib/domain/craft/index.ts
+new file mode 100644
+index 0000000..f55a4fd
+--- /dev/null
++++ b/app/src/lib/domain/craft/index.ts
+@@ -0,0 +1,67 @@
++// The craft tree's helpers (design/15 §1): the id index, the invariants, and tier picking. Pure.
++import type { CraftDoc, GroupDoc, Id, ItemDoc, OpDoc, PartDoc, Tier } from './types';
++import { TIER_PX } from './types';
++export * from './types';
++
++export type Node =
++  | { kind: 'item'; node: ItemDoc }
++  | { kind: 'part'; node: PartDoc; item: ItemDoc }
++  | { kind: 'op'; node: OpDoc; part: PartDoc; item: ItemDoc }
++  | { kind: 'group'; node: GroupDoc };
++
++/** every node by id (built once per change; lookups, the action resolver and validation use it) */
++export function indexCraft(doc: CraftDoc): Map<Id, Node> {
++  const m = new Map<Id, Node>();
++  for (const item of doc.items) {
++    m.set(item.id, { kind: 'item', node: item });
++    for (const part of item.parts) {
++      m.set(part.id, { kind: 'part', node: part, item });
++      for (const op of part.ops) m.set(op.id, { kind: 'op', node: op, part, item });
++    }
++  }
++  for (const g of doc.groups) m.set(g.id, { kind: 'group', node: g });
++  return m;
++}
++
++/** what is wrong with a doc (empty = valid): duplicate ids, links to nothing, joins across items */
++export function validate(doc: CraftDoc): string[] {
++  const errs: string[] = [], seen = new Set<Id>();
++  const see = (id: Id, what: string) => { if (seen.has(id)) errs.push(`duplicate id ${id} (${what})`); seen.add(id); };
++  for (const item of doc.items) {
++    see(item.id, 'item');
++    const parts = new Set(item.parts.map((p) => p.id));
++    for (const part of item.parts) { see(part.id, 'part'); for (const op of part.ops) see(op.id, 'op'); }
++    for (const j of item.joins) { see(j.id, 'join'); if (!parts.has(j.a) || !parts.has(j.b)) errs.push(`join ${j.id} links a part outside ${item.name}`); }
++  }
++  const items = new Set(doc.items.map((i) => i.id));
++  for (const g of doc.groups) { see(g.id, 'group'); for (const i of g.items) if (!items.has(i)) errs.push(`group ${g.name} lists a missing item ${i}`); }
++  return errs;
++}
++
++/** drop the links to anything removed (run after every change, so no link points at nothing) */
++export function prune(doc: CraftDoc): CraftDoc {
++  const items = new Set(doc.items.map((i) => i.id));
++  const groups = doc.groups.map((g) => ({ ...g, items: g.items.filter((i) => items.has(i)) })).filter((g) => g.items.length > (g.kind === 'pair' ? 1 : 0));
++  const out = doc.items.map((item) => {
++    const parts = new Set(item.parts.map((p) => p.id));
++    const joins = item.joins.filter((j) => parts.has(j.a) && parts.has(j.b));
++    return joins.length === item.joins.length ? item : { ...item, joins };
++  });
++  return { ...doc, items: out, groups };
++}
++
++/** the tier an item needs: from its real size (the finer the item, the more px per mm it gets) */
++export function tierFor(longMm: number): Tier {
++  return longMm <= 60 ? 'S' : longMm <= 200 ? 'M' : longMm <= 400 ? 'L' : 'XL';
++}
++/** a frame's px size: the long edge is the tier, the short edge keeps the item's own proportions */
++export function frameSize(tier: Tier, wMm: number, hMm: number): [number, number] {
++  const long = TIER_PX[tier], r = wMm > 0 && hMm > 0 ? Math.min(wMm, hMm) / Math.max(wMm, hMm) : 1;
++  const short = Math.max(1, Math.round(long * r));
++  return wMm >= hMm ? [long, short] : [short, long];
++}
++
++/** the parts as the screen lists its "layers": items in order, each item's parts back to front */
++export function layersOf(doc: CraftDoc): { item: ItemDoc; part: PartDoc }[] {
++  return doc.items.flatMap((item) => [...item.parts].sort((a, b) => a.z - b.z).map((part) => ({ item, part })));
++}
+diff --git a/app/src/lib/domain/craft/migrate.spec.ts b/app/src/lib/domain/craft/migrate.spec.ts
+new file mode 100644
+index 0000000..14840fa
+--- /dev/null
++++ b/app/src/lib/domain/craft/migrate.spec.ts
+@@ -0,0 +1,96 @@
++import { describe, expect, it } from 'vitest';
++import { migrateV1, type V1Snapshot } from './migrate';
++import { indexCraft, layersOf, prune, tierFor, frameSize, validate } from './index';
++import { bbox } from '../geo';
++
++const ids = () => { let k = 0; return () => `id${++k}`; };
++const project = { id: 'c1', name: 'Test', createdAt: 1, updatedAt: 2, kind: 'flat' };
++const rect = (x: number, y: number, w: number, h: number): [number, number][] => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
++const L = (n: number, name: string, regionId: string, extra: Partial<NonNullable<V1Snapshot['stack']>[number]> = {}) => ({ n, name, colour: '#C89B6A', material: 'cardstock', visiblePct: 20, hiddenPct: 5, regionId, ...extra });
++
++describe('v1 → v2 migration', () => {
++  it('the cat: one item, four parts back to front, each a cut of its whole sheet', () => {
++    const snap: V1Snapshot = { subject: 'black cat wall art', build: 'stacked', aspect: 1, widthMm: 400,
++      regionList: [0, 1, 2, 3].map((i) => ({ id: `r${i}`, name: `R${i}`, paths: [rect(100 + i * 20, 100 + i * 20, 400, 400)], cutPaths: [rect(100, 100, 600, 600)] })),
++      stack: ['Gold Backer', 'Black Cat', 'Red Leaf', 'White Petals'].map((n, i) => L(i + 1, n, `r${i}`)) };
++    const d = migrateV1(project, snap, ids());
++    expect(validate(d)).toEqual([]);
++    expect(d.kind).toBe('layered');
++    expect(d.items).toHaveLength(1);
++    expect(d.items[0].parts.map((p) => [p.name, p.z, p.ops.map((o) => o.kind)])).toEqual([['Gold Backer', 0, ['cut']], ['Black Cat', 1, ['cut']], ['Red Leaf', 2, ['cut']], ['White Petals', 3, ['cut']]]);
++    // 600 photo units of a 400 mm wide photo = 240 mm → tier L; the frame covers the art at 1024 px
++    expect(d.items[0].frame.tier).toBe('L');
++    expect(d.items[0].frame.size).toEqual([1024, 1024]);
++    expect(d.items[0].frame.pxPerMm).toBeCloseTo(1024 / 240, 3);
++    // stacked: every layer's sheet is its whole outline (what shows + what sits under the layers in front)
++    expect(bbox(d.items[0].parts[2].ops[0].geometry)).toEqual({ x: 0, y: 0, w: 1024, h: 1024 });
++    expect(d.items[0].parts[1].measured).toEqual({ visiblePct: 20, hiddenPct: 5 });
++  });
++  it('bookmarks: one item each; the cut (with its holes) and the engraving are one part, engraving first; turned upright', () => {
++    const tilted: [number, number][] = [[100, 100], [200, 80], [300, 700], [200, 720]];
++    const snap: V1Snapshot = { aspect: 1.25, widthMm: 300,
++      regionList: [{ id: 'a', name: 'Fox', paths: [tilted], holes: [rect(180, 300, 40, 40)] }, { id: 'a-e', name: 'Fox eng', paths: [rect(190, 400, 20, 20)] }, { id: 'b', name: 'Owl', paths: [rect(600, 100, 100, 600)] }],
++      stack: [L(1, 'Fox bookmark · cut', 'a', { itemName: 'Fox bookmark', role: 'cut', material: '3 mm birch' }), L(2, 'Fox bookmark · engraving', 'a-e', { itemName: 'Fox bookmark', role: 'engrave' }), L(3, 'Owl bookmark · cut', 'b', { itemName: 'Owl bookmark', role: 'cut' })] };
++    const d = migrateV1(project, snap, ids());
++    expect(validate(d)).toEqual([]);
++    expect(d.kind).toBe('items');
++    expect(d.items.map((i) => [i.name, i.parts.length, i.parts[0].ops.map((o) => o.kind)])).toEqual([['Fox bookmark', 1, ['engrave', 'cut']], ['Owl bookmark', 1, ['cut']]]);
++    const fox = d.items[0];
++    expect(fox.parts[0].name).toBe('Fox bookmark');
++    expect(fox.parts[0].material).toBe('3 mm birch');
++    // the cut keeps its hole (2 loops), the frame is the bookmark's own box at tier M
++    expect(fox.parts[0].ops[1].geometry.paths).toHaveLength(2);
++    expect(fox.frame.tier).toBe('M');
++    expect(Math.max(...fox.frame.size)).toBe(512);
++    expect(Math.abs(fox.frame.fromSource.rotateDeg)).toBeGreaterThan(5);
++    expect(d.items[1].frame.fromSource.rotateDeg).toBe(0);
++  });
++  it('earrings: left and right of the same design become a pair (cut together)', () => {
++    const names = ['Swirl drop left', 'Swirl drop right', 'Mandala circle left', 'Mandala circle right', 'Leaf'];
++    const snap: V1Snapshot = { aspect: 1, widthMm: 400, regionList: names.map((n, i) => ({ id: `r${i}`, name: n, paths: [rect(50 + i * 150, 100, 100, 150)] })), stack: names.map((n, i) => L(i + 1, `${n} · cut`, `r${i}`, { itemName: n, role: 'cut' })) };
++    const d = migrateV1(project, snap, ids());
++    expect(d.groups.map((g) => [g.name, g.kind, g.items.map((id) => d.items.find((i) => i.id === id)!.name)])).toEqual([['Swirl drop', 'pair', ['Swirl drop left', 'Swirl drop right']], ['Mandala circle', 'pair', ['Mandala circle left', 'Mandala circle right']]]);
++    expect(d.items[0].frame.tier).toBe('S');
++    expect(validate(d)).toEqual([]);
++    // removing an earring drops its pair (a pair of one is no pair)
++    const pruned = prune({ ...d, items: d.items.filter((i) => i.name !== 'Swirl drop right') });
++    expect(pruned.groups.map((g) => g.name)).toEqual(['Mandala circle']);
++  });
++  it('the castle kit: one item whose parts are the layout sheets (engraving + cut), in mm × px', () => {
++    const sheet = (name: string) => ({ name, cut: [rect(10, 10, 100, 50)], engrave: [rect(20, 20, 10, 10)], sizeMm: [300, 300] as [number, number] });
++    const snap: V1Snapshot = { subject: 'castle kit', plan: [sheet('A1'), sheet('A2')], stack: [L(1, 'A1 · engrave', '', { planSheet: 0, role: 'engrave' }), L(2, 'A1 · cut', '', { planSheet: 0, role: 'cut', material: '3 mm ply' })] };
++    const d = migrateV1(project, snap, ids());
++    expect(d.kind).toBe('3d');
++    expect(d.items[0].parts.map((p) => [p.name, p.ops.map((o) => o.kind)])).toEqual([['Sheet A1', ['engrave', 'cut']], ['Sheet A2', ['engrave', 'cut']]]);
++    expect(d.items[0].frame.pxPerMm).toBeCloseTo(2048 / 300, 3);
++    expect(bbox(d.items[0].parts[0].ops[1].geometry)!.w).toBeCloseTo(100 * (2048 / 300), 1);
++    expect(d.sources.map((s) => s.kind)).toEqual(['photo', 'kit-layout']);
++  });
++  it('an empty craft migrates to no items', () => {
++    expect(migrateV1(project, {}, ids()).items).toEqual([]);
++  });
++});
++
++describe('the tree helpers', () => {
++  it('index, layers in display order, tiers and frame sizes', () => {
++    const snap: V1Snapshot = { aspect: 1, widthMm: 100, regionList: [{ id: 'r', name: 'R', paths: [rect(0, 0, 500, 1000)] }], stack: [L(1, 'Only', 'r')] };
++    const d = migrateV1(project, snap, ids());
++    const ix = indexCraft(d);
++    const part = d.items[0].parts[0];
++    expect(ix.get(part.id)?.kind).toBe('part');
++    expect(ix.get(part.ops[0].id)).toMatchObject({ kind: 'op', part: { id: part.id } });
++    expect(layersOf(d).map((l) => l.part.name)).toEqual(['Only']);
++    expect([tierFor(40), tierFor(150), tierFor(300), tierFor(900)]).toEqual(['S', 'M', 'L', 'XL']);
++    expect(frameSize('M', 50, 180)).toEqual([142, 512]);
++    expect(frameSize('S', 60, 60)).toEqual([256, 256]);
++  });
++  it('validate reports duplicates, dangling groups and joins across items', () => {
++    const snap: V1Snapshot = { aspect: 1, widthMm: 300, regionList: [{ id: 'a', name: 'A', paths: [rect(0, 0, 100, 100)] }, { id: 'b', name: 'B', paths: [rect(200, 0, 100, 100)] }], stack: [L(1, 'A', 'a', { itemName: 'A' }), L(2, 'B', 'b', { itemName: 'B' })] };
++    const d = migrateV1(project, snap, ids());
++    const bad = { ...d, groups: [{ id: 'g', name: 'G', kind: 'set' as const, items: ['nope'], rule: 'none' as const }], items: [{ ...d.items[0], joins: [{ id: 'j', a: d.items[0].parts[0].id, b: d.items[1].parts[0].id, type: 'tab' as const }] }, { ...d.items[1], id: d.items[0].id }] };
++    const errs = validate(bad);
++    expect(errs.some((e) => e.startsWith('duplicate id'))).toBe(true);
++    expect(errs.some((e) => e.includes('missing item'))).toBe(true);
++    expect(errs.some((e) => e.includes('outside'))).toBe(true);
++  });
++});
+diff --git a/app/src/lib/domain/craft/migrate.ts b/app/src/lib/domain/craft/migrate.ts
+new file mode 100644
+index 0000000..8d0c140
+--- /dev/null
++++ b/app/src/lib/domain/craft/migrate.ts
+@@ -0,0 +1,92 @@
++// v1 → v2 (design/15 §4): today's saved craft (LayerFlowState's snapshot + the project record) becomes the tree.
++// Layers that share an item become one item; an item's cut layer and its engraving become one part with two ops;
++// stacked layers become parts by z; a kit layout's sheets become the parts of one kit item. Old crafts open as
++// they were: the geometry is the same, only re-homed (0-1000 photo units → each item's frame px).
++import { fromLoops } from '../geo';
++import { toMm, uprightTurn, type Pt } from '../toolpath';
++import type { CraftDoc, GroupDoc, Id, ItemDoc, OpDoc, PartDoc } from './types';
++import { frameSize, tierFor } from './index';
++
++type Loops = [number, number][][];
++/** the parts of a v1 snapshot this migration reads (everything else is the workflow's, not the craft's) */
++export interface V1Snapshot {
++  subject?: string;
++  build?: 'stacked' | 'inlay' | 'engrave';
++  aspect?: number; widthMm?: number; sizeBasis?: string;
++  stack?: { n: number; name: string; colour: string; material: string; visiblePct: number; hiddenPct: number; regionId?: string; itemName?: string; role?: 'cut' | 'engrave'; tune?: { detail: number; weight: number }; planSheet?: number }[];
++  regionList?: { id: string; name: string; paths?: Loops; cutPaths?: Loops; holes?: Loops; colour?: string }[];
++  plan?: { name: string; cut: Loops; engrave: Loops; sizeMm: [number, number] }[];
++}
++export interface V1Project { id: string; name: string; createdAt: number; updatedAt: number; kind: string }
++
++const strip = (name: string) => name.replace(/\s*·\s*(cut|engrave|engraving)$/i, '').trim() || name;
++
++export function migrateV1(project: V1Project, snap: V1Snapshot, newId: () => Id): CraftDoc {
++  const aspect = snap.aspect && snap.aspect > 0 ? snap.aspect : 1, widthMm = snap.widthMm && snap.widthMm > 0 ? snap.widthMm : 300;
++  const stack = snap.stack ?? [], regions = new Map((snap.regionList ?? []).map((r) => [r.id, r]));
++  const source = { id: 'src-0', kind: 'photo' as const, w: 1000, h: Math.round(1000 / aspect) };
++  const op = (kind: OpDoc['kind'], loops: Loops): OpDoc => ({ id: newId(), kind, geometry: fromLoops(loops) });
++  const base = { v: 2 as const, id: project.id, name: project.name, createdAt: project.createdAt, updatedAt: project.updatedAt, rev: 0, groups: [] as GroupDoc[], history: { done: [], undone: [] } };
++
++  // a kit: its layout's sheets are the parts of one item (mm on 300 mm sheets → the frame at XL)
++  if (snap.plan?.length) {
++    const [sw, sh] = snap.plan[0].sizeMm, size = frameSize('XL', sw, sh), k = size[0] / sw;
++    const px = (loops: Loops): Loops => loops.map((l) => l.map(([x, y]) => [x * k, y * k] as [number, number]));
++    const parts: PartDoc[] = snap.plan.map((s, i) => ({ id: newId(), name: `Sheet ${s.name}`, z: i, material: stack.find((l) => l.planSheet === i)?.material ?? '3 mm ply', colour: stack.find((l) => l.planSheet === i && l.role === 'cut')?.colour ?? '#C89B6A',
++      ops: [...(s.engrave.length ? [op('engrave', px(s.engrave))] : []), op('cut', px(s.cut))] }));
++    const item: ItemDoc = { id: newId(), name: snap.subject || project.name || 'Kit', build: 'assembly', frame: { tier: 'XL', size, fromSource: { sourceId: 'src-kit', box: { x: 0, y: 0, w: 1000, h: 1000 }, rotateDeg: 0 }, pxPerMm: k }, parts, joins: [] };
++    return { ...base, kind: '3d', items: [item], sources: [source, { id: 'src-kit', kind: 'kit-layout', w: 1000, h: 1000 }] };
++  }
++
++  const loopsOf = (l: (typeof stack)[number], index: number, kind: 'cut' | 'engrave'): Loops => {
++    const r = l.regionId ? regions.get(l.regionId) : undefined;
++    if (!r) return [];
++    const whole = r.cutPaths?.length ? r.cutPaths : r.paths ?? [];
++    if (l.role) return kind === 'cut' ? [...whole, ...(r.holes ?? [])] : r.paths ?? [];
++    // one-piece art (design/10 §Build): stacked = the whole sheet; the back layer is always the whole outline
++    return snap.build === 'stacked' || index === 0 || !snap.build ? whole : r.paths ?? [];
++  };
++  const names = [...new Set(stack.map((l) => l.itemName).filter(Boolean))] as string[];
++  // a frame for photo loops inside `box` (0-1000 units): crop, turn, px per mm from the real size
++  const frameFor = (box: { x: number; y: number; w: number; h: number }, rotateDeg: number) => {
++    const wMm = (box.w / 1000) * widthMm, hMm = (box.h / 1000) * (widthMm / aspect);
++    const tier = tierFor(Math.max(wMm, hMm)), size = frameSize(tier, wMm, hMm);
++    return { frame: { tier, size, fromSource: { sourceId: source.id, box, rotateDeg }, pxPerMm: Math.max(...size) / Math.max(wMm, hMm, 1e-6) },
++      toFrame: (loops: Loops): Loops => loops.map((l) => l.map(([x, y]) => [((x - box.x) / box.w) * size[0], ((y - box.y) / box.h) * size[1]] as [number, number])) };
++  };
++  const bounds = (loops: Loops) => { const pts = loops.flat(); if (!pts.length) return { x: 0, y: 0, w: 1000, h: 1000 }; const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]); const x = Math.min(...xs), y = Math.min(...ys); return { x, y, w: Math.max(1, Math.max(...xs) - x), h: Math.max(1, Math.max(...ys) - y) }; };
++  const measured = (l: (typeof stack)[number]) => ({ visiblePct: l.visiblePct, hiddenPct: l.hiddenPct, ...(l.tune ? { tune: l.tune } : {}) });
++
++  // separate items (bookmarks, earrings): one item each; its cut layer and engravings → one part
++  if (names.length > 1) {
++    const items: ItemDoc[] = names.map((name) => {
++      const own = stack.map((l, i) => ({ l, i })).filter(({ l }) => l.itemName === name);
++      const cut = own.find(({ l }) => l.role !== 'engrave') ?? own[0];
++      const cutLoops = loopsOf(cut.l, cut.i, 'cut');
++      const { turn } = cutLoops.length ? uprightTurn(toMm(cutLoops as Pt[][], widthMm, aspect)) : { turn: 0 };
++      const { frame, toFrame } = frameFor(bounds(cutLoops), turn);
++      const ops = [...own.filter(({ l }) => l.role === 'engrave').map(({ l, i }) => op('engrave', toFrame(loopsOf(l, i, 'engrave')))), op('cut', toFrame(cutLoops))].filter((o) => o.geometry.paths.length);
++      const part: PartDoc = { id: newId(), name: strip(cut.l.name), z: 0, material: cut.l.material, colour: cut.l.colour, ops, measured: measured(cut.l), ...(cut.l.regionId ? { regionId: cut.l.regionId } : {}) };
++      return { id: newId(), name, build: 'single' as const, frame, parts: [part], joins: [] };
++    });
++    // left / right of the same design are a pair (cut together)
++    const groups: GroupDoc[] = [];
++    const pairKey = (n: string) => n.toLowerCase().replace(/\b(left|right)\b/g, '').replace(/\s+/g, ' ').trim();
++    for (const it of items) {
++      if (!/\b(left|right)\b/i.test(it.name) || groups.some((g) => g.items.includes(it.id))) continue;
++      const mate = items.find((o) => o !== it && /\b(left|right)\b/i.test(o.name) && pairKey(o.name) === pairKey(it.name) && !groups.some((g) => g.items.includes(o.id)));
++      if (mate) groups.push({ id: newId(), name: strip(it.name.replace(/\b(left|right)\b/i, '').trim()), kind: 'pair', items: [it.id, mate.id], rule: 'same-sheet' });
++    }
++    return { ...base, kind: 'items', items, groups, sources: [source] };
++  }
++
++  // one piece (layered art): one item over the whole photo; each layer a part, back to front
++  const all = stack.flatMap((l, i) => loopsOf(l, i, 'cut'));
++  const { frame, toFrame } = frameFor(all.length ? bounds(all) : { x: 0, y: 0, w: 1000, h: 1000 }, 0);
++  const parts: PartDoc[] = stack.map((l, i) => {
++    const kind = l.role ?? (snap.build === 'engrave' && i > 0 ? 'engrave' : 'cut');
++    return { id: newId(), name: strip(l.name), z: i, material: l.material, colour: l.colour, ops: [op(kind, toFrame(loopsOf(l, i, kind)))], measured: measured(l), ...(l.regionId ? { regionId: l.regionId } : {}) };
++  });
++  const item: ItemDoc = { id: newId(), name: snap.subject || project.name || 'Craft', build: snap.build ?? 'stacked', frame, parts, joins: [] };
++  return { ...base, kind: 'layered', items: stack.length ? [item] : [], sources: [source] };
++}
+diff --git a/app/src/lib/state/craft/actions.spec.ts b/app/src/lib/state/craft/actions.spec.ts
+new file mode 100644
+index 0000000..28b6059
+--- /dev/null
++++ b/app/src/lib/state/craft/actions.spec.ts
+@@ -0,0 +1,86 @@
++import { describe, expect, it } from 'vitest';
++import { CraftState } from './craft.svelte';
++import { ActionState } from './actions.svelte';
++import { migrateV1 } from '../../domain/craft/migrate';
++import type { CraftDoc } from '../../domain/craft/types';
++
++const rect = (x: number, y: number, w: number, h: number): [number, number][] => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
++let k = 0;
++const ctx = () => ({ newId: () => `n${++k}`, pixels: async () => null });
++const earrings = (): CraftDoc => {
++  const names = ['Swirl drop left', 'Swirl drop right', 'Leaf'];
++  return migrateV1({ id: 'e', name: 'Earrings', createdAt: 1, updatedAt: 1, kind: 'flat' }, {
++    aspect: 1, widthMm: 400,
++    regionList: names.flatMap((n, i) => [{ id: `r${i}`, name: n, paths: [rect(50 + i * 300, 100, 100, 150)] }, { id: `r${i}e`, name: `${n} e`, paths: [rect(70 + i * 300, 150, 20, 20)] }]),
++    stack: names.flatMap((n, i) => [
++      { n: 0, name: `${n} · cut`, colour: '#C89B6A', material: 'birch', visiblePct: 3, hiddenPct: 0, regionId: `r${i}`, itemName: n, role: 'cut' as const },
++      { n: 0, name: `${n} · engraving`, colour: '#5A3A22', material: 'birch', visiblePct: i === 2 ? 0 : 1, hiddenPct: 0, regionId: `r${i}e`, itemName: n, role: 'engrave' as const }])
++  }, () => `m${++k}`);
++};
++const setup = () => { const c = new CraftState(() => 1); c.load(earrings()); const log: string[] = []; const a = new ActionState(c, ctx, { done: (_k, t) => log.push(t), fail: (_k, t) => log.push(`✗ ${t}`) }); return { c, a, log }; };
++const cat = (): CraftDoc => migrateV1({ id: 'c', name: 'Cat', createdAt: 1, updatedAt: 1, kind: 'flat' }, {
++  build: 'stacked', aspect: 1, widthMm: 300, regionList: [0, 1, 2, 3].map((i) => ({ id: `r${i}`, name: `R${i}`, paths: [rect(100 + i * 50, 100, 300, 300)] })),
++  stack: ['Gold', 'Black', 'Red', 'White'].map((n, i) => ({ n: i + 1, name: n, colour: '#000000', material: 'card', visiblePct: 10, hiddenPct: 0, regionId: `r${i}` }))
++}, () => `m${++k}`);
++
++describe('ActionState', () => {
++  it('merge by number, undo, redo — the doc comes back exactly', async () => {
++    const c = new CraftState(() => 1); c.load(cat()); const a = new ActionState(c, ctx);
++    const before = JSON.stringify(c.toJSON().items);
++    const r = await a.perform('merge', [{ n: 2 }, { n: 3 }]);
++    expect(r.ok).toBe(true);
++    expect(c.layers.map((l) => l.name)).toEqual(['Gold', 'Black + Red', 'White']);
++    expect(c.layers.map((l) => l.z)).toEqual([0, 1, 2]);
++    expect(a.canUndo).toBe(true);
++    a.undo();
++    expect(JSON.stringify(c.toJSON().items)).toBe(before);
++    a.redo();
++    expect(c.layers.map((l) => l.name)).toEqual(['Gold', 'Black + Red', 'White']);
++    expect(a.redo()).toBeNull();
++  });
++  it('delete the empty layers; a merge across items lands in the frontmost item; deleting a whole item drops its pair', async () => {
++    const { c, a, log } = setup();
++    expect(c.layers).toHaveLength(3);
++    // the earrings' engravings are ops of their parts: "delete the swirl drop right" removes that earring
++    expect(c.groups).toHaveLength(1);
++    await a.perform('delete', [{ name: 'the swirl drop right' }]);
++    expect(c.items.map((i) => i.name)).toEqual(['Swirl drop left', 'Leaf']);
++    expect(c.groups).toEqual([]);
++    expect(log.at(-1)).toBe('Deleted Swirl drop right');
++    a.undo();
++    expect(c.groups).toHaveLength(1);
++    expect(c.items).toHaveLength(3);
++  });
++  it('several actions as one group: one undo puts everything back; refusals say why and change nothing', async () => {
++    const c = new CraftState(() => 1); c.load(cat()); const log: string[] = []; const a = new ActionState(c, ctx, { done: (_k, t) => log.push(t), fail: (_k, t) => log.push(`✗ ${t}`) });
++    const r = await a.performAll([{ action: 'merge', refs: [{ n: 3 }, { n: 4 }] }, { action: 'rename', refs: [{ n: 3 }], opts: { name: 'Front' } }, { action: 'reorder', refs: [{ n: 1 }], opts: { to: 'front' } }]);
++    expect(r.ok).toBe(true);
++    expect(c.layers.map((l) => l.name)).toEqual(['Black', 'Front', 'Gold']);
++    expect(a.done).toHaveLength(1);
++    expect(a.done[0].children).toHaveLength(3);
++    a.undo();
++    expect(c.layers.map((l) => l.name)).toEqual(['Gold', 'Black', 'Red', 'White']);
++    expect((await a.perform('merge', [{ n: 1 }])).ok).toBe(false);
++    expect(log.at(-1)).toBe('✗ Pick two or more layers to merge');
++    expect((await a.perform('reorder', [{ n: 1 }], { to: 'sideways' })).ok).toBe(false);
++    expect((await a.perform('nope' as never, [])).ok).toBe(false);
++    expect(a.done).toHaveLength(0);
++  });
++  it('again repeats the last action on new targets; duplicate, recolour, set-role, group / ungroup', async () => {
++    const { c, a } = setup();
++    await a.perform('recolour', [{ item: 'Leaf' }], { colour: '#112233' });
++    await a.again([{ item: 'Swirl drop left' }]);
++    expect(c.items[0].parts[0].colour).toBe('#112233');
++    await a.perform('set-role', [{ item: 'Leaf' }], { role: 'engrave' });
++    expect(c.items[2].parts[0].role).toBe('engrave');
++    await a.perform('ungroup', [{ item: 'Swirl drop left' }]);
++    expect(c.groups).toEqual([]);
++    await a.perform('group', [{ item: 'Swirl drop left' }, { item: 'Leaf' }], { kind: 'pair' });
++    expect(c.groups[0].kind).toBe('pair');
++    await a.perform('duplicate', [{ n: 1 }]);
++    expect(c.items[0].parts.map((p) => p.name)).toEqual(['Swirl drop left', 'Swirl drop left copy']);
++    expect(a.selected).toEqual([c.items[0].parts[1].id]);
++    // the history travels with the doc (saved with the craft)
++    expect(c.toJSON().history.done.length).toBe(6);
++  });
++});
+diff --git a/app/src/lib/state/craft/actions.svelte.ts b/app/src/lib/state/craft/actions.svelte.ts
+new file mode 100644
+index 0000000..a10cbdf
+--- /dev/null
++++ b/app/src/lib/state/craft/actions.svelte.ts
+@@ -0,0 +1,92 @@
++// One way to run an action (design/14 §5): resolve → check → run → record → apply → narrate. The chat, the
++// buttons and the automatic passes all come through here, so everything is undoable the same way.
++import { actionOf, withDefaults } from '../../domain/actions/registry';
++import { resolve } from '../../domain/actions/resolve';
++import { applyPatch, applyResult, diff, isEmpty } from '../../domain/actions/history';
++import type { ActionCtx, ActionId, Ref } from '../../domain/actions/types';
++import type { CraftDoc, EntryDoc, Id } from '../../domain/craft/types';
++import { registerAll } from '../../domain/actions/defs';
++import { prune } from '../../domain/craft';
++import type { CraftState } from './craft.svelte';
++
++/** how a step is said in the chat (the conversation passes these in; tests pass nothing) */
++export interface Narrator {
++  think?(key: string, title: string): void;
++  done?(key: string, title: string, detail?: string): void;
++  fail?(key: string, title: string, detail?: string): void;
++}
++export interface Call { action: ActionId; refs: Ref[]; opts?: Record<string, unknown> }
++export type Outcome = { ok: true; entry: EntryDoc } | { ok: false; reason: string };
++const KEEP = 50;
++
++export class ActionState {
++  /** what the screen has selected (for { selected: true }) */
++  selected = $state<Id[]>([]);
++  constructor(private craft: CraftState, private ctx: () => ActionCtx, private say: Narrator = {}) { registerAll(); }
++
++  get done() { return this.craft.doc.history.done; }
++  get undone() { return this.craft.doc.history.undone; }
++  get canUndo() { return this.done.length > 0; }
++  get canRedo() { return this.undone.length > 0; }
++  get lastLabel() { return this.done.at(-1)?.summary; }
++
++  /** one action */
++  perform(action: ActionId, refs: Ref[], opts: Record<string, unknown> = {}, via: EntryDoc['via'] = 'button'): Promise<Outcome> {
++    return this.performAll([{ action, refs, opts }], via);
++  }
++  /** several actions as one undoable step (a chat request, a recipe) — design/14 §5 groups */
++  async performAll(calls: Call[], via: EntryDoc['via'] = 'chat', summary?: string): Promise<Outcome> {
++    const start = this.craft.toJSON();
++    let doc: CraftDoc = start;
++    const children: EntryDoc[] = [], key = `act:${this.done.length}:${calls.map((c) => c.action).join('+')}`;
++    for (const c of calls) {
++      const def = actionOf(c.action);
++      if (!def) return this.refuse(key, `I don’t know how to ${c.action} yet`);
++      const o = withDefaults(def, c.opts as never);
++      if ('error' in o) return this.refuse(key, `Can’t ${def.label.toLowerCase()}: ${o.error}`);
++      const targets = resolve(doc, c.refs, def.scope, this.selected);
++      const input = { targets, opts: o.opts };
++      const ok = def.can(doc, input);
++      if (ok !== true) return this.refuse(key, ok);
++      this.say.think?.(key, `${def.label}…`);
++      let r;
++      try { r = await def.run(doc, input, this.ctx()); }
++      catch (e) { return this.refuse(key, `${def.label} failed`, e instanceof Error ? e.message : String(e)); }
++      // links to anything removed go in the same step, so undo puts them back too
++      const next = prune(applyResult(doc, r)), d = diff(doc, next);
++      children.push({ id: this.ctx().newId(), action: c.action, opts: o.opts, targets, via, summary: r.summary, at: Date.now(), before: d.before, after: d.after });
++      doc = next;
++      if (r.select) this.selected = r.select;
++    }
++    const whole = diff(start, doc);
++    if (isEmpty(whole.after)) { this.say.done?.(key, children.at(-1)?.summary ?? 'Nothing changed', 'nothing to change'); return { ok: true, entry: children.at(-1)! }; }
++    const entry: EntryDoc = children.length === 1 ? children[0] : { id: this.ctx().newId(), action: children.map((c) => c.action).join('+'), opts: {}, targets: children.flatMap((c) => c.targets), via, summary: summary ?? children.map((c) => c.summary).join(' · '), at: Date.now(), before: whole.before, after: whole.after, children };
++    this.craft.commit({ ...doc, history: { done: [...start.history.done, entry].slice(-KEEP), undone: [] } });
++    this.say.done?.(key, entry.summary, children.length > 1 ? `${children.length} steps · one undo` : undefined);
++    return { ok: true, entry };
++  }
++  /** put back what the last step changed */
++  undo(): EntryDoc | null {
++    const d = this.craft.toJSON(), e = d.history.done.at(-1);
++    if (!e) { this.say.done?.('undo', 'Nothing to undo'); return null; }
++    this.craft.commit({ ...applyPatch(d, e.before), history: { done: d.history.done.slice(0, -1), undone: [...d.history.undone, e] } });
++    this.say.done?.(`undo:${e.id}`, `Undone: ${e.summary}`, this.canRedo ? 'say “redo” to bring it back' : undefined);
++    return e;
++  }
++  /** bring back what Undo took away — the stored result, never re-run (a model's result comes back as it was) */
++  redo(): EntryDoc | null {
++    const d = this.craft.toJSON(), e = d.history.undone.at(-1);
++    if (!e) { this.say.done?.('redo', 'Nothing to redo'); return null; }
++    this.craft.commit({ ...applyPatch(d, e.after), history: { done: [...d.history.done, e], undone: d.history.undone.slice(0, -1) } });
++    this.say.done?.(`redo:${e.id}`, `Redone: ${e.summary}`);
++    return e;
++  }
++  /** the last action again, with its options — on new targets, or the same ones */
++  again(refs?: Ref[]): Promise<Outcome> {
++    const e = this.done.at(-1);
++    if (!e) return Promise.resolve(this.refuse('again', 'Nothing to repeat yet'));
++    const last = e.children?.at(-1) ?? e;
++    return this.perform(last.action as ActionId, refs ?? last.targets.map((id) => ({ id })), last.opts as Record<string, unknown>, 'chat');
++  }
++  private refuse(key: string, reason: string, detail?: string): Outcome { this.say.fail?.(key, reason, detail); return { ok: false, reason }; }
++}
+diff --git a/app/src/lib/state/craft/craft.spec.ts b/app/src/lib/state/craft/craft.spec.ts
+new file mode 100644
+index 0000000..8eacddd
+--- /dev/null
++++ b/app/src/lib/state/craft/craft.spec.ts
+@@ -0,0 +1,61 @@
++import { describe, expect, it } from 'vitest';
++import { CraftState } from './craft.svelte';
++import { LocalRepository } from './repository';
++import { MemoryStorage, ProjectStore } from '../project.svelte';
++import { migrateV1 } from '../../domain/craft/migrate';
++
++const rect = (x: number, y: number, w: number, h: number): [number, number][] => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
++const bookmarks = () => migrateV1({ id: 'c1', name: 'Bookmarks', createdAt: 1, updatedAt: 1, kind: 'flat' }, {
++  aspect: 1, widthMm: 300,
++  regionList: [{ id: 'a', name: 'A', paths: [rect(100, 100, 100, 600)] }, { id: 'a-e', name: 'Ae', paths: [rect(120, 300, 20, 20)] }, { id: 'b', name: 'B', paths: [rect(500, 100, 100, 600)] }],
++  stack: [
++    { n: 1, name: 'Fox · cut', colour: '#C89B6A', material: 'birch', visiblePct: 9, hiddenPct: 0, regionId: 'a', itemName: 'Fox', role: 'cut' },
++    { n: 2, name: 'Fox · engraving', colour: '#5A3A22', material: 'birch', visiblePct: 1, hiddenPct: 0, regionId: 'a-e', itemName: 'Fox', role: 'engrave' },
++    { n: 3, name: 'Owl · cut', colour: '#C89B6A', material: 'birch', visiblePct: 9, hiddenPct: 0, regionId: 'b', itemName: 'Owl', role: 'cut' }
++  ]
++}, (() => { let k = 0; return () => `id${++k}`; })());
++
++describe('CraftState', () => {
++  it('reads the tree: items, their parts as layers, sizes in mm, roles', () => {
++    const c = new CraftState(() => 100);
++    c.load(bookmarks());
++    expect(c.items.map((i) => i.name)).toEqual(['Fox', 'Owl']);
++    expect(c.layers.map((p) => [p.name, p.role, p.engravings.length])).toEqual([['Fox', 'cut', 1], ['Owl', 'cut', 0]]);
++    expect(c.separateItems).toBe(true);
++    const fox = c.items[0];
++    // 100 × 600 photo units of a 300 mm photo = 30 × 180 mm
++    expect(fox.sizeMm.hMm).toBeCloseTo(180, 0);
++    expect(fox.sizeMm.wMm).toBeCloseTo(30, 0);
++    expect(fox.parts[0].item).toBe(fox);
++    expect(fox.parts[0].boundsMm!.h).toBeCloseTo(180, 0);
++    expect(c.item(fox.id)).toBe(fox);
++    expect(c.part('nope')).toBeUndefined();
++  });
++  it('commit prunes links, moves the rev and time on; toJSON is the plain doc', () => {
++    const c = new CraftState(() => 500);
++    c.load(bookmarks());
++    const d = c.toJSON();
++    c.commit({ ...d, items: d.items.slice(0, 1), groups: [{ id: 'g', name: 'pair', kind: 'pair', items: [d.items[0].id, d.items[1].id], rule: 'same-sheet' }] });
++    expect(c.doc.rev).toBe(1); expect(c.doc.updatedAt).toBe(500);
++    expect(c.items).toHaveLength(1);
++    expect(c.groups).toEqual([]);
++    expect(JSON.parse(JSON.stringify(c.toJSON())).v).toBe(2);
++  });
++});
++
++describe('LocalRepository', () => {
++  it('a v1 craft is migrated on load; once saved as v2 it loads as is', async () => {
++    const store = new ProjectStore(new MemoryStorage());
++    store.save({ id: 'old', name: 'Old cat', createdAt: 1, updatedAt: 2, reached: 3, kind: 'flat', path: '/make/layers', image: '', choices: { build: 'stacked', aspect: 1, widthMm: 300, stack: [{ n: 1, name: 'Gold', colour: '#D4A24C', material: 'card', visiblePct: 40, hiddenPct: 0, regionId: 'r' }], regionList: [{ id: 'r', name: 'Gold', paths: [rect(100, 100, 800, 800)] }] } });
++    const repo = new LocalRepository(store, (() => { let k = 0; return () => `n${++k}`; })());
++    expect((await repo.list()).map((s) => s.name)).toEqual(['Old cat']);
++    const doc = (await repo.load('old'))!;
++    expect(doc.v).toBe(2);
++    expect(doc.items[0].parts[0].name).toBe('Gold');
++    await repo.save({ ...doc, name: 'Renamed' });
++    expect((await repo.load('old'))!.name).toBe('Renamed');
++    await repo.remove('old');
++    expect((await repo.load('old'))!.name).toBe('Old cat');
++    expect(await repo.load('missing')).toBeNull();
++  });
++});
+diff --git a/app/src/lib/state/craft/craft.svelte.ts b/app/src/lib/state/craft/craft.svelte.ts
+new file mode 100644
+index 0000000..ce5e99d
+--- /dev/null
++++ b/app/src/lib/state/craft/craft.svelte.ts
+@@ -0,0 +1,75 @@
++// The craft's state (design/15 §3): one plain document, wrapped. Screens read these getters and change the craft
++// only through actions (design/14); measurements are derived from the document, never stored twice.
++import { indexCraft, layersOf, prune, type CraftDoc, type GroupDoc, type Id, type ItemDoc, type OpDoc, type PartDoc } from '../../domain/craft';
++import { bbox } from '../../domain/geo';
++
++export function emptyCraft(id: Id, name = '', at = 0): CraftDoc {
++  return { v: 2, id, name, kind: 'layered', createdAt: at, updatedAt: at, rev: 0, items: [], groups: [], sources: [], history: { done: [], undone: [] } };
++}
++
++export class CraftState {
++  doc = $state<CraftDoc>(emptyCraft(''));
++  readonly index = $derived(indexCraft(this.doc));
++  /** wrappers are cached by id, so a screen keeps the same object across changes */
++  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a wrapper cache, never rendered
++  private items$ = new Map<Id, ItemState>();
++  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a wrapper cache, never rendered
++  private parts$ = new Map<Id, PartState>();
++  constructor(private clock: () => number = () => Date.now()) {}
++
++  /** open a craft (replaces everything; the history comes with it) */
++  load(doc: CraftDoc) { this.doc = doc; this.items$.clear(); this.parts$.clear(); }
++  /** the document as saved */
++  toJSON(): CraftDoc { return $state.snapshot(this.doc) as CraftDoc; }
++  /** the one place a changed document lands (actions call this): links pruned, rev and time moved on */
++  commit(next: CraftDoc) { this.doc = { ...prune(next), rev: this.doc.rev + 1, updatedAt: this.clock() }; }
++
++  get id() { return this.doc.id; }
++  get items(): ItemState[] { return this.doc.items.map((i) => this.item(i.id)!); }
++  get groups(): GroupDoc[] { return this.doc.groups; }
++  /** what the screen lists as layers: each item's parts, back to front */
++  get layers(): PartState[] { return layersOf(this.doc).map(({ part }) => this.part(part.id)!); }
++  get separateItems() { return this.doc.items.length > 1; }
++  item(id: Id): ItemState | undefined {
++    if (this.index.get(id)?.kind !== 'item') return undefined;
++    let s = this.items$.get(id); if (!s) { s = new ItemState(this, id); this.items$.set(id, s); }
++    return s;
++  }
++  part(id: Id): PartState | undefined {
++    if (this.index.get(id)?.kind !== 'part') return undefined;
++    let s = this.parts$.get(id); if (!s) { s = new PartState(this, id); this.parts$.set(id, s); }
++    return s;
++  }
++}
++
++export class ItemState {
++  constructor(private craft: CraftState, readonly id: Id) {}
++  get doc(): ItemDoc { const n = this.craft.index.get(this.id); if (n?.kind !== 'item') throw new Error(`item ${this.id} is gone`); return n.node; }
++  get name() { return this.doc.name; }
++  get parts(): PartState[] { return [...this.doc.parts].sort((a, b) => a.z - b.z).map((p) => this.craft.part(p.id)!); }
++  /** the item as cut, in mm (its frame at its scale) */
++  get sizeMm() { const f = this.doc.frame; return { wMm: Math.round((f.size[0] / f.pxPerMm) * 10) / 10, hMm: Math.round((f.size[1] / f.pxPerMm) * 10) / 10 }; }
++  get turnDeg() { return this.doc.frame.fromSource.rotateDeg; }
++  get flipped() { return Boolean(this.doc.frame.flipX || this.doc.frame.flipY); }
++  get qty() { return this.doc.qty ?? 1; }
++  /** the pair or set it belongs to */
++  get group(): GroupDoc | undefined { return this.craft.doc.groups.find((g) => g.items.includes(this.id)); }
++}
++
++export class PartState {
++  constructor(private craft: CraftState, readonly id: Id) {}
++  private get node() { const n = this.craft.index.get(this.id); if (n?.kind !== 'part') throw new Error(`part ${this.id} is gone`); return n; }
++  get doc(): PartDoc { return this.node.node; }
++  get item(): ItemState { return this.craft.item(this.node.item.id)!; }
++  get name() { return this.doc.name; }
++  get colour() { return this.doc.colour; }
++  get material() { return this.doc.material; }
++  get z() { return this.doc.z; }
++  get cut(): OpDoc | undefined { return this.doc.ops.find((o) => o.kind === 'cut'); }
++  get engravings(): OpDoc[] { return this.doc.ops.filter((o) => o.kind !== 'cut'); }
++  /** cut through, or engraved only (a part with no cut is an engraving pass on its own) */
++  get role(): 'cut' | 'engrave' { return this.cut ? 'cut' : 'engrave'; }
++  get visiblePct() { return this.doc.measured?.visiblePct ?? 0; }
++  /** the part's bounds in mm, in its item's frame */
++  get boundsMm() { const g = this.cut?.geometry ?? this.doc.ops[0]?.geometry; const b = g ? bbox(g) : null; const k = this.item.doc.frame.pxPerMm; return b ? { x: b.x / k, y: b.y / k, w: b.w / k, h: b.h / k } : null; }
++}
+diff --git a/app/src/lib/state/craft/repository.ts b/app/src/lib/state/craft/repository.ts
+new file mode 100644
+index 0000000..5be7474
+--- /dev/null
++++ b/app/src/lib/state/craft/repository.ts
+@@ -0,0 +1,39 @@
++// Where crafts are kept (design/15 §4). One interface: local now (the summary list in localStorage, the document
++// in IndexedDB), Supabase later. A craft saved before the tree (v1) is migrated on load and opens as it was.
++import type { CraftDoc, Id } from '../../domain/craft';
++import { migrateV1, type V1Snapshot } from '../../domain/craft/migrate';
++import { getCraftData, putCraftData, removeCraftData } from '../media-store';
++import type { ProjectRecord, ProjectStore } from '../project.svelte';
++
++export interface CraftSummary { id: Id; name: string; updatedAt: number; image: string; status?: 'draft' | 'finished' }
++export interface CraftRepository {
++  list(): Promise<CraftSummary[]>;
++  load(id: Id): Promise<CraftDoc | null>;
++  save(doc: CraftDoc): Promise<void>;
++  remove(id: Id): Promise<void>;
++}
++
++const key = (id: Id) => `doc:${id}`;
++let counter = 0;
++const newId = () => `m${Date.now().toString(36)}${(counter++).toString(36)}`;
++
++export class LocalRepository implements CraftRepository {
++  constructor(private projects: ProjectStore, private ids: () => Id = newId) {}
++  async list(): Promise<CraftSummary[]> {
++    return this.projects.list().map((p) => ({ id: p.id, name: p.name, updatedAt: p.updatedAt, image: p.image, status: p.status }));
++  }
++  async load(id: Id): Promise<CraftDoc | null> {
++    const saved = (await getCraftData(key(id))) as CraftDoc | null;
++    if (saved?.v === 2) return saved;
++    const project = this.projects.load(id);
++    if (!project) return null;
++    return this.migrate(project, await getCraftData(id));
++  }
++  /** v1: the light choices in the project record + the heavy results (regions, plan) in IndexedDB */
++  migrate(project: ProjectRecord, heavy: Record<string, unknown> | null): CraftDoc {
++    const snap = { ...(project.choices as V1Snapshot), ...((heavy ?? {}) as V1Snapshot) };
++    return migrateV1(project, snap, this.ids);
++  }
++  async save(doc: CraftDoc): Promise<void> { await putCraftData(key(doc.id), JSON.parse(JSON.stringify(doc)) as Record<string, unknown>); }
++  async remove(id: Id): Promise<void> { await removeCraftData(key(id)); }
++}
+diff --git a/docs/tasks/README.md b/docs/tasks/README.md
+index 3fa5020..28981ee 100644
+--- a/docs/tasks/README.md
++++ b/docs/tasks/README.md
+@@ -35,9 +35,15 @@ Claude (the lead in this repo) owns the contracts and reviews every hand-back.
+ | T1 | Geometry library (`domain/geo`) | contracts only | ~1 day | delegate |
+ | T2 | Cut plan: profiles, `planCut`, queue adapter (`domain/cutplan`) | contracts; T1's core (already implemented) | ~1 day | delegate |
+ | T3 | Geometry actions as `ActionDef`s (`domain/actions/defs`) | T1 | ~1 day | delegate, after T1 |
+-| L1 | Craft state classes, v1 → v2 migration, `LocalRepository` | contracts | ~1.5 days | Claude |
+-| L2 | Action registry, `perform` / undo / redo / again, history in the doc | L1 | ~1 day | Claude |
++| L1 | Craft state classes, v1 → v2 migration, `LocalRepository` — **done** (`domain/craft`, `state/craft`) | contracts | ~1.5 days | Claude |
++| L2 | Action registry, `perform` / undo / redo / again, history in the doc — **done**, with merge, delete, duplicate, reorder, rename, recolour, set-role, group, ungroup (`domain/actions`, `state/craft/actions.svelte.ts`); straighten / interpolate / resize / enhance next | L1 | ~1 day | Claude |
+ | L3 | Wire the screens: layers, queue, Assemble and Cut read the craft and the cut plan (animations unchanged) | L1, L2, T2 | ~1 day | Claude |
+ | L4 | Chat: fast path from `says`, Spark tool-calling over the registry (`/api/actions/plan`) | L2, T3 | ~1 day | Claude |
+ 
+ T1 and T2 can start now, in parallel with L1. T3 starts when T1 lands.
++
++## For T3: how to plug in
++
++Export your definitions from `domain/actions/defs/geometry.ts` as `geometryActions: ActionDef[]`. Add one line to `defs/index.ts`, `for (const a of geometryActions) register(a as never)`, and nothing else.
++
++`state/craft/actions.spec.ts` shows how an action runs through `ActionState` (resolve → can → run → history). Use the same pattern for one integration test per action: run it, undo, and expect the doc to be identical.

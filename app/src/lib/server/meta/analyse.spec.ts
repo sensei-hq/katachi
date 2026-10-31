@@ -23,7 +23,7 @@ describe('analyseImage (S2 ImageBrief)', () => {
   });
   it('uses live Spark vision when the brief parses', async () => {
     const { analyseImage } = await import('./analyse');
-    const brief = { subject: 'wooden sunset', class: 'layered', arrangement: 'stacked', likelyMaterial: 'wood', subjectPrompt: 'wall art', regions: [], colourGroupsHint: 5, reference: null, topDownConfidence: 0.8, notes: '' };
+    const brief = { subject: 'wooden sunset', class: 'layered', arrangement: 'stacked', likelyMaterial: 'wood', subjectPrompt: 'wall art', regions: [], items: [], colourGroupsHint: 5, reference: null, topDownConfidence: 0.8, notes: '' };
     const live = { sparkVision: async () => ({ data: brief, costUsd: 0.01, latencyMs: 5 }) };
     const r = await analyseImage({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', live as any);
     expect([r.source, r.brief.subject]).toEqual(['live', 'wooden sunset']);

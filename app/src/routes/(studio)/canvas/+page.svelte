@@ -5,6 +5,7 @@ import EditorToolbar from '$lib/components/editor/EditorToolbar.svelte';
 import LayeredScene from '$lib/components/illustrations/LayeredScene.svelte';
 import BirdhouseView from '$lib/components/illustrations/BirdhouseView.svelte';
 import LayerSwatch from '$lib/components/illustrations/LayerSwatch.svelte';
+import CutSheet from '$lib/components/CutSheet.svelte';
 import type { Op } from '$lib/state/editor.svelte';
 import { useApp } from '$lib/state/context';
 // Work area (docs/design/07 G17): manual edits to the open craft's sheets. Pick a sheet, see it on the bed,
@@ -26,7 +27,7 @@ const sheetSize = $derived(f.set === 'paper' ? '12 × 12 in' : '300 × 300 mm');
     <span class="i-solar:pen-2-linear text-head text-ink-soft" aria-hidden="true"></span>
     <h2 class="panel-title">Nothing to edit yet</h2>
     <p class="text-ui text-ink-mute">The work area edits a craft's sheets by hand. Open a craft, or start one, and its sheets appear here.</p>
-    <div class="flex gap-2.5"><Button variant="primary" label="Your crafts" href="/crafts" target="" /><Button style="outline" label="Start a craft" href="/workshop" target="" /></div>
+    <div class="flex gap-2.5"><Button variant="primary" label="Your crafts" href="/workshop" target="" /><Button style="outline" label="Start a craft" href="/workshop" target="" /></div>
   </section>
 {:else}
   <div class="md:h-full flex flex-col md:min-h-0">
@@ -53,14 +54,16 @@ const sheetSize = $derived(f.set === 'paper' ? '12 × 12 in' : '300 × 300 mm');
         <figure class="m-0 mx-auto relative rounded-lg border border-paper-edge bg-paper-soft p-4 aspect-square" style:width="min(100%, {Math.round(560 * ed.zoom / 100)}px)">
           {#if joined}<BirdhouseView view="front" label="Front part on the bed" />
           {:else}
-            <LayeredScene layers={f.layers} mode="layer" selected={sheet.n} hidden={false} label={`Sheet ${pad(sheet.n)}, ${sheet.name}, on the bed`} />
+            {@const cut = f.cutPathFor(sheet.n)}
+            {#if cut}<CutSheet d={cut} colour={sheet.colour} image={app.stageImage} label={`Sheet ${pad(sheet.n)}, ${sheet.name}, on the bed: its traced cut`} />
+            {:else}<LayeredScene layers={f.layers} mode="layer" selected={sheet.n} hidden={false} label={`Sheet ${pad(sheet.n)}, ${sheet.name}, on the bed`} />{/if}
             <span class="absolute left-3 top-3 w-2.5 h-2.5 rounded-full border border-accent" aria-hidden="true"></span>
             <span class="absolute right-3 top-3 w-2.5 h-2.5 rounded-full border border-accent" aria-hidden="true"></span>
             <span class="absolute left-3 bottom-3 w-2.5 h-2.5 rounded-full border border-accent" aria-hidden="true"></span>
           {/if}
           <figcaption class="absolute right-3 bottom-2 meta">{sheetSize}</figcaption>
         </figure>
-        <p class="text-center meta mt-2">Drawing and vector edits on the bed arrive with the live pipeline; sheet details and settings save now.</p>
+        <p class="text-center meta mt-2">{f.cutPathFor(sheet.n) ? 'The traced cut for this sheet. Edit its shape on Layers (tools and sliders); details and laser settings save here.' : 'The cut appears here once Layers has traced this sheet.'}</p>
       </div>
 
       <!-- the selected sheet -->

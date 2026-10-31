@@ -6,6 +6,7 @@ import KatachiMark from '$lib/components/KatachiMark.svelte';
 import HeroJourney from '$lib/components/HeroJourney.svelte';
 import { howItWorks } from '$lib/content/journey';
 import { layerSets } from '$lib/content/layers';
+import { versionLabel } from '$lib/content/version';
 import { useApp } from '$lib/state/context';
 // Landing (signed out): what Katachi makes, how the Muse models do it, and the gate (docs/design/07 G1–G3).
 let { data }: { data: { signedIn: boolean } } = $props();
@@ -45,7 +46,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
           <section aria-label="Welcome back" class="flex flex-col gap-4">
             <div class="flex flex-col gap-1"><p class="eyebrow">You're in</p><p class="text-ui text-ink-mute">Your invite is active on this browser.</p></div>
             <Button size="lg" variant="primary" class="w-full" label="Open the workshop" iconRight="i-solar:arrow-right-linear" href="/workshop" target="" />
-            <Button style="outline" class="w-full" label="Your crafts" href="/crafts" target="" />
+            <Button style="outline" class="w-full" label="Your crafts" href="/workshop" target="" />
           </section>
         </Card>
       {:else}
@@ -81,5 +82,5 @@ const pad = (n: number) => String(n).padStart(2, '0');
       </ol>
     </section>
   </main>
-  <footer class="hair-t px-4 md:px-10 py-5 meta text-center">Muse models on the Meta Model API · cut paths are computed in code</footer>
+  <footer class="hair-t px-4 md:px-10 py-5 meta text-center">Muse models on the Meta Model API · cut paths are computed in code · <span data-app-version>{versionLabel}</span></footer>
 </div>
