@@ -137,7 +137,7 @@ All commands run from `app/` and are defined in its `package.json` — no ad-hoc
 | Full local gate | `bun run verify` · everything incl. build + e2e: `bun run verify:full` |
 | Database (from `database/`) | `bun run db:inspect` · `bun run db:deploy` · `bun run db:import` |
 | Deploy (Cloudflare Worker) | `bun run deploy:dry` to validate · `bun run deploy` |
-| Version bump (bumpp) | `bun run bump --patch\|--minor\|--major` — bumps `package.json`, commits `release: vX.Y.Z` and tags it; push with `git push --follow-tags` |
+| Version bump (bumpp) | `bun run bump patch\|minor\|major` — bumps `package.json`, commits `release: vX.Y.Z` and tags it; push with `git push --follow-tags` |
 
 The running version (`vX.Y.Z · commit`) shows in Settings → About, at the foot of the studio rail and in the landing footer, and is served at `/api/version`.
 

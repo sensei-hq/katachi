@@ -165,4 +165,4 @@ On Sheets, **Play the whole run** goes through every pass from start to end (`Ap
 
 ## Version
 
-The running version shows in Settings → About, at the foot of the studio rail and in the landing footer, and at `/api/version`. Bump it with `bun run bump --patch|--minor|--major` (bumpp, following the sensei convention). It starts at 0.1.0.
+The running version shows in Settings → About, at the foot of the studio rail and in the landing footer, and at `/api/version`. Bump it with `bun run bump patch|minor|major` (bumpp, following the sensei convention). It starts at 0.1.0.
