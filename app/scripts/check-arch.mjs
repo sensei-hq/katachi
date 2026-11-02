@@ -20,7 +20,7 @@ function walk(dir) {
   for (const n of readdirSync(dir)) {
     const p = join(dir, n);
     if (statSync(p).isDirectory()) { walk(p); continue; }
-    if (!/\.(svelte|ts)$/.test(n) || /\.spec\.ts$/.test(n) || p.includes('+server')) continue;
+    if (!/\.(svelte|ts)$/.test(n) || /\.spec\.ts$/.test(n) || p.includes('+server') || /\.server\.ts$/.test(n)) continue;
     const t = readFileSync(p, 'utf8');
     if (/fetch\(|\$lib\/server/.test(t)) failures.fetch.push(p);
     if (p.startsWith('src/routes') && p !== stateOwner && newState.test(t)) failures.state.push(p);

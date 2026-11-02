@@ -18,8 +18,9 @@ const graph = (pct, size) => ({
 
 export default defineConfig({
   presets: [presetRokkit(config)],
-  // the cut queue badge pulses when sheets were just sent to it (3 rings, then still)
-  preflights: [{ getCSS: () => `@keyframes katachi-badge { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 70%, transparent) } 100% { box-shadow: 0 0 0 10px transparent } } .animate-ping-once { animation: katachi-badge 1s ease-out 3 }\n${reducedMotion}` }],
+  // the cut queue badge pulses when sheets were just sent to it (3 rings, then still); the public pages fade their
+  // sections up as they scroll in (.reveal, shown by the reveal action; instant with reduced motion)
+  preflights: [{ getCSS: () => `@keyframes katachi-badge { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 70%, transparent) } 100% { box-shadow: 0 0 0 10px transparent } } .animate-ping-once { animation: katachi-badge 1s ease-out 3 }\n.reveal { opacity: 0; transform: translateY(14px); transition: opacity 0.7s ease, transform 0.7s cubic-bezier(.2,.7,.2,1); transition-delay: var(--reveal-delay, 0ms) } .reveal[data-shown] { opacity: 1; transform: none }\n${reducedMotion}` }],
   // lib/content/*.ts carries icon class names (the section list), so UnoCSS must scan it too.
   content: { pipeline: { include: [/\.(svelte|html)($|\?)/, /src\/lib\/content\/.*\.(js|ts)($|\?)/] } },
   theme: {

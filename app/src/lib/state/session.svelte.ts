@@ -17,6 +17,12 @@ export class SessionState {
     if (!r.ok) this.msg = data.reason ?? 'The gate is unavailable — try again';
     return r.ok;
   }
+  /** no invite yet: ask for one (saved for /admin and emailed to the request inbox); `website` is the bot trap */
+  async requestInvite(email: string, note: string, website = ''): Promise<{ ok: boolean; msg: string }> {
+    const r = await fetch('/api/invite-request', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, note, website }) }).catch(() => null);
+    const d = await r?.json().catch(() => ({}));
+    return r?.ok ? { ok: true, msg: 'Thanks — we’ll email you an invite code.' } : { ok: false, msg: d?.reason ?? 'Couldn’t send that — email hi@sensei-hq.com' };
+  }
   async enterFromForm(): Promise<boolean> {
     if (!this.code.trim()) { this.msg = 'Enter your invite code'; return false; }
     if (!(this.attested && this.safetyAck && this.noPersonalAck)) { this.msg = 'Tick all three to continue'; return false; }

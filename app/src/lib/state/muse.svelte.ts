@@ -165,7 +165,7 @@ export class MuseAgents {
       await tick(); return { result: { outline: fallbackOutline, checks: fallbackChecks, paths: [] as [number, number][][], aspect: undefined as number | undefined }, summary: `Background removed · ${fallbackOutline.shape} outline, Ø ${fallbackOutline.sizeMm} mm`, source: 'fixture' as const };
     });
   }
-  segment(craftId: string, opts: { imageDataUrl?: string; briefRegions?: ImageBrief['regions']; brief?: ImageBrief | null; subjectPaths?: [number, number][][]; k?: number } = {}) {
+  segment(craftId: string, opts: { imageDataUrl?: string; briefRegions?: ImageBrief['regions']; brief?: ImageBrief | null; subjectPaths?: [number, number][][]; k?: number; plan?: import('../domain/layering').StackPlan | null } = {}) {
     const fallback: Region[] = regions.map((r) => ({ ...r }));
     return this.run('shape.segment', craftId, async () => {
       // One stacked piece (layered paper / wood art): its layers are colour groups, so code measures them from
@@ -176,11 +176,11 @@ export class MuseAgents {
       if (px) {
         const titles = (opts.briefRegions ?? []).filter((r) => !r.likelyBought).map((r) => r.label);
         const k = opts.k ?? Math.min(8, Math.max(3, opts.brief?.colourGroupsHint ?? titles.length ?? 5));
-        const layers = await measureLayers(px, opts.subjectPaths!, { k, titles });
+        const layers = await measureLayers(px, opts.subjectPaths!, { k, titles, plan: opts.plan ?? null });
         if (layers.length >= 2) {
           const tones = ['warn', 'ink', 'accent', 'ok', 'muted'] as const;
           const found = layers.map((l, i) => ({ id: `c${l.n}` as Region['id'], name: l.name, pct: l.visiblePct, note: `colour group ${l.hex} · ${l.hiddenPct}% hidden under the layers in front`, tone: tones[i % tones.length], keep: true, colour: l.hex, paths: l.visiblePaths, cutPaths: l.sheetPaths, hiddenPct: l.hiddenPct })) as Region[];
-          return { result: found, summary: `${found.length} colour layers measured from your photo (code)`, source: 'live' as const, costUsd: 0, model: 'Code' as const };
+          return { result: found, summary: opts.plan ? `${found.length} layers built to your stack (code)` : `${found.length} colour layers measured from your photo (code)`, source: 'live' as const, costUsd: 0, model: 'Code' as const };
         }
       }
       const j = sendable(opts.imageDataUrl) && opts.briefRegions?.length ? await post('/api/segment', { imageDataUrl: opts.imageDataUrl, regions: opts.briefRegions, ...(opts.brief?.arrangement === 'multiple-items' ? { multiple: true, subjectPrompt: opts.brief.subjectPrompt, items: opts.brief.items ?? [] } : {}) }) : null;
@@ -218,7 +218,7 @@ export class MuseAgents {
     });
   }
   // ── Layers
-  planLayers(craftId: string, makeAs: MakeAs, opts: { imageDataUrl?: string; description?: string; regions?: Region[]; brief?: ImageBrief | null } = {}) {
+  planLayers(craftId: string, makeAs: MakeAs, opts: { imageDataUrl?: string; description?: string; regions?: Region[]; brief?: ImageBrief | null; named?: boolean } = {}) {
     const set = layerSets[makeAs === 'wood' ? 'wood' : 'paper'];
     const fallback: Layer[] = [];
     return this.run('layers.plan', craftId, async () => {
@@ -236,6 +236,8 @@ export class MuseAgents {
         const itemCount = Object.keys(groups).length;
         return { result: layers, summary: itemCount > 1 ? `${itemCount} separate items · ${layers.length} cuts` : `${layers.length} separate items · one cut each`, source: 'live' as const, costUsd: 0, model: 'Code' as const };
       }
+      // the user named the stack: its names and order stand, no need to ask Spark for titles
+      if (opts.named && kept.length >= 2) return { result: kept.map((r, i) => ({ n: i + 1, name: r.name, shapes: ['sky' as const], colour: r.colour ?? set.layers[i % set.layers.length].colour, visiblePct: Math.round(r.pct * 10) / 10, hiddenPct: r.hiddenPct ?? 0, material, regionId: r.id })) as Layer[], summary: `${kept.length} layers, as you stacked them`, source: 'live' as const, costUsd: 0, model: 'Code' as const };
       const j = sendable(opts.imageDataUrl) ? await post('/api/convert', { imageDataUrl: opts.imageDataUrl, description: opts.description ?? 'layered craft from this photo', group: makeAs === 'wood' ? 'laser-cut' : 'cricut-paper' }) : null;
       const pieces = (j?.pieces ?? []) as { name: string; kind: string; note: string }[];
       const layerPieces = pieces.filter((x) => x.kind === 'layer' || j?.conversionClass === 'layered');

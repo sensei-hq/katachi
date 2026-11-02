@@ -41,6 +41,8 @@ export class LayerFlowState {
   applySubject(subject: string) { this.subject = subject; }
   /** the user asked for the backdrop (wall, shadows, props) to go: background removal runs strict */
   removeBackdrop = $state(false);
+  /** the stack the user described ("a solid white base, then black…"): the layers are built to it, not guessed */
+  layerPlan = $state<import('../domain/layering').StackPlan | null>(null);
   /** the SAM subject mask, traced to closed paths in 0-1000 image coordinates (Cutout view) */
   subjectPaths = $state<[number, number][][]>([]);
   applyCutout(r: { outline: Outline; checks: Check[]; paths?: [number, number][][] }) { this.outline = r.outline; this.cutoutChecks = r.checks; if (r.paths) this.subjectPaths = r.paths; }
@@ -469,7 +471,7 @@ export class LayerFlowState {
   toggleAssembled(i: number) { this.assembled = this.assembled.includes(i) ? this.assembled.filter((x) => x !== i) : [...this.assembled, i]; }
 
   // project save / reopen: every choice above, as plain data
-  private static readonly SAVED = ['cutLayout', 'removeBackdrop', 'subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths', 'subjectPaths', 'hiddenLayers', 'showStack', 'view', 'build', 'aspect', 'widthMm', 'sizeBasis', 'pictures', 'objectSpec', 'plan'] as const;
+  private static readonly SAVED = ['cutLayout', 'removeBackdrop', 'layerPlan', 'subject', 'imageBrief', 'outline', 'cutoutChecks', 'regionList', 'parts', 'notes', 'assembleAt', 'assembled', 'kind', 'brief', 'makeAs', 'cutoutView', 'keep', 'segmentView', 'refineTool', 'set', 'stack', 'sel', 'gapChoice', 'applyAll', 'gapRule', 'overrides', 'done', 'joinery', 'skipped', 'device', 'showSolid', 'showHidden', 'job', 'sheetPaths', 'subjectPaths', 'hiddenLayers', 'showStack', 'view', 'build', 'aspect', 'widthMm', 'sizeBasis', 'pictures', 'objectSpec', 'plan'] as const;
   /** a fresh flow's choices (New starts from these) */
   static defaults() { return new LayerFlowState().snapshot(); }
   snapshot(): Record<string, unknown> {

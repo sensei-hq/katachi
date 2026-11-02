@@ -12,10 +12,11 @@ import { getCraftData, getMedia, putCraftData, putMedia, removeCraftData, remove
 /** results too large for the localStorage craft list: kept per craft in IndexedDB */
 const HEAVY = ['regionList', 'subjectPaths', 'sheetPaths', 'objectSpec', 'plan'] as const;
 import { downscale } from './photo';
-import { parseLayerOp, translatePaths, type Box, type DrawnShape, type LayerOp } from '../domain/layering';
+import { namesAStack, parseLayerOp, stackPlanFrom, translatePaths, type Box, type DrawnShape, type LayerOp } from '../domain/layering';
 import { pointsToPath } from '../domain/vector';
 import { hiddenShare } from '../domain/toolpath';
 import { CraftState, emptyCraft } from './craft/craft.svelte';
+import { setsOf } from '../domain/actions/defs/samesize';
 import { ActionState, type Narrator, type Outcome } from './craft/actions.svelte';
 import { migrateV1, type V1Snapshot } from '../domain/craft/migrate';
 import { craftToFlow } from '../domain/craft/bridge';
@@ -37,7 +38,9 @@ export type LayerAction =
   | { kind: 'smoothArea'; box: Box; strength: number } | { kind: 'move'; dx: number; dy: number } | { kind: 'remove' };
 
 /** the words that mean an action (merge, delete, flip…): what is worth asking the planner about */
-const ACTION_WORDS = /\b(merge|delete|remove|combine|join|duplicate|copy|straighten|rotate|flip|mirror|resize|enhance|sharpen|fill in|interpolate|group|pair|rename|recolou?r|engrave instead|again|same for|bring|send|undo|redo)\b/i;
+const ACTION_WORDS = /\b(merge|delete|remove|combine|join|duplicate|copy|copies|straighten|rotate|turn|flip|mirror|resize|enhance|sharpen|fill in|interpolate|group|pair|rename|recolou?r|engrave instead|again|same for|bring|send|undo|redo|smooth(en)?|simplify|split|weld|bridge|offset|align|distribute|hole)\b/i;
+/** more than one action in one ask ("merge layers 1 and 2 and then smooth it"): Spark plans it as one undo */
+const manyActions = (text: string) => /\b(and then|then|after that|afterwards)\b/i.test(text) || new Set((text.match(new RegExp(ACTION_WORDS.source, 'gi')) ?? []).map((v) => v.toLowerCase())).size >= 2;
 /** "remove the background", "get rid of the textured wall", "no shadows"… — the user wants the backdrop gone */
 export const BACKDROP_ASK = /\b(remove|drop|delete|erase|clear|get rid of|cut out|without|no|lose)\b[^.]*\b(background|backdrop|wall|shadows?|plants?|shelf|surroundings)\b|\b(background|backdrop|wall)\b[^.]*\b(removed|gone|out|needs to go|should go)\b/i;
 
@@ -139,7 +142,8 @@ export class AppState {
     const c = () => this.flow.conversation, keys = new Map<string, string>();
     const k = (key: string) => keys.get(key) ?? (() => { const u = `${this.project?.id ?? 'craft'}:${key}:${c().log.length}:${this.narrated++}`; keys.set(key, u); return u; })();
     return {
-      think: (key, title) => { const u = `${this.project?.id ?? 'craft'}:${key}:${c().log.length}:${this.narrated++}`; keys.set(key, u); c().think(u, title); c().work(u); },
+      // one step per request: a group's later actions update its step, never open new ones
+      think: (key, title) => { const u = keys.get(key) ?? `${this.project?.id ?? 'craft'}:${key}:${c().log.length}:${this.narrated++}`; keys.set(key, u); c().think(u, title); c().work(u); },
       done: (key, title, detail) => { c().done(k(key), title, detail ? { detail } : {}); keys.delete(key); },
       fail: (key, title, detail) => { c().fail(k(key), title, detail ?? ''); keys.delete(key); }
     };
@@ -156,7 +160,7 @@ export class AppState {
     const next: CraftDoc = migrateV1({ id: p.id, name: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt, kind: p.kind }, snap, () => `s${(this.narrated++).toString(36)}`);
     const cur = this.craft.doc.id === p.id && !fresh ? this.craft.toJSON() : null;
     // what only the craft knows (a turn, a flip, how many, the model's call) stays when the screens' state is re-read
-    if (cur) for (const it of next.items) { const was = cur.items.find((x) => x.id === it.id); if (was) { it.frame = { ...it.frame, fromSource: { ...it.frame.fromSource, rotateDeg: was.frame.fromSource.rotateDeg }, ...(was.frame.flipX ? { flipX: true } : {}), ...(was.frame.flipY ? { flipY: true } : {}) }; if (was.qty) it.qty = was.qty; if (was.needsEnhance) it.needsEnhance = was.needsEnhance; } }
+    if (cur) for (const it of next.items) { const was = cur.items.find((x) => x.id === it.id); if (was) { it.frame = { ...it.frame, fromSource: { ...it.frame.fromSource, rotateDeg: was.frame.fromSource.rotateDeg }, ...(was.frame.flipX ? { flipX: true } : {}), ...(was.frame.flipY ? { flipY: true } : {}) }; if (was.qty) it.qty = was.qty; if (was.needsEnhance) it.needsEnhance = was.needsEnhance; if (was.shot) it.shot = was.shot; } }
     if (cur && label) { this.actions.adopt({ ...next, groups: cur.groups.length ? cur.groups : next.groups }, label); return; }
     this.craft.load({ ...next, history: cur?.history ?? { done: [], undone: [] }, rev: cur?.rev ?? 0 });
   }
@@ -200,16 +204,69 @@ export class AppState {
     const r = rowsOf(this.craft.doc)[n - 1];
     return Boolean(r && !r.op && (r.part.from?.length || (r.part.ops.find((o) => o.kind === 'cut')?.geometry.paths.length ?? 0) > 1));
   }
-  /** Spark reads the request into action calls (design/14 §7); false = nothing it could plan */
-  private async planAndRun(text: string): Promise<boolean> {
+  /** The clean-up pass after the layers (and whenever asked): specks, pin-holes and wire bits (an earring's hook, a
+   *  bookmark's cord) off; repeated holes evened out; near-symmetric items made symmetric; every layer smoothed in
+   *  two light passes. One step in the chat, one undo. */
+  async cleanUp(via: 'pass' | 'chat' = 'pass') {
+    const rows = rowsOf(this.craft.doc); if (!rows.length) return;
+    const parts = rows.filter((r) => !r.op);
+    const r = await this.actions.performAll([
+      // wire bits (hooks, cords) only hang off separate items; a one-piece picture's outline is left as traced
+      { action: 'tidy', refs: [{ all: true }], opts: this.layers.separateItems ? {} : { thinMm: 0 } },
+      { action: 'repeat-pattern', refs: [{ all: true }], opts: {} },
+      ...(this.layers.separateItems ? [{ action: 'symmetrize' as ActionId, refs: [{ all: true as const }], opts: {} }] : []),
+      ...parts.map((p) => ({ action: 'smooth' as ActionId, refs: [{ n: p.n }], opts: { strength: 4, passes: 2 } }))
+    ], via, `Cleaned up ${parts.length} layer${parts.length === 1 ? '' : 's'}: specks and wire bits off, repeated holes evened out${this.layers.separateItems ? ', symmetric items made exact' : ''}, outlines smoothed`);
+    if (r.ok) this.writeBack();
+  }
+  /** Spark reads the request into action calls (design/14 §7); false = nothing it could plan. Besides the craft's
+   *  actions it can re-run a stage of the breakdown ("try again splitting into 5 bookmarks"): find the items, remove
+   *  the background, regroup the colours. Those run first; the craft's actions run on what they produce. */
+  private async planAndRun(text: string): Promise<boolean | { reply: string }> {
     const craft = this.project?.id; if (!craft) return false;
-    const rows = rowsOf(this.craft.doc), c = this.flow.conversation;
-    const a = await this.muse.planActions(craft, { text, layers: rows.map((r) => ({ n: r.n, name: r.name, item: r.item.name, role: r.role, shows: Math.round(r.shows) })), selected: [this.layers.selected.n].filter((n) => n > 0), actions: toolList() }).catch(() => null);
+    const rows = rowsOf(this.craft.doc), c = this.flow.conversation, f = this.layers;
+    const stages = [
+      ...(this.photo && f.imageBrief?.arrangement === 'multiple-items' ? [{ id: 'find-items', hint: 'Find the separate items in the photo again with SAM 3.1 (when items were missed, merged or cut short), then rebuild their layers, turn each upright, fill hidden edges and clean up.', options: 'count (how many items the user expects)' }] : []),
+      ...(this.photo ? [{ id: 'remove-background', hint: 'Remove the background again, harder (the wall, its texture and shadows), and rebuild the layers.', options: '' }] : []),
+      ...(this.photo && f.imageBrief && f.imageBrief.arrangement !== 'multiple-items' ? [{ id: 'regroup-colours', hint: 'Regroup a one-piece picture into a number of colour layers.', options: 'k 2–8' }] : []),
+      ...(this.photo && f.imageBrief && f.imageBrief.arrangement !== 'multiple-items' ? [{ id: 'restack', hint: 'Rebuild a one-piece picture to the layer stack the user describes, back to front: each layer a colour (the same colour may come twice, e.g. a white backer and white petals), optionally a solid sheet; with outline every layer keeps the outer border.', options: 'layers: [{name, colour (a colour word), solid?}] back to front (2–8); outline: true|false (default true)' }] : [])
+    ];
+    if (rows.length) stages.push({ id: 'clean-up', hint: 'The whole clean-up pass on every layer: specks, pin-holes and wire bits (hooks, cords) off, repeated holes evened out, near-symmetric items made exact, outlines smoothed.', options: '' });
+    const tools = [...stages, ...(rows.length ? toolList() : [])];
+    if (!tools.length) return false;
+    const a = await this.muse.planActions(craft, { text, layers: rows.map((r) => ({ n: r.n, name: r.name, item: r.item.name, role: r.role, shows: Math.round(r.shows) })), selected: [this.layers.selected.n].filter((n) => n > 0), actions: tools }).catch(() => null);
     if (!a) return false;
     if (a.ask) { c.say(a.ask); return true; }
-    if (!a.calls.length) return false;
+    if (!a.calls.length) return a.reply ? { reply: a.reply } : false;
+    const stage = a.calls.filter((x) => stages.some((t) => t.id === x.action)), edits = a.calls.filter((x) => !stages.some((t) => t.id === x.action));
+    if (stage.length) {
+      if (a.reply) c.say(a.reply);
+      for (const x of stage) {
+        if (this.project?.id !== craft) return true;
+        if (x.action === 'find-items') {
+          this.run++; this.segmentReady = this.runSegment(); this.planReady = this.runPlan(); await Promise.all([this.segmentReady, this.planReady]);
+          // the count asked for, said against what was found (SAM finds what is there; it is never padded)
+          // eslint-disable-next-line svelte/prefer-svelte-reactivity -- counted once, not reactive state
+          const want = Number(x.opts.count) || 0, got = new Set(f.layers.map((l) => l.itemName).filter(Boolean)).size;
+          if (want && got && want !== got) c.say(`I found ${got} item${got === 1 ? '' : 's'}, not the ${want} you expected. Say which one is missing or merged (“the fox and the whale are one”), or “find the items again”.`);
+        }
+        else if (x.action === 'clean-up') await this.cleanUp('chat');
+        else if (x.action === 'remove-background') { f.removeBackdrop = true; this.save(); await this.rebuildFromShape(); }
+        else if (x.action === 'regroup-colours') { f.layerPlan = null; await this.rebuildFromShape({ k: Math.max(2, Math.min(8, Number(x.opts.k) || 4)) }); }
+        else if (x.action === 'restack') {
+          const plan = stackPlanFrom(x.opts);
+          if (!plan) { c.say('I couldn’t read that stack — name each layer’s colour, back to front (“white base, black, red, white flowers, gold”).'); continue; }
+          f.layerPlan = plan; this.save(); await this.rebuildFromShape();
+        }
+      }
+      // a rebuilt breakdown runs its passes itself (upright, hidden edges, clean-up): not twice
+      const after = edits.filter((x) => !['straighten', 'interpolate', 'smooth', 'tidy', 'repeat-pattern', 'symmetrize', 'clean-up'].includes(x.action) || !stage.some((y) => y.action !== 'clean-up'));
+      if (!after.length || !rowsOf(this.craft.doc).length) return true;
+      edits.splice(0, edits.length, ...after);
+    }
+    if (!edits.length) return true;
     this.selectRow();
-    const r = await this.actions.performAll(a.calls.map((x) => ({ action: x.action as ActionId, refs: refsFromPlan(x.refs), opts: x.opts })), 'chat', a.reply || undefined);
+    const r = await this.actions.performAll(edits.map((x) => ({ action: x.action as ActionId, refs: refsFromPlan(x.refs), opts: x.opts })), 'chat', stage.length ? undefined : a.reply || undefined);
     if (r.ok) this.writeBack();
     return true;
   }
@@ -446,6 +503,9 @@ export class AppState {
   /** jobs queued behind the step they build on (so opening a step twice does not queue them twice) */
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping, never rendered
   private scheduled = new Set<string>();
+  /** steps already retried once in this run (a second empty answer is said, not retried again) */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping, never rendered
+  private retried = new Set<string>();
   cutoutReady: Promise<unknown> | null = null;
   segmentReady: Promise<unknown> | null = null;
   planReady: Promise<unknown> | null = null;
@@ -480,7 +540,7 @@ export class AppState {
       .catch(() => { c.fail(key, 'Background removal failed', 'Say “remove the background” to try again.'); });
   }
   /** Breakdown · the items, then their parts: colour groups inside the outline (one stacked piece), SAM per item (separate items) */
-  runSegment(k?: number) {
+  runSegment(k?: number): Promise<unknown> {
     const craft = this.project?.id; if (!craft) return Promise.resolve();
     const f = this.layers, c = this.flow.conversation, items = this.stepKey('items'), layers = this.stepKey('layers');
     c.think(items, 'Finding the items', { job: 'shape.segment', thought: 'Is it one stacked piece or several separate things? That decides how it splits.' });
@@ -488,10 +548,11 @@ export class AppState {
       if (this.multiple) c.work(items, 'Finding the items', 'SAM 3.1 outlines each separate item.');
       else {
         c.done(items, `Found 1 item: ${f.subject || 'your picture'}`, { detail: 'one stacked piece · its layers are its colours' });
-        c.think(layers, `Splitting into colour layers`, { job: 'shape.segment', thought: 'Code groups the photo’s colours inside the outline, then orders them back to front by what sits on top.' });
+        if (f.layerPlan) c.think(layers, `Building your ${f.layerPlan.layers.length} layers`, { job: 'shape.segment', thought: 'Code gives each pixel the nearest of your colours; a colour used twice splits by what frames it.' });
+        else c.think(layers, `Splitting into colour layers`, { job: 'shape.segment', thought: 'Code groups the photo’s colours inside the outline, then orders them back to front by what sits on top.' });
         c.work(layers);
       }
-      return this.muse.segment(craft, { imageDataUrl: this.photo, briefRegions: f.imageBrief?.regions, brief: f.imageBrief, subjectPaths: f.subjectPaths, k });
+      return this.muse.segment(craft, { imageDataUrl: this.photo, briefRegions: f.imageBrief?.regions, brief: f.imageBrief, subjectPaths: f.subjectPaths, k, plan: this.multiple ? null : f.layerPlan });
     })
       .then((r) => {
         if (this.project?.id !== craft) return;
@@ -511,7 +572,13 @@ export class AppState {
           const names = [...new Set(f.regions.map((x) => x.itemName ?? x.name))];
           const engraved = f.regions.filter((x) => x.role === 'engrave').length;
           const sizeOf = (nm: string) => { const rs = f.regions.filter((x) => (x.itemName ?? x.name) === nm && x.paths?.length && x.role !== 'engrave'); const pts = rs.flatMap((x) => x.paths!).flat(); if (!real || !pts.length) return ''; const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]); return ` (${Math.round((Math.max(...xs) - Math.min(...xs)) * f.mmPerUnit.x)} × ${Math.round((Math.max(...ys) - Math.min(...ys)) * f.mmPerUnit.y)} mm)`; };
+          // every item needs its outline: SAM can name five and outline one (a mask over several is turned away)
+          const bare = names.filter((nm) => !f.regions.some((x) => (x.itemName ?? x.name) === nm && x.paths?.length));
+          if (names.length && bare.length && !this.retried.has(items)) { this.retried.add(items); c.work(items, 'Finding the items', `SAM 3.1 outlined ${names.length - bare.length} of ${names.length} — asking again for ${bare.slice(0, 3).join(', ')}${bare.length > 3 ? '…' : ''}.`); return this.runSegment(k); }
+          if (names.length && bare.length) { c.fail(items, `Outlined ${names.length - bare.length} of the ${names.length} items`, `No outline for ${bare.join(', ')}: SAM 3.1 saw them only as part of a bigger shape. Say “find the items again”, or carry on with the ones outlined.`); return; }
           if (names.length) c.done(items, `Found ${names.length} item${names.length > 1 ? 's' : ''}`, { detail: `${names.slice(0, 8).map((nm) => nm + sizeOf(nm)).join(' · ')}${engraved ? ` · ${engraved} with an engraving inside (engrave first, then cut)` : ''}${real ? ` · sizes from ${f.sizeBasis || 'Spark’s estimate'}` : ''}` });
+          // nothing back (a busy model, or Spark saw far more items than SAM could outline): one quiet retry first
+          else if (!this.retried.has(items)) { this.retried.add(items); c.work(items, 'Finding the items', 'Nothing came back from SAM 3.1 — trying once more.'); return this.runSegment(k); }
           else c.fail(items, 'No items found yet', 'The outline is needed first — say “remove the background” to try again.');
         } else if (!f.regions.length) c.fail(layers, 'No layers found yet', 'The outline is needed first — say “remove the background” to try again.');
         else c.work(layers, undefined, `${f.regions.length} colour groups measured`);
@@ -527,7 +594,7 @@ export class AppState {
       if (this.multiple) c.think(key, 'Giving each item its layers', { job: 'layers.plan', thought: 'Each item is its own cut; parts of one item stack on it.' });
       else c.think(key, 'Ordering the layers back to front', { job: 'layers.plan', thought: 'Muse Spark names each layer from what it sees; code keeps every layer tied to its own mask.' });
       c.work(key);
-      return this.muse.planLayers(craft, f.makeAs, { imageDataUrl: this.photo, description: f.brief || f.subject, regions: f.regions, brief: f.imageBrief });
+      return this.muse.planLayers(craft, f.makeAs, { imageDataUrl: this.photo, description: f.brief || f.subject, regions: f.regions, brief: f.imageBrief, named: !this.multiple && Boolean(f.layerPlan) });
     })
       .then(async (r) => {
         if (!r || this.project?.id !== craft) return;
@@ -536,8 +603,9 @@ export class AppState {
         // eslint-disable-next-line svelte/prefer-svelte-reactivity -- counted once, not reactive state
         const itemsN = new Set(f.layers.map((l) => l.itemName).filter(Boolean)).size;
         if (!f.layers.length) c.fail(key, 'No layers yet', 'Say “remove the background” to try again.');
-        else c.done(key, this.multiple ? `${itemsN || f.layers.length} item${(itemsN || f.layers.length) > 1 ? 's' : ''} · ${f.layers.length} layer${f.layers.length > 1 ? 's' : ''}` : `Split into ${f.layers.length} layers by colour`, { detail: this.multiple ? `${f.separateItems ? 'a cut and its engraving per item' : 'one cut each'} · tap a layer to quote it` : 'back to front · tap a layer to quote it', swatches });
+        else c.done(key, this.multiple ? `${itemsN || f.layers.length} item${(itemsN || f.layers.length) > 1 ? 's' : ''} · ${f.layers.length} layer${f.layers.length > 1 ? 's' : ''}` : f.layerPlan ? `Built ${f.layers.length} layers to your stack` : `Split into ${f.layers.length} layers by colour`, { detail: this.multiple ? `${f.separateItems ? 'a cut and its engraving per item' : 'one cut each'} · tap a layer to quote it` : f.layerPlan ? `back to front: ${f.layerPlan.layers.map((l) => `${l.name}${l.solid ? ' (solid)' : ''}`).join(' · ')}${f.layerPlan.outline !== false ? ' · every layer keeps the outer outline' : ''}` : 'back to front · tap a layer to quote it', swatches });
         if (f.separateItems) await this.itemPasses(craft);
+        if (this.engineOn && this.project?.id === craft) await this.cleanUp();
       })
       .catch(() => { c.fail(key, 'Planning the layers failed', 'Try again in a moment.'); });
   }
@@ -551,9 +619,16 @@ export class AppState {
     const f = this.layers, c = this.flow.conversation;
     if (this.engineOn) {
       // the same actions as the chat and the buttons (design/14 §9 recipe): each a step, each undoable
+      // perspective first: a card shot at an angle is a keystone, and its long axis (what straighten reads) leans
+      await this.act('rectify', [{ all: true }], {}, 'pass');
       await this.act('straighten', [{ all: true }], {}, 'pass');
-      const hidden = this.hiddenItems();
-      if (hidden.length && this.project?.id === craft) await this.act('interpolate', hidden.map((item) => ({ item })), { maxAddPct: 40 }, 'pass');
+      // every item is looked at: the action knows its family (a bookmark narrower than the others had a strip
+      // hidden under a neighbour; a bite out of a convex one was a tassel) and says what it filled
+      if (this.project?.id === craft) await this.act('interpolate', [{ all: true }], { maxAddPct: 40 }, 'pass');
+      // the bitten ones have all four corners now: their perspective too (the rest are square already, so untouched)
+      if (this.project?.id === craft) await this.act('rectify', [{ all: true }], {}, 'pass');
+      // a set is cut one size: pairs together, or all of one kind (five bookmarks), like the one shot best
+      if (this.project?.id === craft && setsOf(this.craft.doc, this.craft.doc.items.map((i) => i.id)).length) await this.act('same-size', [{ all: true }], {}, 'pass');
       return;
     }
     const straighten = this.stepKey('straighten');
@@ -701,6 +776,27 @@ export class AppState {
     const sheet = plan.sheets.find((s) => s.placements.some((p) => p.partId === pid)) ?? plan.sheets[0];
     return sheetFile(plan, sheet.n, format);
   }
+  /** Cut shows the plan's sheets when they differ from the layers: separate items (a part's engraving and cut share
+   *  a sheet, pairs and fit to board) and kits. Stacked art keeps one sheet per layer, tracked through the run. */
+  get planOnCut() { return Boolean(this.cutPlan) && (this.layers.separateItems || this.layers.kind === '3d' || this.craft.doc.sources.some((x) => x.id === 'svg-import')); }
+  /** Views · a kit's sheets as read from its cut-plan picture, to look at before cutting: each sheet's pieces (cut)
+   *  and marks (engrave) in sheet mm, with the pieces counted */
+  get kitSheets(): { name: string; pieces: number; sizeMm: [number, number]; passes: { kind: string; d: string }[]; view: { x: number; y: number; w: number; h: number } }[] {
+    const d = (paths: [number, number][][]) => paths.map((l) => `M${l.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join('L')}Z`).join('');
+    return this.layers.plan.map((s) => ({ name: s.name, pieces: s.pieces, sizeMm: s.sizeMm, view: { x: 0, y: 0, w: s.sizeMm[0], h: s.sizeMm[1] },
+      passes: [...(s.engrave.length ? [{ kind: 'engrave', d: d(s.engrave) }] : []), { kind: 'cut', d: d(s.cut) }] }));
+  }
+  /** Cut · the plan's sheets ready to draw: each pass as an SVG path in sheet mm, framed on the used area */
+  get planSheets(): { n: number; name: string; colour: string; material: string; board: { wMm: number; hMm: number }; view: { x: number; y: number; w: number; h: number }; passes: { kind: string; d: string }[]; warnings: string[] }[] {
+    const plan = this.cutPlan; if (!plan) return [];
+    return plan.sheets.map((sh) => {
+      const pts = sh.passes.flatMap((p) => p.shapesMm.flat());
+      const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+      const [x0, y0, x1, y1] = pts.length ? [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] : [0, 0, sh.board.wMm, sh.board.hMm];
+      return { n: sh.n, name: sh.name, colour: sh.colour, material: sh.material, board: sh.board, view: { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) }, warnings: sh.warnings ?? [],
+        passes: sh.passes.map((p) => ({ kind: p.kind, d: p.shapesMm.map((l) => `M${l.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join('L')}Z`).join('') })) };
+    });
+  }
   /** every sheet as SVG + DXF in one zip — said in the chat */
   sheetsZip() {
     const plan = this.cutPlan; if (!plan) return null;
@@ -833,7 +929,16 @@ export class AppState {
   }
   /** Assemble · Spark's instructions once written for this craft, else the code-derived draft from its layers or parts. */
   instructions = $state<AssemblyStep[] | null>(null);
-  get assembly(): AssemblyStep[] { return this.instructions ?? assemblySteps({ kind: this.layers.kind, layers: this.layers.layers, set: this.layers.data, joinery: this.layers.joinery, multiple: this.layers.imageBrief?.arrangement === 'multiple-items' }); }
+  get assembly(): AssemblyStep[] {
+    if (this.instructions) return this.instructions;
+    // the cut plan says which sheet each item is on (pairs share one; fit to board packs several)
+    const plan = this.planOnCut ? this.cutPlan : null, doc = this.craft.doc;
+    const sheetsOf = plan ? (item: string) => { const id = doc.items.find((i) => i.name === item)?.id; return plan.sheets.filter((s) => s.placements.some((p) => p.itemId === id)).map((s) => s.n); } : undefined;
+    const kit = this.layers.plan.length ? this.layers.plan.map((s) => ({ name: s.name, pieces: s.pieces })) : undefined;
+    // the pairs and sets found at Layers (by shape) carry through: partners side by side, one step each naming the other
+    const groups = doc.groups.map((g) => ({ name: g.name, kind: g.kind, items: g.items.map((id) => doc.items.find((i) => i.id === id)?.name).filter((n): n is string => Boolean(n)) }));
+    return assemblySteps({ kind: this.layers.kind, layers: this.layers.layers, set: this.layers.data, joinery: this.layers.joinery, multiple: this.layers.imageBrief?.arrangement === 'multiple-items', sheetsOf, kit, groups });
+  }
   /** Katachi's word on a step, from what the models found (falls back to the step's guide copy). */
   noteFor(id: StepId): string {
     const f = this.layers;
@@ -845,7 +950,9 @@ export class AppState {
       case 'segment': return !f.regions.length ? 'Finding the parts of your photo that become layers…' : `I found ${f.regions.length} regions in your photo: ${f.regions.slice(0, 6).map((r) => `${r.name} ${r.pct}%`).join(', ')}. ${f.kept.length} kept (${f.keptPct}%). Toggle any region, or tell me \u201cdrop the ${f.kept[0]?.name ?? 'frame'}\u201d.`;
       case 'layers': return `${f.layers.length} layers, back to front: ${f.layers.map((l) => l.name).join(' \u00b7 ')}. Pick a layer to see what shows and what hides behind the ones in front \u2014 or tell me \u201cmerge ${f.selected.name} down\u201d.`;
       case 'gaps': return `${f.selected.name} is ${f.selected.hiddenPct}% hidden behind the layers in front. Across the stack you\u2019d use ${f.materialPct}% of ${f.layers.length} full sheets. Tell me \u201cmake ${f.selected.name} solid\u201d or \u201cleave ${f.selected.name} open\u201d, or pick a rule.`;
-      case 'output': return f.sheetPaths.length
+      case 'output': return this.planOnCut && this.cutPlan
+        ? `${this.cutPlan.sheets.length} sheet${this.cutPlan.sheets.length === 1 ? '' : 's'} for the ${f.currentDevice.label}, laid out “${this.cutLayouts.find((o) => o.value === f.cutLayout)?.label ?? 'One per sheet'}”. Choose how the parts go on sheets, download them, or send them to the cut queue.`
+        : f.sheetPaths.length
         ? `${f.sheetPaths.length} sheets traced from your masks: ${f.sheetPaths.reduce((a, s) => a + s.pathCount, 0)} closed paths, ${f.sheetPaths.reduce((a, s) => a + s.cutLengthMm, 0).toFixed(0)} mm of cut for the ${f.currentDevice.label}. Feed a sheet and send it, or download the paths.`
         : `${f.layers.length} sheets for the ${f.currentDevice.label} (${f.currentDevice.format}). The traced paths appear here once the masks are in \u2014 go back to Layers if the count looks wrong.`;
       case 'assemble': return `Here\u2019s how ${this.title} goes together: ${this.assembly.slice(0, 3).map((s, i) => `${i + 1}. ${s.title}`).join('  ')} Tick each step off, then Save craft so you can find it again.`;
@@ -1255,9 +1362,20 @@ export class AppState {
     const said = this.engineOn && /^\/make\/(layers|gaps|output)$/.test(path) && !BACKDROP_ASK.test(text) ? fastPath(text, this.craft.doc) : null;
     if (said && !(said.kind === 'calls' && said.calls[0].action === 'resize' && !this.layers.separateItems)) { this.flow.conversation.ingestTranscript(text, quote); return this.runSaid(said); }
     this.flow.conversation.ingestTranscript(text, quote);
+    // several actions in one ask: planned together, before any one-verb branch takes just its first half
+    if (this.engineOn && /^\/make\/(layers|gaps|output)$/.test(path) && manyActions(text)) {
+      void this.planAndRun(text).then((done) => { if (done === true) return; if (done) this.flow.conversation.say(done.reply); else this.refineFallback(text, path, step, layer, { planned: true }); });
+      return;
+    }
     // "use 3 layers": regroup the whole picture's colours
     const count = /\b(\d{1,2})\s+(colour |color )?layers\b/i.exec(text);
+    if (count && this.layers.regionList.length && this.engineOn && namesAStack(text)) {
+      this.layers.addNote({ step, text });
+      void this.planAndRun(text).then((done) => { if (done === true) return; this.flow.conversation.say(done ? done.reply : 'Say the layers back to front with their colours (“white base, black, red, white flowers, gold”).'); });
+      return;
+    }
     if (count && this.layers.regionList.length) {
+      this.layers.layerPlan = null;
       const k = Math.max(2, Math.min(8, Number(count[1])));
       this.layers.addNote({ step, text });
       this.flow.conversation.say(`Regrouping the colours into ${k} layers.`);
@@ -1306,7 +1424,7 @@ export class AppState {
         if (op && this.layers.regionForLayer(target)?.paths?.length) { void this.refineLayer(target.n, text, { echo: false, op: op.kind === 'smoother' && area ? { kind: 'smoothArea', box: area, strength: /jitter|wobbl/i.test(text) ? 3 : 2 } : undefined }); return; }
         // free text the keywords do not cover: Muse Spark reads it as one edit, code applies it
         // an action the fast path couldn't read plainly (several steps, or layers named loosely): Spark plans it
-        if (this.engineOn && ACTION_WORDS.test(text)) return this.planAndRun(text).then((done) => (done ? undefined : this.interpretAndApply(target.n, text, path, step, layer)));
+        if (this.engineOn && ACTION_WORDS.test(text)) return this.planAndRun(text).then((done) => (done === true ? undefined : this.interpretAndApply(target.n, text, path, step, layer)));
         if (this.project && this.layers.regionForLayer(target)?.paths?.length) { void this.interpretAndApply(target.n, text, path, step, layer); return; }
         this.refineFallback(text, path, step, layer);
         return;
@@ -1322,10 +1440,19 @@ export class AppState {
     }
     this.refineFallback(text, path, step, layer);
   }
-  private refineFallback(text: string, path: string, step: string, layer: string | undefined) {
+  private refineFallback(text: string, path: string, step: string, layer: string | undefined, o: { planned?: boolean } = {}) {
     void path;
     const applied = this.applyChatCommand(text);
     if (applied) { this.save(); this.flow.conversation.say(`Done — ${applied}. Saved with the craft.`); return; }
+    // anything the fixed phrases don't cover: Muse Spark reads what was meant and picks the actions (never just "noted")
+    if (!o.planned && this.project) {
+      void this.planAndRun(text).then((done) => {
+        if (done === true) return;
+        if (done) { this.flow.conversation.say(done.reply); return; }
+        this.refineFallback(text, path, step, layer, { planned: true });
+      });
+      return;
+    }
     const note = { step, ...(layer ? { layer } : {}), text };
     this.layers.addNote(note);
     const c = this.flow.conversation, key = `${this.project?.id ?? 'craft'}:note:${c.log.length}`;

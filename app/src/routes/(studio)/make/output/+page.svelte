@@ -6,6 +6,7 @@ import LayeredScene from '$lib/components/illustrations/LayeredScene.svelte';
 import SheetSvg from '$lib/components/SheetSvg.svelte';
 import CutPreview from '$lib/components/CutPreview.svelte';
 import LayerSwatch from '$lib/components/illustrations/LayerSwatch.svelte';
+import PlanSheet from '$lib/components/PlanSheet.svelte';
 import { copy, gapRules, guide, type GapRule } from '$lib/content/layers';
 import { useApp } from '$lib/state/context';
 import { stepContext } from '$lib/state/step-context.svelte';
@@ -14,7 +15,7 @@ import { saveFile } from '$lib/components/save-file';
 // feed the sheet's material, send it, watch it cut, check it, then the next sheet.
 const app = useApp();
 const f = app.layers;
-$effect(() => app.setScreen(app.title, `${copy.output.sub} · ${f.layers.length} sheets`));
+$effect(() => app.setScreen(app.title, `${copy.output.sub} · ${app.planOnCut ? app.cutPlan!.sheets.length : f.layers.length} sheets`));
 const ctx = stepContext(app, 'Output', output);
 const rows = $derived<[string, string][]>([['Format', f.currentDevice.format], ['Settings', f.currentDevice.settings], ['Time', f.currentDevice.time]]);
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -26,6 +27,7 @@ const gapRuleOptions = gapRules.map((g) => ({ label: g.label, value: g.id }));
 const preview = $derived(f.previewFor(f.jobLayer.n));
 // the hand-off: the craft laid out on sheets for this device (design/15 §5)
 const plan = $derived(app.cutPlan);
+const planned = $derived(app.planOnCut ? app.planSheets : []);
 const layouts = $derived(app.cutLayouts);
 const warnings = $derived(plan?.sheets.flatMap((s) => s.warnings ?? []) ?? []);
 function downloadAll() { const z = app.sheetsZip(); if (z) saveFile(z.name, 'application/zip', z.bytes); else app.exportSheets(); }
@@ -87,6 +89,22 @@ function downloadSheet(format: 'svg' | 'dxf') { const x = app.sheetDownload(f.jo
         </div>
       </section>
     {/if}
+    {#if planned.length}
+    <section aria-label="Sheets" class="flex flex-col gap-4" data-plan-sheets={planned.length}>
+      <header class="lt-md:hidden flex items-start justify-between gap-4">
+        <div><h2 class="font-heading text-head font-normal tracking-display">{planned.length} sheet{planned.length === 1 ? '' : 's'} · {planned[0].board.wMm} × {planned[0].board.hMm} mm</h2><p class="text-ui text-ink-mute mt-1">Laid out “{layouts.find((o) => o.value === f.cutLayout)?.label ?? 'One per sheet'}” for the {f.currentDevice.label}: engraving first, then the holes, then the outlines.</p></div>
+        <p class="readout text-ink whitespace-nowrap mt-2">{app.title.toLowerCase().replace(/\s+/g, '-')}_S01–S{pad(planned.length)}</p>
+      </header>
+      <div class="grid grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
+        {#each planned as sh (sh.n)}
+          <div class="rounded-lg border bg-paper-soft p-2 md:p-3 flex flex-col gap-2 {sh.warnings.length ? 'border-warning' : 'border-paper-edge'}">
+            <div class="relative aspect-square rounded-md bg-paper border border-paper-edge p-3 md:p-4"><PlanSheet passes={sh.passes} view={sh.view} label={`Sheet ${pad(sh.n)}, ${sh.name}: ${sh.passes.length} pass${sh.passes.length === 1 ? '' : 'es'}`} /></div>
+            <p class="flex items-center gap-2 text-ui"><LayerSwatch colour={sh.colour} size="sm" /><span class="flex-1 truncate">{pad(sh.n)} · {sh.name}</span><span class="meta">{Math.round(sh.view.w)} × {Math.round(sh.view.h)} mm</span></p>
+          </div>
+        {/each}
+      </div>
+    </section>
+    {:else}
     <section aria-label="Sheets" class="flex flex-col gap-4">
       <header class="lt-md:hidden flex items-start justify-between gap-4">
         <div><h2 class="font-heading text-head font-normal tracking-display">{f.layers.length} sheets · {sheetSize}</h2><p class="text-ui text-ink-mute mt-1">Each sheet has 3 registration holes (accent) so the stack lines up on pins.</p></div>
@@ -107,5 +125,6 @@ function downloadSheet(format: 'svg' | 'dxf') { const x = app.sheetDownload(f.jo
         {/each}
       </div>
     </section>
+    {/if}
   </div>
 </StepScreen>

@@ -15,7 +15,10 @@ import { rotate } from './rotate';
 import { simplify } from './simplify';
 import { smooth } from './smooth';
 import { weld } from './weld';
+import { cleanupActions } from './cleanup';
+import { rectify } from './rectify';
+import { sameSize } from './samesize';
 
 export const geometryActions = [flip, mirror, rotate, quantity, smooth, simplify, offset, weld, bridge, addHole, align, distribute];
 let done = false;
-export function registerAll() { if (done) return; done = true; for (const a of [...structureActions, ...analysisActions, ...geometryActions]) register(a as never); }
+export function registerAll() { if (done) return; done = true; for (const a of [...structureActions, ...analysisActions, ...geometryActions, ...cleanupActions, rectify, sameSize]) register(a as never); }

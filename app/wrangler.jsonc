@@ -1,12 +1,37 @@
 {
   "name": "katachi",
   "compatibility_date": "2026-10-27",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "keep_vars": true,
   "workers_dev": true,
   "preview_urls": true,
   "main": "worker-entry.js",
-  "routes": [{ "pattern": "katachi.sensei-hq.com", "custom_domain": true }],
-  "observability": { "enabled": true },
-  "assets": { "binding": "ASSETS", "directory": ".svelte-kit/cloudflare" }
+  "routes": [
+    {
+      "pattern": "katachi.sensei-hq.com",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".svelte-kit/cloudflare"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "katachi",
+      "database_id": "a4a24836-8e75-4d60-b17f-21111ae42df4",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "CF_ACCESS_TEAM_DOMAIN": "sensei-hq.cloudflareaccess.com",
+    "CF_ACCESS_AUD": "8f2a4344ea535aa96d72706f7dad2bf15a4aa86ebd964fe239d9e1e7c6a532c2",
+    "ADMIN_EMAILS": "hi@sensei-hq.com,jerry.thomas.in@icloud.com"
+  }
 }

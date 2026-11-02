@@ -40,6 +40,9 @@ export interface ItemDoc {
   qty?: number;
   /** the model's call: this item is small or fine enough to need a closer look (design/15 §2) */
   needsEnhance?: { reason: string };
+  /** what the passes found about the photo of it: how far its corners were off square (perspective), how much of it
+   *  was filled in from what showed — the item shot squarest and whole is the size reference for its family */
+  shot?: { skewDeg?: number; filledPct?: number };
 }
 export interface PartDoc {
   id: Id; name: string;

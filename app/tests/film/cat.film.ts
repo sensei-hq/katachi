@@ -3,7 +3,13 @@ import { hasMetaKey } from '../e2e/invite';
 import { beginFilm, chapter, showCaption, humanType, pause, finishFilm } from './director';
 import { replayCat, sample } from './replay';
 
-// REC 0:55–1:13 · the layered cat: upload, Analyze, exploded view, finer whiskers, the queue run, Assemble.
+// REC · the layered cat: upload, Analyze, the stack said in the chat (five layers, each with the outline), the
+// exploded view, the queue run, Assemble.
+const STACK_ASK = 'use 5 layers: a solid white base, black with cuts for the whiskers to show through, then red, the white flowers, and gold on top. Every layer keeps the full outline.';
+// replayed (no key): the planner's answer for that ask, as Muse Spark plans it live
+const RESTACK = { calls: [{ action: 'restack', refs: [], opts: { outline: true, layers: [
+  { name: 'White base', colour: 'white', solid: true }, { name: 'Black cat', colour: 'black' }, { name: 'Red leaves', colour: 'red' },
+  { name: 'White flowers', colour: 'white' }, { name: 'Gold outline', colour: 'gold' }] } }], reply: 'Rebuilding to your five layers, back to front.', ask: '' };
 const main = (page: Page) => page.getByRole('main');
 const chat = (page: Page) => page.getByRole('complementary', { name: 'Katachi chat' });
 const steps = (page: Page) => chat(page).locator('[data-timeline-entry="step"]');
@@ -13,7 +19,7 @@ const composer = (page: Page) => chat(page).locator('[data-chat-composer]').getB
 test('cat film', async ({ page }) => {
   beginFilm('cat');
   const replayed = process.env.FILM_REPLAY === '1' || !(process.env.FILM_LIVE === '1' || hasMetaKey());
-  if (replayed) await replayCat(page);
+  if (replayed) { await replayCat(page); await page.route('**/api/actions/plan', (r) => r.fulfill({ json: { answer: RESTACK, source: 'live', trace: [] } })); }
   const photo = sample('layered/layered_floral_black_cat_wall_art.jpg.avif');
 
   await showCaption(page, 'A layered paper cat');
@@ -28,14 +34,14 @@ test('cat film', async ({ page }) => {
   await expect(step(page, /Split into \d layers by colour/)).toHaveAttribute('data-step-status', 'done', { timeout: 90_000 });
   await pause(2500);
 
-  await showCaption(page, 'Ask for finer whiskers');
-  await chapter(page, '1:03', 'The exploded view lifts the layers; "make the whiskers finer" re-measures one');
+  await showCaption(page, 'Say how the layers stack');
+  await chapter(page, '1:03', 'The stack in plain words: a solid white base, black with the whiskers cut through, red, white flowers, gold; every layer keeps the outline');
+  await humanType(page, composer(page), STACK_ASK);
+  await expect(step(page, 'Built 5 layers to your stack')).toHaveAttribute('data-step-status', 'done', { timeout: 120_000 });
+  await pause(1500);
   await main(page).getByRole('toolbar', { name: 'Layer tools' }).getByRole('radio', { name: 'Exploded' }).click();
   await expect(main(page).locator('[data-exploded-photo] [data-exploded-layer]').first()).toBeVisible({ timeout: 30_000 });
-  await pause(2000);
-  await humanType(page, composer(page), 'make the whiskers finer');
-  await expect(step(page, /kept the fine detail/)).toHaveAttribute('data-step-status', 'done', { timeout: 90_000 });
-  await pause(2500);
+  await pause(3000);
 
   await showCaption(page, 'Each sheet is cut, then they stack');
   await chapter(page, '1:08', 'The cut queue runs a sheet at 1×; Assemble stacks the layers');

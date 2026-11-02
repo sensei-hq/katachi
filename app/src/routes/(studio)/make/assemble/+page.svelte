@@ -20,8 +20,11 @@ const joined = $derived(f.kind === '3d');
 const pad = (n: number) => String(n).padStart(2, '0');
 // one card per layer, with the instruction for it; sheets in their own colour
 // separate items (bookmarks): each on its own sheet, upright, in its own cell; its engraving lands on it
-const itemNames = $derived([...new Set(f.layers.map((l) => l.itemName ?? ''))]);
-const layerSteps = $derived(f.layers.map((l) => {
+// in the steps' order: a pair's two items (or a set's) come one after the other and sit side by side
+const stepAt = (n: number) => { const i = steps.findIndex((s) => s.layer === n); return i < 0 ? Infinity : i; };
+const ordered = $derived([...f.layers].sort((a, b) => stepAt(a.n) - stepAt(b.n) || a.n - b.n));
+const itemNames = $derived([...new Set(ordered.map((l) => l.itemName ?? ''))]);
+const layerSteps = $derived(ordered.map((l) => {
   const pc = f.pieceFor(l.n);
   return { l, step: steps.find((s) => s.layer === l.n) ?? { title: l.name, detail: '' }, d: f.separateItems ? pc.d : f.cutPathFor(l.n), aspect: f.separateItems ? pc.sheetMm[0] / pc.sheetMm[1] : f.aspect || 1 };
 }));
@@ -91,7 +94,7 @@ const at3d = $derived(Math.min(f.assembleAt, steps.length - 1));
     {#if finished}<p role="status" class="flex items-center gap-2 rounded-md border border-paper-edge bg-paper-soft px-3 py-2 text-ui text-success"><span class="i-solar:check-circle-linear" aria-hidden="true"></span>Saved to your crafts with {steps.length} steps and {f.notes.length} notes.</p>{/if}
     <section aria-label="Putting it together" class="grid md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] rounded-lg border border-paper-edge bg-paper-soft overflow-hidden">
       <figure class="relative m-0 aspect-square max-h-[64vh] w-full bg-paper border-b md:border-b-0 md:border-r border-paper-edge">
-        <StackStage bind:this={stage} {sheets} {placed} {settle} hidden={flying} {finale} aspect={f.aspect || 1} label={finale > 0.5 ? 'The finished piece' : `${placed} of ${f.layers.length} layers placed`} />
+        <StackStage bind:this={stage} {sheets} {placed} paired={steps.some((s) => s.group)} {settle} hidden={flying} {finale} aspect={f.aspect || 1} label={finale > 0.5 ? 'The finished piece' : `${placed} of ${f.layers.length} layers placed`} />
         <figcaption class="absolute left-3 top-3 meta rounded-full border border-paper-edge bg-paper px-3 py-1 text-ink" aria-live="polite">{finale > 0.5 ? 'The finished piece' : `${placed} of ${f.layers.length} layers placed`}</figcaption>
       </figure>
       <div class="p-5 flex flex-col gap-3 min-w-0">
@@ -115,7 +118,7 @@ const at3d = $derived(Math.min(f.assembleAt, steps.length - 1));
           class="rounded-lg border bg-paper-soft p-2.5 grid grid-cols-[72px_minmax(0,1fr)] gap-2.5 items-start transition-transform {i === placed - 1 ? 'border-accent -translate-y-0.5' : 'border-paper-edge'} {i < placed - 1 ? 'opacity-75' : ''}">
           <span class="w-[72px] h-[72px] rounded-md bg-paper p-1" data-card-sheet>{#if x.d}<CutSheet d={x.d} colour={x.l.colour} aspect={x.aspect} label="" small />{/if}</span>
           <div class="min-w-0 flex flex-col gap-1">
-            <p class="eyebrow">{f.separateItems ? `${x.l.itemName} · ${x.l.role === 'engrave' ? 'engrave' : 'cut'}` : `Layer ${i + 1} · ${where(i, layerSteps.length)}`}{app.queue.items.some((q) => q.craftId === app.project?.id) ? (cut.includes(x.l.n) ? ' · cut' : ' · not cut yet') : ''}</p>
+            <p class="eyebrow">{f.separateItems ? `${'group' in x.step && x.step.group ? `${x.step.group} · ` : ''}${x.l.itemName} · ${x.l.role === 'engrave' ? 'engrave' : 'cut'}` : `Layer ${i + 1} · ${where(i, layerSteps.length)}`}{app.queue.items.some((q) => q.craftId === app.project?.id) ? (cut.includes(x.l.n) ? ' · cut' : ' · not cut yet') : ''}</p>
             <h3 class="text-ui font-medium text-ink">{x.l.name}</h3>
             <p class="text-ui text-ink-mute">{x.step.detail}</p>
           </div>

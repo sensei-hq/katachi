@@ -4,8 +4,9 @@
 // per cell for separate items (each engraving lands on its item). Sheets are SVG paths in 0-1000 units of their
 // frame. Presentation only: the page says how many are placed and which one is still in the air.
 type Sheet = { d: string; colour: string; /** separate items: which cell it belongs to, and that sheet's width ÷ height */ cell?: number; aspect?: number; engrave?: boolean };
-let { sheets, placed, settle = 1, hidden = -1, finale = 0, aspect = 1, label }: {
+let { sheets, placed, settle = 1, hidden = -1, finale = 0, aspect = 1, label, paired = false }: {
   sheets: Sheet[]; placed: number; settle?: number; hidden?: number; finale?: number; aspect?: number; label: string;
+  /** separate items in pairs: lay the cells out in an even number of columns */ paired?: boolean;
 } = $props();
 let canvas = $state<HTMLCanvasElement | null>(null);
 let box = $state({ w: 0, h: 0 });
@@ -14,7 +15,8 @@ const cells = $derived(sheets.some((s) => s.cell !== undefined) ? Math.max(...sh
 function frameOf(k: number) {
   const s = sheets[k];
   if (!cells) { const side = Math.min(box.w, box.h * aspect) * 0.84; return { x: (box.w - side) / 2, y: (box.h - side / aspect) / 2, w: side, h: side / aspect }; }
-  const cols = Math.min(cells, 5), rows = Math.ceil(cells / cols), cw = box.w / cols, ch = box.h / rows, c = s?.cell ?? 0;
+  // pairs side by side: an even number of columns, so the two of a pair share a row
+  const cols = paired ? Math.min(cells, cells > 8 ? 6 : 4) : Math.min(cells, 5), rows = Math.ceil(cells / cols), cw = box.w / cols, ch = box.h / rows, c = s?.cell ?? 0;
   const a = s?.aspect ?? 1, fw = Math.min(cw * 0.8, ch * 0.8 * a), fh = fw / a;
   return { x: (c % cols) * cw + (cw - fw) / 2, y: Math.floor(c / cols) * ch + (ch - fh) / 2, w: fw, h: fh };
 }
@@ -35,7 +37,7 @@ function draw() {
     g.fillStyle = sheets[k].colour; if (sheets[k].engrave) g.globalAlpha = 0.85; g.fill(p, 'evenodd'); g.restore();
   }
 }
-$effect(() => { void [sheets, placed, settle, hidden, finale, box.w, box.h, aspect, cells]; draw(); });
+$effect(() => { void [sheets, placed, settle, hidden, finale, box.w, box.h, aspect, cells, paired]; draw(); });
 /** where sheet k lands on screen right now (the page flies it there) */
 export function target(k = 0) { if (!canvas) return null; const r = canvas.getBoundingClientRect(); const f = frameOf(k); return { x: r.left + f.x, y: r.top + f.y, w: f.w, h: f.h }; }
 </script>

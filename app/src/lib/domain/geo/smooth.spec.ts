@@ -113,3 +113,16 @@ describe('geo smooth, ragged outlines (T1 review)', () => {
     }
   });
 });
+
+describe('smooth · a closed loop with one corner', () => {
+  it('keeps the loop (it used to vanish: the one span ran from the corner to itself)', async () => {
+    const { smooth: sm } = await import('./smooth');
+    const { fromLoops, toLoops } = await import('./index');
+    // a round shape with one sharp notch
+    const pts: [number, number][] = Array.from({ length: 40 }, (_, i) => { const a = (i / 40) * Math.PI * 2; return [100 + 80 * Math.cos(a), 100 + 80 * Math.sin(a)]; });
+    pts.push([100, 100]);
+    const out = sm(fromLoops([pts]), { tol: 1, passes: 1 });
+    expect(out.paths[0].segs.length).toBeGreaterThan(0);
+    expect(toLoops(out)[0].length).toBeGreaterThan(10);
+  });
+});

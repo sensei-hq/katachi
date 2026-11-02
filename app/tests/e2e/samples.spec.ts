@@ -9,6 +9,8 @@ import { uploadFromHome } from './start';
 const sample = (p: string) => readFileSync(new URL(`../../../samples/${p}`, import.meta.url));
 const main = (page: Page) => page.getByRole('main');
 const chat = (page: Page) => page.getByRole('complementary', { name: 'Katachi chat' });
+/** Cut's output panel (in the chat column): the device, the sheet layouts, the per-sheet downloads */
+const sheetsPanel = (page: Page) => chat(page).getByRole('region', { name: 'Output' });
 const steps = (page: Page) => chat(page).locator('[data-timeline-entry="step"]');
 const step = (page: Page, title: RegExp | string) => steps(page).filter({ hasText: title }).last();
 async function say(page: Page, text: string) {
@@ -79,6 +81,9 @@ test.describe('samples · end to end', () => {
     // to the end: Cut → the queue takes 5 sheets (one per bookmark, engraving and cut together)
     await chat(page).getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Cut the sheets' }).click();
     await expect(page).toHaveURL(/\/make\/output$/, { timeout: 30_000 });
+    // Cut shows the plan's sheets: one per bookmark, its engraving and cut together (not one per layer)
+    await expect(main(page).getByRole('region', { name: 'Sheets' })).toHaveAttribute('data-plan-sheets', '5', { timeout: 30_000 });
+    await expect(main(page).locator('[data-plan-sheet]')).toHaveCount(5);
     await main(page).getByRole('button', { name: 'Send to the cut queue' }).click();
     await expect(step(page, 'Added 5 sheets to the cut queue')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('navigation', { name: 'Studio sections' }).locator('[data-badge]')).toHaveText('5');
@@ -140,8 +145,7 @@ test.describe('samples · end to end', () => {
     await page.screenshot({ path: 'test-results/samples/earrings-3-queue.png' });
   });
 
-  test.fixme('earrings: with the "pairs together" layout (L3), each left + right pair shares one sheet', async ({ page }) => {
-    // The Cut page has no layout choice yet (Claude's L3 work): one earring per sheet until it lands.
+  test('earrings: "pairs together" puts each left + right pair on one sheet; "fit to board" uses fewer sheets than items', async ({ page }) => {
     const W = 800, H = 729;
     const placed: [string, number[]][] = [['Lattice teardrop left', [36, 45, 132, 185]], ['Lattice teardrop right', [138, 45, 232, 185]], ['Open teardrop left', [385, 48, 482, 185]], ['Open teardrop right', [497, 48, 595, 185]],
       ['Swirl drop left', [265, 365, 360, 522]], ['Swirl drop right', [372, 365, 468, 522]], ['Mandala circle left', [487, 370, 620, 530]], ['Mandala circle right', [632, 370, 768, 530]]];
@@ -151,7 +155,15 @@ test.describe('samples · end to end', () => {
     await expect(step(page, /Found 8 items/)).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
     await chat(page).getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Cut the sheets' }).click();
     await expect(page).toHaveURL(/\/make\/output$/, { timeout: 30_000 });
-    await main(page).getByRole('radio', { name: 'pairs together' }).click({ timeout: 10_000 });
+    await sheetsPanel(page).getByRole('radio', { name: 'Pairs together' }).click({ timeout: 10_000 });
+    await expect(chat(page)).toContainText(/Pairs together: 4 sheets on the/, { timeout: 30_000 });
+    await expect(sheetsPanel(page).locator('[data-cut-plan]')).toHaveAttribute('data-sheets', '4');
+    await expect(main(page).locator('[data-plan-sheet]')).toHaveCount(4);
+    await sheetsPanel(page).getByRole('radio', { name: 'Fit to board' }).click();
+    await expect(chat(page)).toContainText(/Fit to board: \d+ sheets? on the/, { timeout: 60_000 });
+    expect(Number(await sheetsPanel(page).locator('[data-cut-plan]').getAttribute('data-sheets'))).toBeLessThan(8);
+    await page.screenshot({ path: 'test-results/samples/earrings-4-fit-to-board.png' });
+    await sheetsPanel(page).getByRole('radio', { name: 'Pairs together' }).click();
     await main(page).getByRole('button', { name: 'Send to the cut queue' }).click();
     await expect(step(page, 'Added 4 sheets to the cut queue')).toBeVisible({ timeout: 30_000 });
   });
@@ -172,12 +184,19 @@ test.describe('samples · end to end', () => {
     await expect(main(page).getByLabel('Picture 5: cut plan')).toBeVisible({ timeout: 30_000 });
     await expect(step(page, 'Read 11 sheets from your cut plan')).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
     await expect(step(page, 'Read 11 sheets from your cut plan')).toContainText(/A1 · A2 · A3 · A4 · B1 · B2 · B3 · B4 · B5 · B6 · B7/);
+    // the kit can be checked before cutting: every sheet drawn on Views, one shown large
+    const kit = main(page).getByRole('region', { name: 'Kit sheets' });
+    await expect(kit).toHaveAttribute('data-kit-sheets', '11', { timeout: 30_000 });
+    await kit.getByRole('button', { name: 'Show sheet B5' }).click();
+    await expect(kit.getByRole('figure', { name: 'Sheet B5, large' })).toBeVisible();
+    await kit.screenshot({ path: 'test-results/samples/castle-1b-kit-sheets.png' });
     await expect(step(page, 'Read 11 sheets from your cut plan')).toContainText(/approximate/);
     await page.screenshot({ path: 'test-results/samples/castle-1-views.png' });
     await chat(page).getByRole('button', { name: 'Cut the parts' }).click();
     // 22 passes of plan outlines to draw
     await expect(page).toHaveURL(/\/make\/output$/, { timeout: 30_000 });
-    await expect.poll(async () => page.locator('[data-sheet-svg]').count(), { timeout: 60_000 }).toBeGreaterThanOrEqual(11);
+    await expect.poll(async () => page.locator('[data-plan-sheet]').count(), { timeout: 60_000 }).toBe(Number(await sheetsPanel(page).locator('[data-cut-plan]').getAttribute('data-sheets')));
+    expect(await page.locator('[data-plan-sheet]').count()).toBeGreaterThanOrEqual(11);
     await page.screenshot({ path: 'test-results/samples/castle-2-sheets.png', fullPage: true });
     // to the end: the queue takes the sheets, one runs
     await main(page).getByRole('button', { name: 'Send to the cut queue' }).click();
@@ -195,10 +214,15 @@ test.describe('samples · end to end', () => {
     await expect(bed.locator('[data-cut-run]')).toHaveAttribute('data-phase', 'running', { timeout: 10_000 });
     await expect(bed.locator('[data-cut-run]')).toHaveAttribute('data-phase', /weeding|cut/, { timeout: 60_000 });
     await page.screenshot({ path: 'test-results/samples/castle-3-queue.png' });
+    // Assemble walks the kit's own sheets, not a generic box
+    await page.getByRole('navigation', { name: 'Studio sections' }).getByRole('link', { name: 'Assemble' }).click();
+    await expect(page).toHaveURL(/\/make\/assemble$/, { timeout: 30_000 });
+    await expect(main(page)).toContainText(/Cut the kit sheets in order\s*11 sheets, about \d+ pieces/, { timeout: 30_000 });
+    await expect(main(page)).toContainText('Step 1 of 14');
+    await expect(main(page)).not.toContainText('roof panels');
   });
 
-  test.fixme('castle: per-sheet SVG / DXF downloads (L3)', async ({ page }) => {
-    // The download buttons land with L3: a `download` event whose file starts with `<?xml` (SVG) or `0\nSECTION` (DXF).
+  test('castle: per-sheet SVG / DXF downloads', async ({ page }) => {
     const pictures = [{ index: 1, kind: 'view', angle: 'front', note: '' }, { index: 2, kind: 'view', angle: 'three-quarter', note: '' }, { index: 3, kind: 'detail', angle: 'unknown', note: 'lit windows' },
       { index: 4, kind: 'view', angle: 'top', note: '' }, { index: 5, kind: 'plan', angle: 'unknown', note: 'parts layout, 11 sheets' }];
     await page.route('**/api/views', (r: Route) => r.fulfill({ json: { brief: { subject: 'a lit wooden castle kit', likelyMaterial: 'wood', realSizeMm: { w: 300, h: 320, d: 300, basis: 'a desk-sized kit' }, pictures }, source: 'live', trace: [] } }));
@@ -209,10 +233,12 @@ test.describe('samples · end to end', () => {
     await expect(step(page, 'Read 11 sheets from your cut plan')).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
     await chat(page).getByRole('button', { name: 'Cut the parts' }).click();
     await expect(page).toHaveURL(/\/make\/output$/, { timeout: 30_000 });
-    const dl = page.waitForEvent('download', { timeout: 30_000 });
-    await main(page).getByRole('button', { name: 'Download SVG' }).click({ timeout: 10_000 });
-    const path = await (await dl).path();
-    const head = readFileSync(path!).subarray(0, 9).toString();
-    expect(head === '<?xml' || head.startsWith('0\nSECT')).toBe(true);
+    for (const [label, head] of [['This sheet · SVG', /^<\?xml/], ['DXF', /^0\r?\nSECTION/]] as const) {
+      const dl = page.waitForEvent('download', { timeout: 30_000 });
+      await sheetsPanel(page).getByRole('button', { name: label, exact: true }).click({ timeout: 10_000 });
+      const file = await dl;
+      expect(file.suggestedFilename()).toMatch(label === 'DXF' ? /\.dxf$/ : /\.svg$/);
+      expect(readFileSync((await file.path())!).subarray(0, 16).toString()).toMatch(head);
+    }
   });
 });

@@ -50,6 +50,8 @@ export class ActionState {
       const ok = def.can(doc, input);
       if (ok !== true) return this.refuse(key, ok);
       this.say.think?.(key, `${def.label}…`);
+      // a long group (the clean-up pass) lets the page draw between its actions
+      if (calls.length > 2) await new Promise((r) => setTimeout(r, 0));
       let r;
       try { r = await def.run(doc, input, this.ctx()); }
       catch (e) { return this.refuse(key, `${def.label} failed`, e instanceof Error ? e.message : String(e)); }

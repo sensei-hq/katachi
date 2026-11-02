@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { LayerFlowState } from './layer-flow.svelte';
 
 const square: [number, number][] = [[100, 100], [400, 100], [400, 400], [100, 400]];
@@ -67,6 +67,7 @@ describe('chat carries the real findings and applies plain commands', () => {
     expect(app.layers.regions.find((r) => r.name === 'Sun')?.on).toBe(false);
     expect(app.flow.conversation.log.at(-1)?.text).toContain('Done');
     app.refine('make it sparkle', '/make/layers');
-    expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted');
+    // Muse Spark is asked first (no answer here): then it is noted honestly
+    await vi.waitFor(() => expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted'));
   }, 15000);
 });

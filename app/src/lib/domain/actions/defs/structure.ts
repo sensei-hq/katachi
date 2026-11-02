@@ -167,17 +167,29 @@ export const ungroup: ActionDef<Record<string, never>> = {
 };
 
 const insidePoly = ([x, y]: [number, number], poly: [number, number][]) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
-/** a cut's separate pieces: each outline with the holes inside it */
-function pieces(g: geo.Geometry): geo.Geometry[] {
+/** the pieces worth a layer of their own: specks under 2% of the biggest piece (trace noise, tiny islands) stay with it */
+function realPieces(g: geo.Geometry): geo.Geometry[] {
+  // an island inside a hole (a fretwork eye) belongs to the piece around it: only outer outlines are pieces
+  // a loop is inside another when its first point is, or when its box sits within the other's (a traced outline
+  // drawn over the outline it was traced from touches that edge, so its first point can sit on it)
   const loops = geo.toLoops(g, 0.5).filter((l) => l.length > 2);
-  const depth = loops.map((l, i) => loops.filter((o, j) => j !== i && insidePoly(l[0], o)).length);
-  return loops.map((l, i) => ({ l, i })).filter(({ i }) => depth[i] % 2 === 0).map(({ l, i }) => geo.fromLoops([l, ...loops.filter((h, j) => depth[j] === depth[i] + 1 && insidePoly(h[0], l))]));
+  const box = loops.map((l) => { const xs = l.map((q) => q[0]), ys = l.map((q) => q[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; });
+  const size = loops.map((l) => Math.abs(l.reduce((a, [x, y], k) => { const [u, v] = l[(k + 1) % l.length]; return a + x * v - u * y; }, 0)) / 2);
+  const within = (i: number, j: number) => insidePoly(loops[i][0], loops[j]) || (size[i] < size[j] && box[i][0] >= box[j][0] - 1 && box[i][1] >= box[j][1] - 1 && box[i][2] <= box[j][2] + 1 && box[i][3] <= box[j][3] + 1);
+  const top = loops.map((_, i) => !loops.some((_, j) => j !== i && within(i, j)));
+  const outer = loops.map((l, i) => ({ l, i })).filter(({ i }) => top[i])
+    .map(({ l, i }) => geo.fromLoops([l, ...loops.filter((_, j) => j !== i && !top[j] && within(j, i))]));
+  const all = outer.map((x) => ({ g: x, a: Math.abs(geo.area(x)) })).sort((p, q) => q.a - p.a);
+  if (all.length < 2) return all.map((x) => x.g);
+  const min = all[0].a * 0.02, big = all.filter((x) => x.a >= min), specks = all.filter((x) => x.a < min);
+  if (specks.length) big[0] = { ...big[0], g: geo.fromLoops([...geo.toLoops(big[0].g, 0.5), ...specks.flatMap((x) => geo.toLoops(x.g, 0.5))]) };
+  return big.map((x) => x.g);
 }
 export const split: ActionDef<Record<string, never>> = {
   id: 'split', label: 'Split', icon: 'i-solar:scissors-linear', scope: 'part', arity: 'one', kind: 'code',
   hint: 'Split a layer into its separate pieces (each piece with its own holes).', schema: { type: 'object', properties: {} }, defaults: {},
   says: [/\bsplit\b|\bseparate (the )?pieces\b/i],
-  can(d, i) { const pid = partIds(d, i.targets)[0], p = d.items.flatMap((x) => x.parts).find((x) => x.id === pid); const cut = p?.ops.find((o) => o.kind === 'cut'); return p?.from?.length || (cut && pieces(cut.geometry).length > 1) ? true : 'One piece — nothing to split'; },
+  can(d, i) { const pid = partIds(d, i.targets)[0], p = d.items.flatMap((x) => x.parts).find((x) => x.id === pid); const cut = p?.ops.find((o) => o.kind === 'cut'); return p?.from?.length || (cut && realPieces(cut.geometry).length > 1) ? true : 'One piece — nothing to split'; },
   run(doc, { targets }, ctx): ActionResult {
     const pid = partIds(doc, targets)[0], it = itemOfPart(doc, pid)!, p = it.parts.find((x) => x.id === pid)!, cut = p.ops.find((o) => o.kind === 'cut')!;
     // a merged part gives back the parts it was made from, where they were
@@ -185,7 +197,7 @@ export const split: ActionDef<Record<string, never>> = {
       const back = p.from.map((x, k) => ({ ...clone(x), z: p.z - (p.from!.length - 1 - k) / 100 }));
       return { items: [{ ...clone(it), parts: renumber([...it.parts.filter((x) => x.id !== pid), ...back]) }], summary: `Split ${p.name} back into ${back.map((x) => x.name).join(' and ')}` };
     }
-    const made: PartDoc[] = pieces(cut.geometry).map((g, k) => ({ ...clone(p), id: ctx.newId(), name: `${p.name} · ${k + 1}`, z: p.z + k / 100, ops: [{ id: ctx.newId(), kind: 'cut', geometry: g }] }));
+    const made: PartDoc[] = realPieces(cut.geometry).map((g, k) => ({ ...clone(p), id: ctx.newId(), name: `${p.name} · ${k + 1}`, z: p.z + k / 100, ops: [{ id: ctx.newId(), kind: 'cut', geometry: g }] }));
     // engraving stays with the first piece (it can't be told apart by piece without the photo)
     const engr = p.ops.filter((o) => o.kind !== 'cut'); if (engr.length) made[0].ops = [...engr.map((o) => ({ ...clone(o), id: ctx.newId() })), ...made[0].ops];
     return { items: [{ ...clone(it), parts: renumber([...it.parts.filter((x) => x.id !== pid), ...made]) }], summary: `Split ${p.name} into ${made.length} pieces` };

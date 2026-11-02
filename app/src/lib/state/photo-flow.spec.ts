@@ -102,7 +102,8 @@ describe('photo → outline → colour layers in AppState (code measures; no SAM
     const app = await craft();
     const steps = app.flow.conversation.log.filter((e) => e.step).map((e) => e.step!);
     expect(steps.map((s) => [s.title, s.status])).toEqual([
-      ['I see layered wall art', 'done'], ['Background removed', 'done'], ['Found 1 item: layered wall art', 'done'], ['Split into 4 layers by colour', 'done']
+      ['I see layered wall art', 'done'], ['Background removed', 'done'], ['Found 1 item: layered wall art', 'done'], ['Split into 4 layers by colour', 'done'],
+      ['Cleaned up 4 layers: specks and wire bits off, repeated holes evened out, outlines smoothed', 'done']
     ]);
     expect(steps[3].swatches?.map((x) => x.label)).toEqual(expect.arrayContaining(['Gold backer']));
     expect(steps[1].calls.map((c) => c.model)).toEqual(['SAM 3.1']);

@@ -18,3 +18,9 @@ supabase/.branches/
 docs/transcripts
 .claude
 docs/submission/
+generated_images/
+Claude outputs/
+.patches/
+docs/film/
+!docs/fil,/script.md
+docs/ops

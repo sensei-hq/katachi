@@ -1,4 +1,5 @@
 <script lang="ts">
+import { resolve } from '$app/paths';
 import { Button, Card } from '@rokkit/ui';
 import { InputCheckbox, InputField } from '@rokkit/forms';
 import { ThemeSwitcherToggle } from '@rokkit/app';
@@ -7,6 +8,7 @@ import HeroJourney from '$lib/components/HeroJourney.svelte';
 import { howItWorks } from '$lib/content/journey';
 import { layerSets } from '$lib/content/layers';
 import { versionLabel } from '$lib/content/version';
+import { policyLinks, siteLinks } from '$lib/content/site';
 import { useApp } from '$lib/state/context';
 // Landing (signed out): what Katachi makes, how the Muse models do it, and the gate (docs/design/07 G1–G3).
 let { data }: { data: { signedIn: boolean } } = $props();
@@ -17,6 +19,14 @@ const consents = [
   { key: 'safetyAck', label: "I'll never leave my laser unattended", hint: "Burn Watch is advisory — it can't stop a fire." },
   { key: 'noPersonalAck', label: 'No personal photos', hint: 'The demo runs on free credits, so uploads may be used by Meta.' }
 ] as const;
+// no invite yet: ask for one (saved for /admin, and emailed to hi@)
+let asking = $state(false), reqEmail = $state(''), reqNote = $state(''), reqTrap = $state(''), reqMsg = $state(''), reqSent = $state(false);
+async function requestInvite(e: SubmitEvent) {
+  e.preventDefault();
+  const r = await session.requestInvite(reqEmail, reqNote, reqTrap);
+  reqSent = r.ok; reqMsg = r.msg;
+}
+const why = typeof location === 'undefined' ? '' : new URLSearchParams(location.search).get('why') ?? '';
 async function enter() { if (await session.enterFromForm()) location.href = '/workshop'; }
 const pad = (n: number) => String(n).padStart(2, '0');
 </script>
@@ -26,7 +36,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
     <span class="grid place-items-center w-8 h-8 rounded-md bg-brand-tile"><KatachiMark size={20} /></span>
     <span class="font-heading text-lede">Katachi</span>
     <span class="flex-1"></span>
-    <span class="lt-md:hidden meta">Meta Global AI Developer Hackathon · demo</span>
+    <nav aria-label="Site" class="flex items-center gap-1 md:gap-3">{#each siteLinks as l (l.href)}<a href={resolve(l.href)} class="px-2 py-1 rounded-md text-ui text-ink-mute hover:text-ink">{l.label}</a>{/each}</nav>
     <ThemeSwitcherToggle variant="single" />
   </header>
 
@@ -45,8 +55,8 @@ const pad = (n: number) => String(n).padStart(2, '0');
         <Card class="p-5 md:p-6 flex flex-col gap-4 md:sticky md:top-6">
           <section aria-label="Welcome back" class="flex flex-col gap-4">
             <div class="flex flex-col gap-1"><p class="eyebrow">You're in</p><p class="text-ui text-ink-mute">Your invite is active on this browser.</p></div>
-            <Button size="lg" variant="primary" class="w-full" label="Open the workshop" iconRight="i-solar:arrow-right-linear" href="/workshop" target="" />
-            <Button style="outline" class="w-full" label="Your crafts" href="/workshop" target="" />
+            <Button size="lg" variant="primary" class="w-full" label="Open the workshop" iconRight="i-solar:arrow-right-linear" href={resolve('/workshop')} target="" />
+            <Button style="outline" class="w-full" label="Your crafts" href={resolve('/workshop')} target="" />
           </section>
         </Card>
       {:else}
@@ -61,8 +71,23 @@ const pad = (n: number) => String(n).padStart(2, '0');
             </label>
           {/each}
         </div>
-        {#if session.msg}<p role="status" class="text-ui {session.gated ? 'text-success' : 'text-danger'}">{session.msg}</p>{/if}
+        {#if session.msg}<p role="status" class="text-ui {session.gated ? 'text-success' : 'text-danger'}">{session.msg}</p>{:else if why}<p role="status" class="text-ui text-danger">{why}</p>{/if}
         <Button size="lg" variant="primary" class="w-full" label="Enter the workshop" iconRight="i-solar:arrow-right-linear" onclick={enter} />
+        <section aria-label="Request an invite" class="hair-t pt-4 flex flex-col gap-3">
+          {#if !asking}
+            <button type="button" class="text-ui text-ink-mute hover:text-ink text-left" onclick={() => (asking = true)}>No invite yet? <span class="text-accent">Request one</span></button>
+          {:else if reqSent}
+            <p role="status" class="text-ui text-success">{reqMsg}</p>
+          {:else}
+            <form class="flex flex-col gap-3" onsubmit={requestInvite}>
+              <InputField name="request-email" type="email" label="Your email" placeholder="you@example.com" autocomplete="email" bind:value={reqEmail} />
+              <InputField name="request-note" type="text" label="What would you make? (optional)" placeholder="Layered paper art, earrings…" bind:value={reqNote} />
+              <input type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" class="hidden" bind:value={reqTrap} />
+              {#if reqMsg}<p role="status" class="text-ui text-danger">{reqMsg}</p>{/if}
+              <Button type="submit" style="outline" class="w-full" label="Request an invite" />
+            </form>
+          {/if}
+        </section>
       </Card>
       {/if}
     </section>
@@ -82,5 +107,5 @@ const pad = (n: number) => String(n).padStart(2, '0');
       </ol>
     </section>
   </main>
-  <footer class="hair-t px-4 md:px-10 py-5 meta text-center">Muse models on the Meta Model API · cut paths are computed in code · <span data-app-version>{versionLabel}</span></footer>
+  <footer class="hair-t px-4 md:px-10 py-5 meta flex flex-wrap gap-x-4 gap-y-1 justify-center"><span>Muse models on the Meta Model API · cut paths are computed in code</span>{#each policyLinks as l (l.href)}<a href={resolve(l.href)} class="hover:text-ink">{l.label}</a>{/each}<span data-app-version>{versionLabel}</span></footer>
 </div>

@@ -2,7 +2,7 @@
 // Layers that share an item become one item; an item's cut layer and its engraving become one part with two ops;
 // stacked layers become parts by z; a kit layout's sheets become the parts of one kit item. Old crafts open as
 // they were: the geometry is the same, only re-homed (0-1000 photo units → each item's frame px).
-import { fromLoops } from '../geo';
+import { area, fromLoops, toLoops } from '../geo';
 import { toMm, uprightTurn, type Pt } from '../toolpath';
 import type { CraftDoc, GroupDoc, Id, ItemDoc, OpDoc, PartDoc } from './types';
 import { frameSize, tierFor } from './index';
@@ -89,6 +89,21 @@ export function migrateV1(project: V1Project, snap: V1Snapshot, newId: () => Id)
       if (!/\b(left|right)\b/i.test(it.name) || groups.some((g) => g.items.includes(it.id))) continue;
       const mate = items.find((o) => o !== it && /\b(left|right)\b/i.test(o.name) && pairKey(o.name) === pairKey(it.name) && !groups.some((g) => g.items.includes(o.id)));
       if (mate) groups.push({ id: `pair-${slug(it.name)}`, name: strip(it.name.replace(/\b(left|right)\b/i, '').trim()), kind: 'pair', items: [it.id, mate.id], rule: 'same-sheet' });
+    }
+    // earrings and the like come in pairs even when they are named "earring 1, earring 2…": Spark lists items in
+    // reading order, so a pair is two neighbours of the same size and the same cut area (mirror twins included)
+    if (!groups.length && /\b(earrings?|cufflinks?|studs?|pairs?)\b/i.test(snap.subject ?? '')) {
+      const look = items.map((it) => { const [w, h] = it.frame.size.map((v) => v / it.frame.pxPerMm); const cut = it.parts[0]?.ops.find((o) => o.kind === 'cut');
+        // the outline's own area (not less its holes: twins' fretwork traces a little differently)
+        const outer = cut ? toLoops(cut.geometry, 0.5).reduce((m, l) => Math.max(m, Math.abs(area(fromLoops([l])))), 0) : 0;
+        return { long: Math.max(w, h), short: Math.min(w, h), area: outer / it.frame.pxPerMm ** 2 }; });
+      const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol * Math.max(a, b, 1e-6);
+      for (let i = 0; i + 1 < items.length; i++) {
+        const [a, b] = [look[i], look[i + 1]];
+        if (!near(a.long, b.long, 0.12) || !near(a.short, b.short, 0.12) || !near(a.area, b.area, 0.15)) continue;
+        groups.push({ id: `pair-${slug(items[i].name)}`, name: `Pair ${groups.length + 1}`, kind: 'pair', items: [items[i].id, items[i + 1].id], rule: 'same-sheet' });
+        i++;
+      }
     }
     return { ...base, kind: 'items', items, groups, sources: [source] };
   }

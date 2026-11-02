@@ -83,3 +83,46 @@ describe('segmentRegions · multiple items with per-item layers (design/08-A)', 
     expect(r.regions[0].box?.x1).toBe(100);
   });
 });
+
+describe('segmentRegions · many items (live earrings: Spark saw 28, nothing came back)', () => {
+  const one = (x: number) => `<|box;x1=${x};y1=100;x2=${x + 50};y2=200;w=1000;h=1000|><|mask;x=0;y=0;data=2,2,!!!!|>`;
+  it('stays within the call budget and a failing call is an empty answer, not the end of the request', async () => {
+    const { segmentRegions, SAM_BUDGET } = await import('./sam');
+    let n = 0;
+    const client = { samText: async (_: string, phrase: string) => { n++; if (phrase.includes('7')) throw new Error('429'); return phrase.startsWith('earring') ? one(n * 10) : ''; } };
+    const regions = Array.from({ length: 28 }, (_, i) => ({ id: `r${i}`, label: `earring ${i}`, samPrompt: `earring ${i}` }));
+    const r = await segmentRegions({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', regions, client as never);
+    expect(n).toBeLessThanOrEqual(SAM_BUDGET);
+    expect(r.source).toBe('live');
+    expect(r.regions.filter((x) => x.box).length).toBeGreaterThan(10);
+  });
+  it('multiple items: shorter generic phrases are tried when the subject phrase finds fewer than two', async () => {
+    const { segmentRegions } = await import('./sam');
+    const said: string[] = [];
+    const client = { samText: async (_: string, phrase: string) => { said.push(phrase); return phrase === 'earrings' ? one(100) + one(300) + one(500) : ''; } };
+    const r = await segmentRegions({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', [{ id: 'a', label: 'Swirl left', samPrompt: 'swirl' }, { id: 'b', label: 'Swirl right', samPrompt: 'swirl' }], client as never, { multiple: true, subjectPrompt: 'eight laser-cut wooden earrings' });
+    expect(said.slice(0, 3)).toEqual(['eight laser-cut wooden earrings', 'wooden earrings', 'earrings']);
+    const xs = r.regions.map((x) => x.box?.x1 ?? -1);
+    expect(xs[0]).toBeGreaterThanOrEqual(0);
+    expect(xs[1]).toBeGreaterThan(xs[0]);
+  });
+});
+
+describe('segmentRegions · overlapping items (fanned bookmarks)', () => {
+  // a real one-bit mask (the sun's, from the decode test) placed at each box
+  const SUN_MASK = "<|mask;x=0;y=0;data=203,326,!!!!#kAq1j9u_Sx(hp_i:l?dD&f5.i@g`U2Asv7r897@+5GX`Iznq$:CRh7Xt_Dx*ve!C1[P/PsuIyHQc+UT03ZeJxmRmjV$Tc6ZNqm3F_w@UhJ%lOxL0M*4'A91G^reWlWm0rhKZK_?a^rS9X&B2.a$PS^!6J[0Q/-F9g!UCBBBTlxd[Qg:+CSu'ik`VE3a2!3e!!|>";
+  // one item's mask: the same bits on a 2000 px image (a quarter of the area); the merged one on a 1000 px image
+  const m = (x1: number, x2: number) => (x2 - x1 > 500 ? `<|box;x1=${x1};y1=100;x2=${x2};y2=900;w=1000;h=1000|>${SUN_MASK}` : `<|box;x1=${x1 * 2};y1=200;x2=${x2 * 2};y2=1800;w=2000;h=2000|>${SUN_MASK}`);
+  it('a mask covering several items is not handed to each of them; each gets its own', async () => {
+    const { segmentRegions } = await import('./sam');
+    const names = ['Elephant', 'Fox', 'Whale'];
+    // the generic phrase: one mask over all three; each own phrase: the merged mask first, then its own
+    const own: Record<string, string> = { Elephant: m(0, 900) + m(0, 300), Fox: m(0, 900) + m(0, 300) + m(300, 600), Whale: m(600, 900) };
+    const client = { samText: async (_: string, phrase: string) => (phrase === 'bookmarks' ? m(0, 900) : own[phrase] ?? '') };
+    const items = names.map((n) => ({ id: n, label: n, samPrompt: n, arrangement: 'single-item' as const, regions: [] }));
+    const r = await segmentRegions({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', [], client as never, { subjectPrompt: 'bookmarks', items });
+    const boxes = r.regions.map((x) => x.box ? [x.box.x1, x.box.x2] : null);
+    expect(new Set(boxes.map((b) => JSON.stringify(b))).size).toBe(3);
+    expect(boxes.every((b) => b && b[1] - b[0] < 500)).toBe(true);
+  });
+});

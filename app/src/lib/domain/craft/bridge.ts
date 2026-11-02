@@ -14,7 +14,11 @@ const inside = ([x, y]: Pt, poly: Pt[]) => { let c = false; for (let i = 0, j = 
 /** a frame's loops in photo units, split into outlines (even depth) and holes (odd depth) */
 function toPhoto(g: Geometry, item: ItemDoc): { outer: Loops; holes: Loops } {
   const { box } = item.frame.fromSource, [w, h] = item.frame.size;
-  const loops = toLoops(g, 0.5).map((l) => l.map(([x, y]) => [Math.round((box.x + (x / w) * box.w) * 10) / 10, Math.round((box.y + (y / h) * box.h) * 10) / 10] as [number, number]));
+  // curves (a smoothed outline) are flattened to half a photo unit — the screens' own precision — not to
+  // half a frame pixel, which on an XL frame is ten times the points every layer view then has to draw and measure
+  const tol = Math.max(0.5, (0.5 * w) / Math.max(box.w, 1e-6));
+  const loops = toLoops(g, tol).map((l) => l.map(([x, y]) => [Math.round((box.x + (x / w) * box.w) * 10) / 10, Math.round((box.y + (y / h) * box.h) * 10) / 10] as [number, number])
+    .filter((p, i, a) => !i || p[0] !== a[i - 1][0] || p[1] !== a[i - 1][1]));
   const outer: Loops = [], holes: Loops = [];
   loops.forEach((l, i) => { const depth = loops.filter((o, j) => j !== i && o.length > 2 && inside(l[0], o)).length; (depth % 2 ? holes : outer).push(l); });
   return { outer, holes };

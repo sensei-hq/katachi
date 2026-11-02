@@ -286,13 +286,145 @@ export function colourLayers(img: PixelImage, subject: Uint8Array, opts: { k?: n
   });
 }
 
+/** The stack the user asked for (back → front): which colour each layer is, by name, and whether it is a solid
+ *  sheet. The same colour may come twice (a white backer and white petals in front). */
+export interface StackPlan {
+  layers: { name: string; colour: string; solid?: boolean }[];
+  /** every layer keeps the piece's outer outline as a rim, so the edge reads one even border (default on) */
+  outline?: boolean;
+  /** the rim's width as a share of the piece's shorter side (default: measured from the top layer's border) */
+  rimPct?: number;
+}
+
+/** the colour a plan entry names: a colour word ("white", "gold"), a phrase with one, or a hex */
+export function planColour(c: string): Lab | null {
+  return /^#?[0-9a-f]{6}$/i.test(c.trim()) ? hexToLab(c.trim().startsWith('#') ? c.trim() : `#${c.trim()}`) : colourOfTitle(c);
+}
+
+/**
+ * Layers as the user stacks them: each subject pixel takes the nearest of the plan's colours; a colour that
+ * comes twice splits by where it sits (a white stroke inside the black is the backer showing through a cut, white
+ * framed by gold and red is the petals layer). Each sheet is its own pixels plus everything in front of it (the
+ * layers above rest on it), the back sheet is solid, and with `outline` every sheet carries the outer rim.
+ */
+export function stackLayers(img: PixelImage, subject: Uint8Array, plan: StackPlan): ColourLayer[] {
+  const { w, h } = img, labs = labsOf(img), L = plan.layers;
+  const idx: number[] = []; for (let i = 0; i < w * h; i++) if (subject[i]) idx.push(i);
+  if (!idx.length || L.length < 2) return [];
+  const wanted = L.map((l) => planColour(l.colour) ?? planColour(l.name));
+  if (wanted.some((x) => !x)) return [];
+  // one centre per distinct colour (two whites are one colour; where each sits decides which layer)
+  const keyOf = (l: Lab) => l.map((v) => Math.round(v)).join(',');
+  const distinct: Lab[] = [], colourOfLayer = wanted.map((lab) => { const k = keyOf(lab!); let at = distinct.findIndex((d) => keyOf(d) === k); if (at < 0) { distinct.push(lab!); at = distinct.length - 1; } return at; });
+  const { centres, assign } = kmeans(labs, idx, distinct.length, distinct, 8);
+  const colour = new Int16Array(w * h).fill(-1);
+  idx.forEach((i, j) => { colour[i] = assign[j]; });
+  // ambiguous pixels (anti-aliased edges, shading) take their 3×3 majority; crisp ones keep their colour
+  const smooth = new Int16Array(colour);
+  for (const i of idx) {
+    const p = labAt(labs, i), ds = centres.map((c) => dist(p, c)).sort((a, b) => a - b);
+    if (ds.length < 2 || ds[1] - ds[0] > 18) continue;
+    const x = i % w, y = (i - x) / w, votes = new Map<number, number>();
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const c = colour[yy * w + xx]; if (c >= 0) votes.set(c, (votes.get(c) ?? 0) + 1); }
+    let best = colour[i], bv = 0; for (const [c, v] of votes) if (v > bv) { bv = v; best = c; }
+    smooth[i] = best;
+  }
+  // each pixel's layer: a colour used once maps straight; a repeated colour splits by its neighbours
+  const layer = new Int16Array(w * h).fill(-1);
+  for (let ci = 0; ci < distinct.length; ci++) {
+    const at = colourOfLayer.map((c, n) => (c === ci ? n : -1)).filter((n) => n >= 0);
+    if (!at.length) continue;
+    if (at.length === 1) { for (const i of idx) if (smooth[i] === ci) layer[i] = at[0]; continue; }
+    const bits = new Uint8Array(w * h); for (const i of idx) if (smooth[i] === ci) bits[i] = 1;
+    for (const comp of components(bits, w, h)) {
+      const ring = new Map<number, number>(); let ringN = 0;
+      for (const i of comp) for (const n of neighbours4(i, w, h)) if (subject[n] && !bits[n]) { ring.set(smooth[n], (ring.get(smooth[n]) ?? 0) + 1); ringN++; }
+      // the occurrence whose neighbouring layers (just behind and just in front) frame this patch most
+      let pick = at[at.length - 1], best = -1;
+      for (const n of at) {
+        const near = [n - 1, n + 1].filter((m) => m >= 0 && m < L.length && colourOfLayer[m] !== ci).map((m) => colourOfLayer[m]);
+        const score = ringN ? near.reduce((s, c) => s + (ring.get(c) ?? 0), 0) / ringN : 0;
+        if (score > best) { best = score; pick = n; }
+      }
+      for (const i of comp) layer[i] = pick;
+    }
+  }
+  // the outer rim: as wide as the border the top-most edge colour draws (gold outline), else 1% of the piece
+  const edgeDist = new Float32Array(w * h).fill(Infinity), queue: number[] = [];
+  for (const i of idx) if (neighbours4(i, w, h).length < 4 || neighbours4(i, w, h).some((n) => !subject[n])) { edgeDist[i] = 0; queue.push(i); }
+  for (let q = 0; q < queue.length; q++) { const i = queue[q]; for (const n of neighbours4(i, w, h)) if (subject[n] && edgeDist[n] > edgeDist[i] + 1) { edgeDist[n] = edgeDist[i] + 1; queue.push(n); } }
+  const side = Math.min(w, h);
+  let rim = 0;
+  if (plan.outline !== false) {
+    if (plan.rimPct) rim = Math.max(1, Math.round((plan.rimPct / 100) * side));
+    else {
+      const onEdge = new Map<number, number>(); for (const i of queue) if (edgeDist[i] === 0) onEdge.set(layer[i], (onEdge.get(layer[i]) ?? 0) + 1);
+      const edgeLayer = [...onEdge.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1;
+      // how deep that layer runs in from the edge, straight in from each edge pixel (its border's width)
+      const runs: number[] = [];
+      for (const i of queue) {
+        if (edgeDist[i] !== 0 || layer[i] !== edgeLayer) continue;
+        let d = 0, cur = i;
+        for (let s = 0; s < side / 8; s++) { const next = neighbours4(cur, w, h).find((n) => edgeDist[n] === edgeDist[cur] + 1); if (next === undefined || layer[next] !== edgeLayer) break; cur = next; d++; }
+        runs.push(d + 1);
+      }
+      runs.sort((a, b) => a - b);
+      rim = runs.length > 20 ? runs[Math.floor(runs.length / 2)] : Math.round(side * 0.01);
+    }
+    rim = Math.max(2, Math.min(Math.round(side * 0.03), rim));
+  }
+  const total = idx.length, turd = Math.max(3, Math.round(w * h * 0.00005));
+  const toPaths = (bits: Uint8Array): [number, number][][] =>
+    traceMask({ w, h, bits } satisfies Mask, { turdSize: turd, tolerance: 0.8 }).paths.map((p) => p.points.map(([x, y]) => [Math.round((x / w) * 10000) / 10, Math.round((y / h) * 10000) / 10] as [number, number]));
+  return L.map((l, n) => {
+    const visible = new Uint8Array(w * h);
+    let sheet: Uint8Array = new Uint8Array(w * h), own = 0, sheetN = 0;
+    for (const i of idx) {
+      if (layer[i] === n) { visible[i] = 1; own++; }
+      if (layer[i] >= n || (rim && edgeDist[i] < rim)) sheet[i] = 1;
+    }
+    if (n === 0 || l.solid) sheet = fillHoles(subject, w, h);
+    for (const i of idx) if (sheet[i]) sheetN++;
+    return {
+      n: n + 1, name: l.name, hex: toHex(wanted[n]!),
+      visiblePaths: toPaths(visible), sheetPaths: toPaths(sheet),
+      visiblePct: Math.round((own / total) * 1000) / 10,
+      hiddenPct: Math.round(((sheetN - own) / Math.max(1, sheetN)) * 1000) / 10
+    };
+  });
+}
+
+/** the planner's restack options as a plan: 2–8 layers, each naming a colour code can find */
+export function stackPlanFrom(opts: Record<string, unknown>): StackPlan | null {
+  const raw = Array.isArray(opts.layers) ? opts.layers : [];
+  const layers = raw.slice(0, 8).map((x) => {
+    const o = (typeof x === 'string' ? { name: x, colour: x } : x) as { name?: unknown; colour?: unknown; color?: unknown; solid?: unknown };
+    const colour = String(o.colour ?? o.color ?? o.name ?? '').trim(), name = String(o.name ?? colour).trim();
+    return { name: name ? name[0].toUpperCase() + name.slice(1) : colour, colour, solid: o.solid === true || /\bsolid\b/i.test(name) };
+  }).filter((l) => l.colour && planColour(l.colour));
+  if (layers.length < 2 || layers.length !== raw.slice(0, 8).length) return null;
+  const rimPct = Number(opts.rimPct);
+  return { layers, outline: opts.outline !== false, ...(rimPct > 0 && rimPct <= 5 ? { rimPct } : {}) };
+}
+
+/** "5 layers: a white base, then black, red…": names two or more colours, so it describes a stack, not a count */
+export function namesAStack(text: string): boolean {
+  const t = text.toLowerCase();
+  return Object.keys(NAMED).filter((c) => new RegExp(`\\b${c}\\b`).test(t)).length >= 2;
+}
+
 /** rasterise 0-1000 paths into a w×h mask (even-odd), for SAM outlines arriving as paths */
 export function rasterisePaths(paths: [number, number][][], w: number, h: number): Uint8Array {
   const bits = new Uint8Array(w * h);
+  // the edges once, as plain numbers (the paths may be reactive proxies: read per row they cost a property lookup
+  // each, which on a smoothed outline of a few thousand points ran to seconds)
+  let n = 0; for (const poly of paths) n += poly.length;
+  const e = new Float64Array(n * 4); let m = 0;
+  for (const poly of paths) for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[i], b = poly[j]; e[m++] = a[0]; e[m++] = a[1]; e[m++] = b[0]; e[m++] = b[1]; }
   for (let y = 0; y < h; y++) {
     const ny = ((y + 0.5) / h) * 1000, xs: number[] = [];
-    for (const poly of paths) for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    for (let k = 0; k < m; k += 4) {
+      const xi = e[k], yi = e[k + 1], xj = e[k + 2], yj = e[k + 3];
       if ((yi > ny) !== (yj > ny)) xs.push(xi + ((ny - yi) * (xj - xi)) / (yj - yi));
     }
     xs.sort((a, b) => a - b);
@@ -503,7 +635,11 @@ function woodPieceIn(img: PixelImage, item: Uint8Array): WoodPiece {
   let blobs: Uint8Array = either; for (let k = 0; k < open; k++) blobs = erode(blobs, w, h); for (let k = 0; k < open; k++) blobs = dilate(blobs, w, h);
   const minHole = Math.max(4, Math.round(idx.length * 0.0008));
   const holes = new Uint8Array(w * h);
-  for (const comp of components(blobs, w, h)) if (comp.length >= minHole) for (const i of comp) holes[i] = 1;
+  // a hole is inside the item: the band along its edge (a few pixels) is the edge's own shadow or the surroundings
+  // at a ragged mask, never a hole — cut as one, it would put a second cut line round the whole piece
+  let rim: Uint8Array = item; for (let k = 0; k < 3; k++) rim = erode(rim, w, h);
+  const inner = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) if (blobs[i] && rim[i]) inner[i] = 1;
+  for (const comp of components(inner, w, h)) if (comp.length >= minHole) for (const i of comp) holes[i] = 1;
   const piece = new Uint8Array(w * h), engr = new Uint8Array(w * h);
   let nh = 0, ne = 0;
   // dark right against a hole or the outer edge is the cut wall's shadow, not engraving

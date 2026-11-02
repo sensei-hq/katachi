@@ -363,3 +363,25 @@ Each step leaves the app working.
 3. **Groups:** a chat request that becomes several actions is undone as one group.
 
 The craft document these actions work on (Craft → Items → Parts → Ops, with state classes and one repository) and the hand-off to the machine (the Cut plan) are designed in [15](15-craft-model-and-cut-plan.md). There, cut and engrave become ops on one part rather than separate layers, and the build order in §12 is folded into 15 §7.
+
+## 10 · The clean-up pass, and the planner re-running a stage (2026-10-31)
+
+**Clean-up** runs after the layers on every craft the action engine handles. It is one step in the chat and one undo:
+
+| Action | What it does |
+|---|---|
+| `tidy` | Drops specks and pin-holes under 1 mm², and thin wire bits on the outline (an earring's hook, a bookmark's cord). The wire is removed by an opening of the outer outline only, so fretwork bars inside are never touched. One-piece pictures keep their outline as traced. |
+| `repeat-pattern` | Holes that repeat (3 or more within 20 % in area and size) become identical copies of the median one, each placed where its original was. |
+| `symmetrize` | An item within 4 % of mirror symmetry about its upright axis is made exactly symmetric, built from its left half. Others are left alone and named in the step. Separate items only. |
+| `smooth` | Every layer, strength 2 (0.1 mm), one pass. A loop the fit can't follow keeps its traced shape. |
+
+Speed: the Bézier fit samples a loop at most about 1500 times, `rasterisePaths` reads plain edge arrays, and the bridge flattens curves to half a photo unit. Together these keep the pass well under a second on the cat.
+
+**The planner re-runs stages.** Besides the craft's actions, Spark is offered `remove-background`, `find-items {count}`, `regroup-colours {k}` and `clean-up`. They are offered only where they apply.
+- A rebuilt breakdown runs its own passes (upright, hidden edges, clean-up), so those calls are not repeated.
+- With `count`, the chat says when SAM finds a different number. It never pads.
+- Anything the fixed phrases miss goes to the planner before being noted. When the planner answers in words, that answer is said instead of "Noted".
+
+**Separate items that overlap** (fanned bookmarks): when the subject phrase returns fewer masks than items, each item is asked for by its own phrase. A mask is taken only if it is one item's size (not 1.8× or more) and not already another item's.
+
+**Pairs by shape:** earrings, cufflinks and studs that Spark numbers rather than naming left and right are paired when two neighbours have the same size and cut area.

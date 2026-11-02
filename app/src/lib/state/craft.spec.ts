@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AppState } from './app.svelte';
 import { MemoryStorage, ProjectStore } from './project.svelte';
 
@@ -29,13 +29,13 @@ describe('the craft journey in AppState (docs/design/07)', () => {
     app.layers.applyLayers(layerSets.paper.layers.map((l) => ({ ...l, shapes: [...l.shapes] })));
     app.layers.selectLayer(5);
     expect(await app.ask('split the hills in two', '/make/layers')).toBeNull();
-    expect(app.layers.notes).toEqual([{ step: 'Layers', layer: 'Hills', text: 'split the hills in two' }]);
+    await vi.waitFor(() => expect(app.layers.notes).toEqual([{ step: 'Layers', layer: 'Hills', text: 'split the hills in two' }]));
     await app.ask('shadow on the left edge', '/make/gaps');
-    expect(app.layers.notes.at(-1)).toMatchObject({ step: 'Layers', text: 'shadow on the left edge' });
-    expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted for Hills');
+    await vi.waitFor(() => expect(app.layers.notes.at(-1)).toMatchObject({ step: 'Layers', text: 'shadow on the left edge' }));
+    await vi.waitFor(() => expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted for Hills'));
     await app.ask('a warmer frame', '/make/output');
-    expect(app.layers.notes.at(-1)).toEqual({ step: 'Cut', text: 'a warmer frame' });
-    expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted for Cut');
+    await vi.waitFor(() => expect(app.layers.notes.at(-1)).toEqual({ step: 'Cut', text: 'a warmer frame' }));
+    await vi.waitFor(() => expect(app.flow.conversation.log.at(-1)?.text).toContain('Noted for Cut'));
   });
 
   it('a remix lands on its changes; the journey progress follows the path', () => {

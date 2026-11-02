@@ -242,9 +242,12 @@ function fitCurveWith(pts: Pt[], tHat1: V, tHat2: V, tol: number): Bez[] {
 
 /** two farthest-apart sample indices (to split a cornerless closed loop) */
 function farthestPair(pts: Pt[]): [number, number] {
+  // a dense loop (thousands of samples) is searched on every k-th sample: the pair only splits the loop, so being
+  // a few samples off the true farthest pair changes nothing — and the full search is quadratic
+  const k = Math.max(1, Math.ceil(pts.length / 400));
   let bi = 0, bj = 0, bd = -1;
-  for (let i = 0; i < pts.length; i++) {
-    for (let j = i + 1; j < pts.length; j++) {
+  for (let i = 0; i < pts.length; i += k) {
+    for (let j = i + k; j < pts.length; j += k) {
       const d = (pts[i][0] - pts[j][0]) ** 2 + (pts[i][1] - pts[j][1]) ** 2;
       if (d > bd) { bd = d; bi = i; bj = j; }
     }
@@ -261,7 +264,12 @@ export function smooth(g: Geometry, opts: SmoothOpts): Geometry {
   g.paths.forEach((p) => {
     const [flat] = toLoops({ paths: [p] }, Math.min(tol / 4, 0.25) || 1e-6);
     if (flat.length < 2) return;
-    const pts = resample(flat, tol / 2 || 1e-6, p.closed);
+    // samples every tol/2 — but at most ~1500 per loop: a long traced outline at a fine tolerance otherwise gives
+    // the Bézier fit tens of thousands of points for no visible gain
+    const perim = flat.reduce((a, q, i) => (i ? a + Math.hypot(q[0] - flat[i - 1][0], q[1] - flat[i - 1][1]) : a), 0);
+    const xs = flat.map((q) => q[0]), ys = flat.map((q) => q[1]);
+    const side = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    const pts = resample(flat, Math.max(tol / 2, perim / 1500, side / 400) || 1e-6, p.closed);
     if (pts.length < 2) return;
     // corners are found on the presmoothed copy (sub-tol zigzag never flags); the
     // fit tracks the presmooth except at the anchors, which stay raw (exact)
@@ -290,7 +298,9 @@ export function smooth(g: Geometry, opts: SmoothOpts): Geometry {
     // spans between consecutive anchors (wrapping when closed)
     const spans: Pt[][] = [];
     const smSpan = (a: number, b: number): Pt[] => {
-      const idx = a <= b ? Array.from({ length: b - a + 1 }, (_, k) => a + k)
+      // one corner on a closed loop: the span is the whole way round, from the corner back to it
+      const idx = a === b && p.closed ? Array.from({ length: pts.length + 1 }, (_, k) => a + k)
+        : a <= b ? Array.from({ length: b - a + 1 }, (_, k) => a + k)
         : [...Array.from({ length: pts.length - a }, (_, k) => a + k), ...Array.from({ length: b + 1 }, (_, k) => k)];
       return idx.map((i) => at(((i % pts.length) + pts.length) % pts.length));
     };

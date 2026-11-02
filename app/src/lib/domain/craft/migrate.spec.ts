@@ -56,6 +56,15 @@ describe('v1 → v2 migration', () => {
     const pruned = prune({ ...d, items: d.items.filter((i) => i.name !== 'Swirl drop right') });
     expect(pruned.groups.map((g) => g.name)).toEqual(['Mandala circle']);
   });
+  it('earrings named "earring 1…6" (live Spark): neighbours of the same size and cut area are paired; bookmarks never', () => {
+    const sizes = [[100, 150], [100, 150], [80, 160], [82, 158], [120, 120], [60, 140]];
+    const names = sizes.map((_, i) => `top row earring ${i + 1}`);
+    const snap = (subject: string): V1Snapshot => ({ subject, aspect: 1, widthMm: 400, regionList: names.map((n, i) => ({ id: `r${i}`, name: n, paths: [rect(20 + i * 160, 100, sizes[i][0], sizes[i][1])] })), stack: names.map((n, i) => L(i + 1, `${n} · cut`, `r${i}`, { itemName: n, role: 'cut' })) });
+    const d = migrateV1(project, snap('28 laser-cut wooden earrings'), ids());
+    expect(d.groups.map((g) => [g.name, g.items.map((id) => d.items.find((i) => i.id === id)!.name)])).toEqual([['Pair 1', ['top row earring 1', 'top row earring 2']], ['Pair 2', ['top row earring 3', 'top row earring 4']]]);
+    expect(validate(d)).toEqual([]);
+    expect(migrateV1(project, snap('five wooden bookmarks'), ids()).groups).toEqual([]);
+  });
   it('the castle kit: one item whose parts are the layout sheets (engraving + cut), in mm × px', () => {
     const sheet = (name: string) => ({ name, cut: [rect(10, 10, 100, 50)], engrave: [rect(20, 20, 10, 10)], sizeMm: [300, 300] as [number, number] });
     const snap: V1Snapshot = { subject: 'castle kit', plan: [sheet('A1'), sheet('A2')], stack: [L(1, 'A1 · engrave', '', { planSheet: 0, role: 'engrave' }), L(2, 'A1 · cut', '', { planSheet: 0, role: 'cut', material: '3 mm ply' })] };

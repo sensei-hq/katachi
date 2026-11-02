@@ -35,27 +35,123 @@ export const straighten: ActionDef<{ snapDeg: number }> = {
   }
 };
 
+/** an item's outline in the photo, isotropic units (0-1000 across; down scaled by the photo's aspect) */
+function photoOutline(doc: CraftDoc, it: ItemDoc, outer: Pt[]): Pt[] {
+  const src = doc.sources.find((x) => x.id === it.frame.fromSource.sourceId), ky = src && src.w ? (src.h / src.w) : 1;
+  const { box } = it.frame.fromSource, [w, h] = it.frame.size;
+  return outer.map(([x, y]) => [box.x + (x / w) * box.w, (box.y + (y / h) * box.h) * ky]);
+}
+const rot = (pts: Pt[], deg: number, [cx, cy]: Pt): Pt[] => { const r = (deg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r); return pts.map(([x, y]) => [cx + (x - cx) * c - (y - cy) * s, cy + (x - cx) * s + (y - cy) * c]); };
+const bounds = (pts: Pt[]) => { const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]); return { x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys) }; };
+const centre = (pts: Pt[]): Pt => { const b = bounds(pts); return [(b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2]; };
+/** the turn that stands the outline upright (narrowest box), from the straighten step's angle */
+function uprightOf(pts: Pt[], deg: number) {
+  const c = centre(pts), tries = [deg, -deg, 0].map((d) => { const up = rot(pts, d, c), b = bounds(up); return { d, up, b, w: b.x2 - b.x1 }; });
+  return { c, ...tries.sort((a, b) => a.w - b.w)[0] };
+}
+
 export const interpolate: ActionDef<{ maxAddPct: number; onlyHidden: boolean }> = {
   id: 'interpolate', label: 'Fill in hidden edges', icon: 'i-solar:magic-stick-3-linear', scope: 'item', arity: 'any', kind: 'code',
-  hint: 'Rebuild the edges of items a neighbour lay over in the photo (from the visible outline); their holes stay.',
+  hint: 'Rebuild the parts of items a neighbour or a tassel lay over in the photo, from the visible outline and the items like it; their holes stay.',
   schema: { type: 'object', properties: { maxAddPct: { type: 'number', minimum: 1, maximum: 60 }, onlyHidden: { type: 'boolean' } } }, defaults: { maxAddPct: 25, onlyHidden: true },
-  says: [/\b(complete|restore|recover|rebuild|fill in|interpolate)\b.*\b(hidden|edges?|corners?|missing|covered)\b|\bfill (the )?missing\b/i],
+  says: [/\b(complete|restore|recover|rebuild|fill in|interpolate|extrapolate)\b.*\b(hidden|edges?|corners?|missing|covered|parts?)\b|\bfill (the )?missing\b/i],
   can: (d, i) => (itemsOf(d, i.targets).some((it) => outlineOp(it)) ? true : 'Nothing with an outline'),
   run(doc, { targets, opts }): ActionResult {
     const filled: string[] = [], skipped: string[] = [], items: ItemDoc[] = [];
-    for (const it of itemsOf(doc, targets)) {
-      const op = outlineOp(it), loops = loopsOf(op);
-      if (!op || !loops.length) continue;
-      if (opts.onlyHidden && hiddenShare(loops) <= 0.12) continue;
-      // the outer loop gets its hull back; the item's own holes (the other loops) stay as they are
-      const outer = loops.reduce((b, l) => (shoelace(l) > shoelace(b) ? l : b));
-      const hull = hullOf(outer), added = (shoelace(hull) - shoelace(outer)) / Math.max(1, shoelace(outer)) * 100;
-      if (added > opts.maxAddPct) { skipped.push(`${it.name} (+${Math.round(added)}%)`); continue; }
-      const keep = op.geometry.paths.filter((_, k) => loops[k] !== outer);
-      const geometry = { paths: [...geo.fromLoops([hull]).paths, ...keep] };
+    // the family: separate items photographed together (five bookmarks) are one kind — the same size, and as
+    // convex as each other. An item a neighbour lay on is smaller than its family, or bitten where they are not.
+    const all = doc.items.map((it) => { const op = outlineOp(it), loops = loopsOf(op); const outer = loops.length ? loops.reduce((b, l) => (shoelace(l) > shoelace(b) ? l : b)) : null;
+      const ph = outer ? photoOutline(doc, it, outer) : null, up = ph ? uprightOf(ph, it.frame.fromSource.rotateDeg || 0) : null;
+      return { it, op, loops, outer, ph, up, w: up ? up.b.x2 - up.b.x1 : 0, h: up ? up.b.y2 - up.b.y1 : 0, bite: outer ? hiddenShare([outer]) : 0 }; }).filter((x) => x.outer);
+    const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0;
+    const family = doc.kind === 'items' && all.length >= 3 ? all.filter((x) => Math.abs(x.h - med(all.map((y) => y.h))) <= 0.3 * med(all.map((y) => y.h))) : [];
+    const W = family.length ? Math.max(...family.map((x) => x.w)) : 0;
+    // a convex family (cards, bookmarks, tags): any bite in one of them is something lying on it
+    const convex = family.length >= 3 && med(family.map((x) => x.bite)) < 0.03;
+    for (const t of all.filter((x) => targets.includes(x.it.id))) {
+      const { it, op, loops, outer } = t;
+      let ring = outer!;
+      let added = 0;
+      const what: string[] = [];
+      // 1 · bites: the outline gets its hull back
+      const bite = hiddenShare([ring]);
+      if (!opts.onlyHidden || bite > (convex ? 0.01 : 0.12)) { const hull = hullOf(ring); added += (shoelace(hull) - shoelace(ring)) / Math.max(1, shoelace(ring)) * 100; ring = hull; what.push('edges'); }
+      // 2 · a strip hidden along a side: the item is narrower (or shorter) than its family. The far side is intact,
+      // so the outline is mirrored across the card's middle onto the hidden side (corners and all)
+      const inFamily = family.some((x) => x.it.id === it.id);
+      if (inFamily && t.up) {
+        // which side is hidden: the item's own sides run square to its top edge; the edge a neighbour left on it
+        // runs along the neighbour, at the neighbour's angle (the bookmarks are fanned, never quite parallel)
+        let up = rot(photoOutline(doc, it, ring), t.up.d, t.up.c);
+        const b = bounds(up), w = b.x2 - b.x1, h = b.y2 - b.y1;
+        const fit = (pts: Pt[], swap: boolean) => { if (pts.length < 3) return null; const xs = pts.map((p) => (swap ? p[1] : p[0])), ys = pts.map((p) => (swap ? p[0] : p[1]));
+          const mx = xs.reduce((a, v) => a + v, 0) / xs.length, my = ys.reduce((a, v) => a + v, 0) / ys.length;
+          let num = 0, den = 0; for (let k = 0; k < xs.length; k++) { num += (xs[k] - mx) * (ys[k] - my); den += (xs[k] - mx) ** 2; } return den ? num / den : 0; };
+        // dense along every edge (a mask can be a handful of corners)
+        const dense: Pt[] = up.flatMap((p, k) => { const q = up[(k + 1) % up.length], n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / (h / 200))); return Array.from({ length: n }, (_, j) => [p[0] + ((q[0] - p[0]) * j) / n, p[1] + ((q[1] - p[1]) * j) / n] as Pt); });
+        const mid = (p: Pt) => p[1] > b.y1 + h * 0.15 && p[1] < b.y2 - h * 0.15;
+        // a side that a neighbour lies on is that neighbour's own edge: it runs along the neighbour's long axis,
+        // not this item's (the bookmarks are fanned, each at its own angle). A side by a neighbour that runs along
+        // this item's axis is one it lies on itself; a side by nothing (a tassel's notch) is left to the hull.
+        const sideOf = (left: boolean) => {
+          // this half of the outline (not its ends)
+          const pts = dense.filter((p) => (left ? p[0] < (b.x1 + b.x2) / 2 : p[0] > (b.x1 + b.x2) / 2) && mid(p));
+          if (pts.length < 6) return 0;
+          const inPhoto = rot(pts, -t.up!.d, t.up!.c), eps = w * 0.04;
+          let best: { n: (typeof all)[number]; at: Pt[] } | null = null;
+          for (const n of all) {
+            if (n.it.id === it.id || !n.ph || !n.up) continue;
+            const at = inPhoto.filter((p) => n.ph!.some((q, j) => { const r = n.ph![(j + 1) % n.ph!.length], dx = r[0] - q[0], dy = r[1] - q[1], L = dx * dx + dy * dy || 1, u = Math.max(0, Math.min(1, ((p[0] - q[0]) * dx + (p[1] - q[1]) * dy) / L)); return Math.hypot(p[0] - q[0] - u * dx, p[1] - q[1] - u * dy) < eps; }));
+            if (at.length > (best?.at.length ?? 0)) best = { n, at };
+          }
+          if (!best || best.at.length < Math.max(6, pts.length * 0.15)) return 0;
+          // the shared stretch, as a line: along whose long axis does it run?
+          const own = Math.abs(fit(rot(best.at, t.up!.d, t.up!.c), true) ?? 0), theirs = Math.abs(fit(rot(best.at, best.n.up!.d, best.n.up!.c), true) ?? 0);
+          // clearly closer to the neighbour's axis (two bookmarks a few degrees apart still tell apart)
+          return theirs < own * 0.85 && own - theirs > 0.005 ? 1 : 0;
+        };
+        const hidL = sideOf(true), hidR = sideOf(false);
+        if (hidL !== hidR) {
+          {
+            const hiddenLeft = hidL > hidR;
+            const before = shoelace(up);
+            // stand the card on its intact side first: the visible part's own axis leans toward the bite, so a
+            // mirror across it would give a wedge. The intact side's outermost stretch is the card's real edge.
+            {
+              const side = dense.filter((p) => (hiddenLeft ? p[0] > b.x2 - w * 0.06 : p[0] < b.x1 + w * 0.06) && mid(p));
+              const slope = fit(side, true);
+              if (slope !== null && Math.abs(slope) > 0.005) {
+                const extra = (Math.atan(slope) * 180) / Math.PI;
+                up = rot(up, extra, t.up.c); t.up.d += extra;
+              }
+            }
+            // the card's width: where the neighbour's edge runs away from it, the full width still shows (its widest
+            // row across); never more than the family's widest
+            const bb = bounds(up);
+            const rowW = (y: number) => { const xs: number[] = []; for (let k = 0; k < up.length; k++) { const [x1, y1] = up[k], [x2, y2] = up[(k + 1) % up.length]; if ((y1 > y) !== (y2 > y)) xs.push(x1 + ((y - y1) * (x2 - x1)) / (y2 - y1)); } return xs.length >= 2 ? Math.max(...xs) - Math.min(...xs) : 0; };
+            const Wi = Math.min(W, Math.max(...Array.from({ length: 41 }, (_, k) => rowW(bb.y1 + (bb.y2 - bb.y1) * (0.1 + 0.8 * (k / 40))))));
+            const at = hiddenLeft ? bb.x2 - Wi / 2 : bb.x1 + Wi / 2;
+            up = hullOf([...up, ...up.map(([x, y]) => [2 * at - x, y] as Pt)]);
+            added += ((shoelace(up) - before) / Math.max(1, before)) * 100;
+            what.push(hiddenLeft ? 'left side' : 'right side');
+            const src = doc.sources.find((x) => x.id === it.frame.fromSource.sourceId), ky = src && src.w ? (src.h / src.w) : 1;
+            const { box } = it.frame.fromSource, [fw, fh] = it.frame.size;
+            ring = rot(up, -t.up.d, t.up.c).map(([x, y]) => [((x - box.x) / box.w) * fw, ((y / ky - box.y) / box.h) * fh]);
+          }
+        }
+      }
+      if (!what.length) continue;
+      // a hidden strip is a lot of card (half a bookmark under its neighbours): it gets twice the allowance
+      if (added > opts.maxAddPct * (what.some((x) => x !== 'edges') ? 2 : 1)) { skipped.push(`${it.name} (+${Math.round(added)}%)`); continue; }
+      // the new outline and every other loop (its holes) — by loop, never by path index (a path that flattens to
+      // nothing would shift the indexes and keep the old outline as well, nesting every hole one level deeper)
+      const geometry = geo.fromLoops([ring, ...loops.filter((l) => l !== outer)]);
       const next = clone(it);
-      for (const p of next.parts) p.ops = p.ops.map((o) => (o.id === op.id ? { ...o, geometry } : o));
-      items.push(next); filled.push(`${it.name} (+${round1(added)}%)`);
+      for (const p of next.parts) p.ops = p.ops.map((o) => (o.id === op!.id ? { ...o, geometry } : o));
+      // a card rebuilt from its intact side stands upright on that side: straightened again from the whole outline
+      if (what.some((x) => x !== 'edges')) { const { turn } = uprightTurn([ring]); const deg = Math.round(turn / 0.5) * 0.5; next.frame = { ...next.frame, fromSource: { ...next.frame.fromSource, rotateDeg: Math.abs(deg) < 0.5 ? 0 : deg } }; }
+      next.shot = { ...next.shot, filledPct: Math.round(added * 10) / 10 };
+      items.push(next); filled.push(`${it.name} (+${round1(added)}%${what.some((w) => w !== 'edges') ? `, ${what.filter((w) => w !== 'edges').join(' and ')} from its other side` : ''})`);
     }
     if (!items.length) return { items: [], summary: skipped.length ? `Didn’t fill ${skipped.join(', ')} — more than ${opts.maxAddPct}% would be guessed` : 'Nothing is hidden' };
     return { items, summary: `Filled in the hidden edges of ${filled.map((f) => f.replace(/ \(.*/, '')).join(', ')}`, detail: `${filled.join(', ')}${skipped.length ? ` · left as photographed: ${skipped.join(', ')}` : ''} · holes kept` };

@@ -38,5 +38,7 @@ describe('invite + budget guard (R-PL-2/4/7)', () => {
   it('only the gate, its API and static files are public', () => {
     for (const p of ['/', '/api/gate', '/api/version', '/_app/immutable/x.js', '/favicon.svg', '/manifest.webmanifest', '/service-worker.js']) expect(isPublicPath(p)).toBe(true);
     for (const p of ['/workshop', '/make/layers', '/api/scene', '/capture']) expect(isPublicPath(p)).toBe(false);
+    for (const p of ['/story', '/slides', '/docs', '/roadmap', '/terms-of-service', '/privacy-policy', '/story/cat-photo.jpg', '/film/katachi-demo.mp4', '/katachi-deck.pptx']) expect(isPublicPath(p)).toBe(true);
+    for (const p of ['/story/../workshop', '/film/x/y.mp4', '/storyline']) expect(isPublicPath(p)).toBe(false);
   });
 });

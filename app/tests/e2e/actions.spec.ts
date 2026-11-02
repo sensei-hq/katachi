@@ -128,9 +128,9 @@ test.describe('actions · the action set through the UI', () => {
     expect(await rowNames(page)).toEqual(before);
   });
 
-  test.fail('two-step "merge layers 1 and 2 and then smooth it" is sent through the planner', async ({ page }) => {
-    // BUG (T7 hand-back): the legacy merge branch (namedLayers ≥ 2) catches this before the planner, so
-    // /api/actions/plan is never consulted, the smooth half is dropped, and no step lands.
+  test('two-step "merge layers 1 and 2 and then smooth it" is sent through the planner', async ({ page }) => {
+    // several actions in one ask go to the planner first (T7 found the merge branch took only the first half);
+    // with nothing planned, the merge still happens the old way
     let planHits = 0;
     await page.route('**/api/actions/plan', (r: Route) => { planHits++; return r.fulfill({ json: { answer: { calls: [], reply: '', ask: '' }, source: 'live', trace: [] } }); });
     await bookmarksToLayers(page);
@@ -139,9 +139,8 @@ test.describe('actions · the action set through the UI', () => {
     expect(planHits).toBe(1);
   });
 
-  test.fail('split refuses on a one-piece layer, saying why', async ({ page }) => {
-    // BUG (T7 hand-back): "split the elephant bookmark" splits it into 22 speckle pieces instead of refusing
-    // with "One piece — nothing to split" — split has no minimum-piece filter.
+  test('split refuses on a one-piece layer, saying why', async ({ page }) => {
+    // specks of trace noise (under 2% of the biggest piece) are not pieces (T7 found it made 22)
     await bookmarksToLayers(page);
     await say(page, 'split the elephant bookmark');
     await expect(step(page, 'One piece — nothing to split')).toBeVisible({ timeout: 30_000 });

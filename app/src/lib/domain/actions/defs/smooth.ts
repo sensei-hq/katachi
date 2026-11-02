@@ -1,5 +1,5 @@
 // Smooth a layer's outlines into clean Béziers (design/14 §6): strength in mm, corners kept.
-import { hausdorff, smooth as geoSmooth } from '../../geo';
+import { bbox, hausdorff, smooth as geoSmooth } from '../../geo';
 import type { CraftDoc, Id, ItemDoc, PartDoc } from '../../craft/types';
 import { indexCraft } from '../../craft';
 import type { ActionDef, ActionResult } from '../types';
@@ -7,6 +7,8 @@ import type { ActionDef, ActionResult } from '../types';
 export interface SmoothOpts { strength: number; passes: number; keepCorners: boolean; cornerDeg: number }
 
 /** strength 1–5 → fitting tolerance in mm */
+/** how finely "within … mm" is measured: 1/100 of the layer's size (a dense layer measured finer takes seconds) */
+const measureStep = (g: Parameters<typeof bbox>[0]) => { const b = bbox(g); return b ? Math.max(b.w, b.h) / 100 : 1; };
 export const TOL_MM = [0.05, 0.1, 0.2, 0.35, 0.6];
 
 const clone = <T>(x: T): T => structuredClone(x);
@@ -41,8 +43,13 @@ export const smooth: ActionDef<SmoothOpts> = {
   run(doc, { targets, opts }): ActionResult {
     const { part, item } = partIn(doc, targets[0])!;
     const tolPx = TOL_MM[Number(opts.strength) - 1] * item.frame.pxPerMm;
-    const ops = part.ops.map((o) => ({ ...clone(o), geometry: geoSmooth(clone(o.geometry), { tol: tolPx, passes: Number(opts.passes), keepCorners: !!opts.keepCorners, cornerDeg: Number(opts.cornerDeg) }) }));
-    const worst = Math.max(...ops.map((o, i) => hausdorff(o.geometry, part.ops[i].geometry))) / item.frame.pxPerMm;
+    const ops = part.ops.map((o) => {
+      const g = geoSmooth(clone(o.geometry), { tol: tolPx, passes: Number(opts.passes), keepCorners: !!opts.keepCorners, cornerDeg: Number(opts.cornerDeg) });
+      // never lose an outline: a loop the fit could not follow keeps its traced shape
+      const whole = g.paths.length === o.geometry.paths.length && g.paths.every((p) => p.segs.length);
+      return { ...clone(o), geometry: whole ? g : clone(o.geometry) };
+    });
+    const worst = Math.max(...ops.map((o, i) => hausdorff(o.geometry, part.ops[i].geometry, measureStep(part.ops[i].geometry)))) / item.frame.pxPerMm;
     const next: PartDoc = { ...clone(part), ops };
     return {
       items: [{ ...clone(item), parts: item.parts.map((p) => (p.id === part.id ? next : p)) }],

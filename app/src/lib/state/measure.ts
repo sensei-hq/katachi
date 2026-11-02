@@ -1,7 +1,7 @@
 // The code-side photo measurements (domain/layering), run in a Web Worker in the browser so the page never
 // freezes, and inline where there is no Worker (unit tests, SSR). Same inputs and results either way.
 import type { PixelImage } from '../domain/colour';
-import { colourLayers, maskToPaths, rasterisePaths, refineLayer, subjectMask, type ColourLayer, type LayerOp } from '../domain/layering';
+import { colourLayers, maskToPaths, rasterisePaths, refineLayer, stackLayers, subjectMask, type ColourLayer, type LayerOp, type StackPlan } from '../domain/layering';
 
 let worker: Worker | null = null, seq = 0, broken = false;
 const waiting = new Map<number, { res: (v: unknown) => void; rej: (e: Error) => void }>();
@@ -34,10 +34,11 @@ export async function measureSubject(img: PixelImage, opts: { strict?: boolean; 
   const m = subjectMask(img, { strict: opts.strict, hint: opts.hintPaths?.length ? rasterisePaths(opts.hintPaths, img.w, img.h) : null });
   return { areaPct: m.areaPct, paths: maskToPaths(m.bits, img.w, img.h) };
 }
-export async function measureLayers(img: PixelImage, subjectPaths: [number, number][][], opts: { k: number; titles: string[] }): Promise<ColourLayer[]> {
+export async function measureLayers(img: PixelImage, subjectPaths: [number, number][][], opts: { k: number; titles: string[]; plan?: StackPlan | null }): Promise<ColourLayer[]> {
   const viaWorker = call<ColourLayer[]>({ kind: 'layers', img, subjectPaths, ...opts });
   if (viaWorker) { const r = await viaWorker.catch(() => null); if (r) return r; }
-  return colourLayers(img, rasterisePaths(subjectPaths, img.w, img.h), opts);
+  const subject = rasterisePaths(subjectPaths, img.w, img.h);
+  return opts.plan ? stackLayers(img, subject, opts.plan) : colourLayers(img, subject, opts);
 }
 export async function measureRefine(img: PixelImage, subjectPaths: [number, number][][], opts: { colours: string[]; index: number; current: [number, number][][]; front: [number, number][][]; op: LayerOp }) {
   type R = { visiblePaths: [number, number][][]; sheetPaths: [number, number][][]; visiblePct: number; hiddenPct: number; describe: string };

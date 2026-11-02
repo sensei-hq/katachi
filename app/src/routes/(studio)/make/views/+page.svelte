@@ -2,6 +2,7 @@
 import { Card, Toggle } from '@rokkit/ui';
 import StepScreen from '$lib/components/StepScreen.svelte';
 import BirdhouseView from '$lib/components/illustrations/BirdhouseView.svelte';
+import PlanSheet from '$lib/components/PlanSheet.svelte';
 import { joinery, type Joinery } from '$lib/content/layers';
 import { useApp } from '$lib/state/context';
 import { stepContext } from '$lib/state/step-context.svelte';
@@ -17,6 +18,9 @@ const sorted = $derived(f.pictures.length
 const label = (p: { kind: string; angle: string }) => p.kind === 'view' ? (p.angle === 'three-quarter' ? '¾ view' : p.angle) : p.kind === 'plan' ? 'cut plan' : p.kind === 'detail' ? 'close-up' : p.kind === 'unsorted' ? 'sorting…' : 'other';
 $effect(() => app.setScreen(app.title, `${sorted.length || f.done.length} pictures · ${f.done.length} sides seen`));
 const ctx = stepContext(app, 'Parts', parts);
+// a kit read from its cut plan: every sheet drawn as read, to check before cutting (pick one to see it large)
+const kit = $derived(app.kitSheets);
+let open = $state(0);
 // a kit with a cut plan: its sheets (read from the plan); otherwise the parts the views unfold into
 const rows = $derived<[string, string, boolean][]>(f.plan.length ? f.plan.map((s) => [`Sheet ${s.name}`, `${s.pieces} pieces · ${s.sizeMm[0]} × ${s.sizeMm[1]} mm`, true]) : f.partRows.map((p) => [p.name, p.ok ? p.size : p.missing, p.ok]));
 const missing = $derived(f.views.filter((v) => !v.ok));
@@ -55,6 +59,26 @@ const joins = joinery.map((j) => ({ label: j.label, value: j.id }));
           </div>
         {/each}
       </div>
+    {/if}
+    {#if kit.length}
+      <section aria-label="Kit sheets" class="flex flex-col gap-3" data-kit-sheets={kit.length}>
+        <header><h2 class="font-heading text-title font-normal">The kit, sheet by sheet</h2>
+          <p class="text-ui text-ink-mute mt-1">Read from your cut plan: {kit.length} sheets, about {kit.reduce((a, k) => a + k.pieces, 0)} pieces. Check each before cutting — the outlines come from the picture, so they are approximate; import the kit’s SVG to cut exactly.</p></header>
+        {#if kit[open]}
+          <figure class="m-0 rounded-lg border border-paper-edge bg-paper p-3 flex flex-col gap-2" aria-label={`Sheet ${kit[open].name}, large`}>
+            <div class="aspect-square max-h-[60vh] w-full"><PlanSheet passes={kit[open].passes} view={kit[open].view} label={`Sheet ${kit[open].name}: ${kit[open].pieces} pieces`} /></div>
+            <figcaption class="meta">Sheet {kit[open].name} · {kit[open].pieces} pieces · {kit[open].sizeMm[0]} × {kit[open].sizeMm[1]} mm · cut lines in colour, engraving shaded</figcaption>
+          </figure>
+        {/if}
+        <div class="grid grid-cols-4 gap-2 md:grid-cols-6">
+          {#each kit as k, i (k.name)}
+            <button type="button" class="rounded-md border bg-paper-soft p-1.5 flex flex-col gap-1 text-left {i === open ? 'border-accent' : 'border-paper-edge'}" aria-label={`Show sheet ${k.name}`} aria-pressed={i === open} onclick={() => (open = i)}>
+              <span class="aspect-square w-full"><PlanSheet passes={k.passes} view={k.view} label={`Sheet ${k.name}`} /></span>
+              <span class="meta">{k.name} · {k.pieces}</span>
+            </button>
+          {/each}
+        </div>
+      </section>
     {/if}
     {#if missing.length && sorted.length}<p class="meta">Not seen: {missing.map((v) => v.label.toLowerCase()).join(' · ')} — assumed from the sides that are.</p>{/if}
   </section>

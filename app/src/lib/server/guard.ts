@@ -32,9 +32,11 @@ export async function verifySession(token: string | undefined, secret: string): 
   return diff === 0 ? id : null;
 }
 
-/** Reachable without a session: the gate page, its API and the static shell. */
+/** Reachable without a session: the gate page, its API, the static shell and the public site. */
 export function isPublicPath(path: string): boolean {
-  return path === '/' || path === '/api/gate' || path === '/api/version' || path.startsWith('/_app/') || /^\/(favicon\.svg|manifest\.webmanifest|service-worker\.js|robots\.txt)$/.test(path);
+  return path === '/' || path === '/api/gate' || path === '/api/invite-request' || path === '/api/version' || path.startsWith('/_app/') || /^\/(favicon\.svg|manifest\.webmanifest|service-worker\.js|robots\.txt|katachi-deck\.pptx)$/.test(path)
+    // the public site: the story, the slides, the docs, the roadmap, the policies, and their images and film
+    || /^\/(story|slides|docs|roadmap|terms-of-service|privacy-policy)\/?$/.test(path) || /^\/(story|film)\/[\w.-]+$/.test(path);
 }
 export class BudgetGuard {
   spentSession = 0; spentDay = 0;

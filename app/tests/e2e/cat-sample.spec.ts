@@ -231,4 +231,68 @@ test.describe('black cat wall art · Analyze: background, items and layers from 
     await expect(main(page).locator('[data-work-area] [data-layer-sheet]')).toBeAttached();
     await page.screenshot({ path: 'test-results/cat/07-chat-first.png' });
   });
+
+  test('the clean-up pass after the layers: one step, one undo — before and after on the cat layer', async ({ page }) => {
+    await replayMuse(page, { samCutout: 'cat' });
+    await toLayers(page);
+    const clean = step(page, /Cleaned up \d+ layers/);
+    await expect(clean).toHaveAttribute('data-step-status', 'done', { timeout: 90_000 });
+    console.log('CLEANUP', (await clean.innerText()).replace(/\s+/g, ' '));
+    const tools = main(page).getByRole('toolbar', { name: 'Layer tools' });
+    await page.getByLabel('Items and layers').locator('[data-layer-row]').filter({ hasText: /Black Cat/ }).first().getByRole('button').first().click();
+    await tools.getByRole('radio', { name: 'Its sheet' }).click();
+    const sheet = main(page).locator('[data-cut-sheet]');
+    await expect(sheet).toBeVisible();
+    await sheet.screenshot({ path: 'test-results/cleanup/cat-after.png' });
+    await tools.getByRole('button', { name: 'Undo' }).click();
+    await expect(step(page, /Undone: Cleaned up/)).toBeVisible({ timeout: 30_000 });
+    await sheet.screenshot({ path: 'test-results/cleanup/cat-before.png' });
+  });
+});
+
+test.describe('black cat · the stack as the user describes it', () => {
+  test.use({ viewport: { width: 1440, height: 1100 } });
+  test.setTimeout(240_000);
+
+  test('“5 layers: a solid white base, black with cuts for the whiskers, red, white flowers, gold” rebuilds to that stack, each with the outline', async ({ page }) => {
+    await replayMuse(page, { samCutout: 'none' });
+    // what Muse Spark plans for the ask (the planner's example)
+    let asked = '';
+    await page.route('**/api/actions/plan', (r: Route) => { asked = (r.request().postDataJSON() as { text?: string }).text ?? ''; return r.fulfill({ json: { answer: { calls: [{ action: 'restack', refs: [], opts: { outline: true, layers: [
+      { name: 'White base', colour: 'white', solid: true }, { name: 'Black cat', colour: 'black' }, { name: 'Red leaves', colour: 'red' }, { name: 'White flowers', colour: 'white' }, { name: 'Gold outline', colour: 'gold' }] } }],
+    reply: 'Rebuilding to your five layers, back to front.', ask: '' }, source: 'live', trace: [] } }); });
+    await toLayers(page);
+    await expect(step(page, /Cleaned up \d+ layers/)).toHaveAttribute('data-step-status', 'done', { timeout: 120_000 });
+    const box = chat(page).locator('[data-chat-composer]').getByRole('textbox');
+    await box.fill('use 5 layers with solid base layer of white, then a layer of black with cuts for the white whiskers and hair lines to peek through, then the red layer, then the white floral layer, and finally the golden layer. The full shape outline should be present for all layers so the border thickness is kept.');
+    await box.press('Enter');
+    const built = step(page, 'Built 5 layers to your stack');
+    await expect(built).toHaveAttribute('data-step-status', 'done', { timeout: 60_000 });
+    expect(asked).toMatch(/solid base layer of white/);
+    await expect(built).toContainText('White base (solid) · Black cat · Red leaves · White flowers · Gold outline');
+    await expect(built).toContainText('every layer keeps the outer outline');
+    const rows = page.getByLabel('Items and layers').locator('[data-layer-row]');
+    await expect.poll(async () => (await rows.allInnerTexts()).map((t) => t.replace(/\s+/g, ' ')).join(' | '), { timeout: 30_000 }).toMatch(/White base.*Black cat.*Red leaves.*White flowers.*Gold outline/);
+    // the passes run on the new stack too
+    await expect(steps(page).filter({ hasText: /Cleaned up \d+ layers/ })).toHaveCount(2, { timeout: 120_000 });
+    // each layer's sheet, for the record
+    const tools = main(page).getByRole('toolbar', { name: 'Layer tools' });
+    for (const [i, name] of ['White base', 'Black cat', 'Red leaves', 'White flowers', 'Gold outline'].entries()) {
+      await rows.filter({ hasText: name }).first().getByRole('button').first().click();
+      if (i === 0) await tools.getByRole('radio', { name: 'Its sheet' }).click();
+      const sheet = main(page).locator('[data-cut-sheet]');
+      await expect(sheet).toBeVisible();
+      await page.waitForTimeout(300);
+      await sheet.screenshot({ path: `test-results/stack/${i + 1}-${name.toLowerCase().replace(/\s+/g, '-')}.png` });
+    }
+    // the stack lifted apart (the story page's picture)
+    await tools.getByRole('radio', { name: 'Exploded' }).click();
+    const exploded = main(page).locator('[data-exploded-photo]').first();
+    await expect(exploded.locator('[data-exploded-layer]').first()).toBeVisible({ timeout: 30_000 });
+    await page.waitForTimeout(800);
+    await main(page).locator('[data-work-area]').first().screenshot({ path: 'test-results/stack/exploded.png' });
+    // and the plan stays: reloading the craft keeps the stack
+    await page.reload();
+    await expect.poll(async () => (await rows.allInnerTexts()).join(' | '), { timeout: 30_000 }).toMatch(/White base[\s\S]*Gold outline/);
+  });
 });

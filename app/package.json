@@ -34,6 +34,7 @@
     "deploy:dry": "bun run build:cf && wrangler deploy --dry-run",
     "deploy": "bun run build:cf && wrangler deploy",
     "bump": "bumpp",
+    "invite": "node scripts/invite.mjs",
     "version:show": "node -e \"console.log(require('./package.json').version)\"",
     "types": "wrangler types",
     "build:cf": "WORKERS_CI=1 vite build"
