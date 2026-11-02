@@ -38,7 +38,7 @@ const btn = 'h-9 px-3 rounded-md text-ui font-medium';
         <div class="flex flex-col gap-1">
           <p class="eyebrow">Invite made</p>
           <p class="font-mono text-title select-all" data-invite-code>{form.created.code}</p>
-          <p class="text-ui text-ink-mute">for {form.created.email} · until {day(form.created.expires_at)} · cap {usd(form.created.cap_usd)}</p>
+          <p class="text-ui text-ink-mute">{form.created.email ? `for ${form.created.email}` : 'no email (a shared code)'} · until {day(form.created.expires_at)} · cap {usd(form.created.cap_usd)}</p>
         </div>
         <span class="flex-1"></span>
         <!-- a mailto: link opens the mail app, it isn't a route -->
@@ -69,7 +69,7 @@ const btn = 'h-9 px-3 rounded-md text-ui font-medium';
     <section aria-label="New invite for anyone" class="flex flex-col gap-3">
       <h2 class="panel-title">Make an invite</h2>
       <form method="POST" action="?/create" use:enhance class="flex flex-wrap items-end gap-3">
-        <label class="flex flex-col gap-1 meta">Email<input class="{input} w-64" name="email" type="email" required /></label>
+        <label class="flex flex-col gap-1 meta">Email (optional)<input class="{input} w-64" name="email" type="email" placeholder="leave empty for a shared code" /></label>
         <label class="flex flex-col gap-1 meta">Label<input class="{input} w-48" name="label" placeholder="judges, a friend…" /></label>
         <label class="flex flex-col gap-1 meta">Days<input class="{input} w-20" name="days" type="number" min="1" value="14" /></label>
         <label class="flex flex-col gap-1 meta">Cap $<input class="{input} w-24" name="cap" type="number" min="0.05" step="0.05" value="1" /></label>
@@ -87,7 +87,7 @@ const btn = 'h-9 px-3 rounded-md text-ui font-medium';
               {@const live = i.active && i.expires_at > now}
               <tr class="hair-t {live ? '' : 'text-ink-mute'}" data-invite={i.code}>
                 <td class="py-2 pr-4 font-mono">{i.code}</td>
-                <td class="py-2 pr-4">{i.email}{#if i.label}<span class="meta"> · {i.label}</span>{/if}</td>
+                <td class="py-2 pr-4">{#if i.email}{i.email}{:else}<span class="text-ink-mute">no email</span>{/if}{#if i.label}<span class="meta"> · {i.label}</span>{/if}</td>
                 <td class="py-2 pr-4">{i.expires_at > now ? day(i.expires_at) : `expired ${day(i.expires_at)}`}</td>
                 <td class="py-2 pr-4 font-mono">{i.hits}</td>
                 <td class="py-2 pr-4 font-mono">{i.fails}</td>

@@ -25,6 +25,10 @@ const allHidden = $derived(f.layers.length > 0 && f.layers.every((l) => !f.isLay
 const layerOverlays = $derived(f.layers.filter((l) => f.isLayerVisible(l.n) || (f.view === 'only' && l.n === sel.n)).map((l) => ({ l, o: f.overlayForLayer(l.n) })).filter((x) => x.o)
   .map(({ l, o }) => ({ d: o!.d, tone: o!.tone, colour: o!.colour, focus: l.n === sel.n, ...(l.n === sel.n ? { sheet: f.cutPathFor(l.n) } : {}) })));
 const exploded = $derived(f.layers.filter((l) => f.isLayerVisible(l.n)).map((l) => ({ n: l.n, name: l.name, d: f.overlayForLayer(l.n)?.d ?? '', sheet: f.cutPathFor(l.n), colour: l.colour })).filter((l) => l.d));
+// separate items: the photo shows through each item's own outline (from SAM), not the colour-based background pass,
+// which on a tray of wood on cloth keeps only fragments; one shape per item, so overlapping items don't cancel
+const many = $derived(f.imageBrief?.arrangement === 'multiple-items');
+const itemShapes = $derived(many ? f.layers.filter((l) => l.role !== 'engrave').map((l) => f.overlayForLayer(l.n)?.d ?? '').filter(Boolean) : []);
 // before the layers land: the outline (background removed), then the items / colour groups found
 const pendingOverlays = $derived(f.overlays.length ? f.overlays.map((o) => ({ d: o.d, tone: o.tone, colour: o.colour, outlineOnly: true })) : []);
 const stageLabel = $derived(allHidden && f.view !== 'only' ? 'Every layer hidden: your photo' : f.layers.length ? `Layer ${sel.n}, ${sel.name}: ${f.view === 'only' ? 'only this layer' : 'the photo inside its mask'}` : f.subjectPaths.length ? 'Your photo, background removed' : 'Your photo');
@@ -169,7 +173,10 @@ $effect(() => { void sel.n; merging = false; });
         {:else if f.layers.length && f.view === 'exploded'}
           <ExplodedPhoto image={app.stageImage} layers={exploded} selected={sel.n} />
         {:else if f.layers.length}
-          <PhotoStage image={app.stageImage} label={stageLabel} overlays={allHidden && f.view !== 'only' ? [] : layerOverlays} subject={f.subjectD} only={f.view === 'only'} dim={allHidden && f.view !== 'only'} extra={toolPreview} onpointer={pointer} />
+          <PhotoStage image={app.stageImage} label={stageLabel} overlays={allHidden && f.view !== 'only' ? [] : layerOverlays} subject={many ? itemShapes : f.subjectD} subjectOpacity={many ? 0.6 : 0.3} only={f.view === 'only'} dim={allHidden && f.view !== 'only'} extra={toolPreview} onpointer={pointer} />
+        {:else if f.subjectPaths.length && many}
+          <!-- separate items: the whole photo while SAM 3.1 outlines them, then their outlines on it -->
+          <PhotoStage image={app.stageImage} label={pendingOverlays.length ? 'Your photo, the items found' : 'Your photo, finding the items'} overlays={pendingOverlays} />
         {:else if f.subjectPaths.length}
           <PhotoStage image={app.stageImage} label={stageLabel} overlays={pendingOverlays.length ? pendingOverlays : [{ d: f.subjectD, tone: 'accent' }]} clipped={!pendingOverlays.length} />
         {:else}

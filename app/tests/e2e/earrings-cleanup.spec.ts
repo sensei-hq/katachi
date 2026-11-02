@@ -37,12 +37,18 @@ test.describe('earrings · clean-up on the real tray', () => {
     await main(page).getByRole('button', { name: 'Analyze' }).click();
     await expect(page).toHaveURL(/\/make\/layers$/, { timeout: 30_000 });
     await expect(step(page, /Found 24 items/)).toHaveAttribute('data-step-status', 'done', { timeout: 90_000 });
+    await expect(step(page, 'Background removed')).toContainText('SAM 3.1 outlines each item next');
     const clean = step(page, /Cleaned up \d+ layers/);
     await expect(clean).toHaveAttribute('data-step-status', 'done', { timeout: 180_000 });
     for (const s of [/Corrected the perspective|No perspective/, /upright/, /Filled in|Nothing is hidden/, /same size/, /Cleaned up/]) {
       const e = step(page, s);
       if (await e.count()) console.log('STEP', (await e.innerText()).replace(/\s+/g, ' ').slice(0, 400));
     }
+    // the photo shows through each earring's own outline (not the colour pass's fragments), clearly
+    const stage = main(page).locator('[data-work-area] [data-photo-stage]').first();
+    await expect.poll(async () => stage.locator('clipPath[id$="-subject"] path').count(), { timeout: 30_000 }).toBeGreaterThanOrEqual(24);
+    expect(Number(await stage.locator('image[clip-path$="-subject)"]').getAttribute('opacity'))).toBeGreaterThanOrEqual(0.5);
+    await main(page).locator('[data-work-area]').screenshot({ path: 'test-results/cleanup/earrings-all-layers.png' });
     // the children of the clean-up (one undo): what each found
     // pairs: twelve, found by shape
     await chat(page).getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Cut the sheets' }).click();

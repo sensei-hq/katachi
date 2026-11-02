@@ -534,7 +534,7 @@ export class AppState {
         this.save();
         const pct = f.cutoutChecks.find((x) => /Subject/.test(x.text))?.text.match(/([\d.]+)%/)?.[1];
         const size = !this.multiple && f.imageBrief?.realSizeMm ? f.pieceSize : null;
-        if (r.paths?.length) c.done(key, f.removeBackdrop ? 'Background removed · wall and shadows cleared' : 'Background removed', { detail: `${pct ? `the subject is ${pct}% of the photo · ` : ''}${r.paths.length} closed outline path${r.paths.length > 1 ? 's' : ''}${size ? ` · about ${size.wMm} × ${size.hMm} mm${f.sizeBasis ? ` (${f.sizeBasis})` : ''}` : ''}` });
+        if (r.paths?.length) c.done(key, f.removeBackdrop ? 'Background removed · wall and shadows cleared' : 'Background removed', { detail: this.multiple ? 'a first pass on the colours; SAM 3.1 outlines each item next' : `${pct ? `the subject is ${pct}% of the photo · ` : ''}${r.paths.length} closed outline path${r.paths.length > 1 ? 's' : ''}${size ? ` · about ${size.wMm} × ${size.hMm} mm${f.sizeBasis ? ` (${f.sizeBasis})` : ''}` : ''}` });
         else c.fail(key, 'Outline not found in this photo', 'Say “remove the background” to try again.');
       })
       .catch(() => { c.fail(key, 'Background removal failed', 'Say “remove the background” to try again.'); });

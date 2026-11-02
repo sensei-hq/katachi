@@ -53,8 +53,9 @@ export async function spent(db: Db, code: string): Promise<number> {
   return Number(r?.usd ?? 0);
 }
 
-export async function createInvite(db: Db, o: { email: string; days?: number; capUsd?: number; label?: string; code?: string; requestId?: number }, now = Date.now()): Promise<Invite> {
-  const inv: Invite = { code: normalCode(o.code || newCode()), email: normalEmail(o.email), label: o.label?.trim() || null, expires_at: now + Math.round((o.days ?? 14) * DAY),
+/** the email is optional (a code for the judges, a shared demo): without one it is stored empty */
+export async function createInvite(db: Db, o: { email?: string; days?: number; capUsd?: number; label?: string; code?: string; requestId?: number }, now = Date.now()): Promise<Invite> {
+  const inv: Invite = { code: normalCode(o.code || newCode()), email: o.email?.trim() ? normalEmail(o.email) : '', label: o.label?.trim() || null, expires_at: now + Math.round((o.days ?? 14) * DAY),
     cap_usd: o.capUsd ?? 1, active: 1, request_id: o.requestId ?? null, created_at: now };
   await db.prepare('insert into invites (code, email, label, expires_at, cap_usd, active, request_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)')
     .bind(inv.code, inv.email, inv.label, inv.expires_at, inv.cap_usd, inv.active, inv.request_id, inv.created_at).run();

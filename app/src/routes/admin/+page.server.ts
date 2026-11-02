@@ -19,8 +19,9 @@ export const actions: Actions = {
   create: async ({ request, platform }) => {
     const db = dbOf(platform); if (!db) return fail(503, { error: 'No database bound' });
     const f = await request.formData();
-    const email = String(f.get('email') ?? '');
-    if (!isEmail(email)) return fail(400, { error: 'Enter a valid email' });
+    const email = String(f.get('email') ?? '').trim();
+    if (email && !isEmail(email)) return fail(400, { error: 'That email doesn’t look right — or leave it empty' });
+    if (!email && !String(f.get('label') ?? '').trim()) return fail(400, { error: 'Give it an email or a label, so you can tell it apart later' });
     const requestId = Number(f.get('request')) || undefined;
     try {
       const inv = await createInvite(db, { email, days: num(f.get('days'), 14), capUsd: num(f.get('cap'), 1), label: String(f.get('label') ?? ''), requestId });

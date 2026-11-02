@@ -4,6 +4,7 @@
 //
 //   bun run invite setup                     once: create the DB, bind it, migrate (requests then show in /admin)
 //   bun run invite new ana@x.com             a fresh code for 14 days, $1 of model calls (options: --days --cap --label --request)
+//   bun run invite new --label judges        a shared code with no email
 //   bun run invite list                      every invite: sign-ins, failed tries, calls, spend
 //   bun run invite usage <code>              that invite's model calls
 //   bun run invite requests                  requests waiting
@@ -65,12 +66,14 @@ switch (cmd) {
     break;
   }
   case 'new': {
-    const email = (flag('email') ?? pos[0])?.trim().toLowerCase();
-    if (!email || !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) die('Usage: bun run invite new <email>   (optional: --days 14 --cap 1 --label <text>)');
+    // the email is optional: a shared code (the judges) needs only a label
+    const email = (flag('email') ?? pos[0] ?? '').trim().toLowerCase();
+    if (email && !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) die(`Not an email: ${email}\nUsage: bun run invite new [email] [--label judges] [--days 14] [--cap 1]`);
+    if (!email && !flag('label')) die('Give it an email or a --label, so you can tell it apart later:\n  bun run invite new --label judges --days 30 --cap 10');
     const now = Date.now(), c = (flag('code') ?? code()).toUpperCase(), exp = now + Math.round(n(flag('days'), 14) * DAY), req = flag('request');
-    sql(`insert into invites (code, email, label, expires_at, cap_usd, active, request_id, created_at) values (${q(c)}, ${q(email)}, ${q(flag('label'))}, ${exp}, ${n(flag('cap'), 1)}, 1, ${req ? n(req) : 'null'}, ${now});`
+    sql(`insert into invites (code, email, label, expires_at, cap_usd, active, request_id, created_at) values (${q(c)}, '${email.replace(/'/g, "''")}', ${q(flag('label'))}, ${exp}, ${n(flag('cap'), 1)}, 1, ${req ? n(req) : 'null'}, ${now});`
       + (req ? ` update invite_requests set status = 'sent' where id = ${n(req)};` : ''));
-    console.log(`${c}\n  for ${email} · until ${day(exp)} · cap $${n(flag('cap'), 1)}`);
+    console.log(`${c}\n  ${email ? `for ${email}` : `${flag('label')} (no email)`} · until ${day(exp)} · cap $${n(flag('cap'), 1)}`);
     break;
   }
   case 'list': {

@@ -39,6 +39,14 @@ describe('invites in D1', () => {
     expect(inviteProblem(null, T0)).toMatch(/isn’t valid/);
   });
 
+  it('an email is optional: a shared code for the judges carries only its label', async () => {
+    const inv = await createInvite(db, { label: 'judges', days: 30, capUsd: 10 }, T0);
+    expect(inv.email).toBe('');
+    const row = await findInvite(db, inv.code);
+    expect([row?.email, row?.label, row?.cap_usd]).toEqual(['', 'judges', 10]);
+    expect(inviteProblem(row, T0 + DAY)).toBeNull();
+    expect((await listInvites(db))[0].label).toBe('judges');
+  });
   it('keeps a chosen code (moving the secret one over)', async () => {
     await createInvite(db, { email: 'jerry@x.com', code: 'k7mp-4x9r-t2qf' }, T0);
     expect(await findInvite(db, 'K7MP-4X9R-T2QF')).not.toBeNull();

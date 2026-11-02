@@ -16,21 +16,50 @@ export const policyLinks = [
 export const film = { src: '/film/katachi-demo.mp4', captions: '/film/katachi-demo.vtt', poster: '/story/film-poster.jpg' };
 export const deckFile = '/katachi-deck.pptx';
 
-export interface Example { id: string; n: number; kind: string; title: string; photo: string; result: string; resultAlt: string; steps: string[]; stats: { value: string; label: string }[]; say: string; layers?: { src: string; name: string }[] }
+export interface Example { id: string; n: number; kind: string; title: string; photo: string; result: string; resultAlt: string; steps: string[]; stats: { value: string; label: string }[]; say: string; layers?: { src: string; name: string }[];
+  /** try it yourself: the same photo as in the film, the steps, and the words to type (copied as they are) */
+  sample: { src: string; file: string; size: string };
+  tryIt: string[];
+  ask?: string }
 export const examples: Example[] = [
   { id: 'cat', n: 1, kind: 'A layered cut', title: 'The paper cat', photo: '/story/cat-photo.jpg', result: '/story/cat-exploded.jpg', resultAlt: 'The cat’s layers lifted apart in the app',
     steps: ['Background off', 'The stack said in the chat', 'Five layers built to it', 'Cut and stacked'],
-    stats: [{ value: '5', label: 'layers, each with the outline' }, { value: '$0.022', label: 'in Meta model calls' }, { value: '~1 min', label: 'photo to cut queue' }],
+    stats: [{ value: '5', label: 'layers, each with the outline' }, { value: '$0.039', label: 'in Meta model calls' }, { value: '~1 min', label: 'photo to cut queue' }],
     say: 'Katachi lifts the paper cat off the wall. Then I say how to stack it: a solid white base, black with the whiskers cut through, red, the white flowers and gold on top, every layer keeping the outline. It builds the five sheets to that plan.',
-    layers: [{ src: '/story/cat-layer-1.jpg', name: 'White base' }, { src: '/story/cat-layer-2.jpg', name: 'Black cat' }, { src: '/story/cat-layer-3.jpg', name: 'Red leaves' }, { src: '/story/cat-layer-4.jpg', name: 'White flowers' }, { src: '/story/cat-layer-5.jpg', name: 'Gold outline' }] },
+    layers: [{ src: '/story/cat-layer-1.jpg', name: 'White base' }, { src: '/story/cat-layer-2.jpg', name: 'Black cat' }, { src: '/story/cat-layer-3.jpg', name: 'Red leaves' }, { src: '/story/cat-layer-4.jpg', name: 'White flowers' }, { src: '/story/cat-layer-5.jpg', name: 'Gold outline' }],
+    sample: { src: '/samples/katachi-sample-cat.jpg', file: 'katachi-sample-cat.jpg', size: '450 KB' },
+    tryIt: [
+      'Download the photo, then sign in on the home page and open the workshop.',
+      'Choose Upload, pick the photo, and press Analyze. The wall comes off and the picture splits into its colour layers (about a minute).',
+      'When the layers are done, paste the message below into the chat and press Enter. Katachi rebuilds to that stack and says “Built 5 layers to your stack”.',
+      'In Layers, switch the view to Exploded to see the five sheets lifted apart, or pick a layer and choose Its sheet to see what gets cut.',
+      'Choose Cut the sheets, then Send to the cut queue. Assemble shows how they stack, back to front.'
+    ],
+    ask: 'use 5 layers: a solid white base, black with cuts for the whiskers to show through, then red, the white flowers, and gold on top. Every layer keeps the full outline.' },
   { id: 'earrings', n: 2, kind: 'A collage of crafts', title: 'Earring charms', photo: '/story/earrings-photo.jpg', result: '/story/earrings-before-after.jpg', resultAlt: 'Two earring pairs before and after the clean-up',
     steps: ['Every earring found', 'Pairs matched by shape', 'Repeated holes evened out', 'Each pair one size'],
     stats: [{ value: '28', label: 'pieces found on the tray' }, { value: 'Pairs', label: 'matched by shape, each one size' }, { value: '$0.032', label: 'in Meta model calls' }],
-    say: 'From one tray photo it finds the earrings, matches the pairs by shape and cuts each pair to one size, with repeated holes evened out.' },
+    say: 'From one tray photo it finds the earrings, matches the pairs by shape and cuts each pair to one size, with repeated holes evened out.',
+    sample: { src: '/samples/katachi-sample-earrings.jpg', file: 'katachi-sample-earrings.jpg', size: '280 KB' },
+    tryIt: [
+      'Download the photo, then open the workshop, choose Upload, pick it and press Analyze.',
+      'Katachi finds each earring, groups the pairs by shape, then runs the clean-up: repeated holes made identical, outlines smoothed, each pair one size. Wait for “Cleaned up … layers” in the chat (a minute or two).',
+      'Choose Cut the sheets, then pick Pairs together to put each pair on its own sheet, or Fit to board to pack them tight.',
+      'Open Assemble: each pair’s two earrings come one after the other, named by their pair.',
+      'Not right? Say it in the chat, for example “merge layers 3 and 4”, “smooth every layer” or “undo”.'
+    ] },
   { id: 'bookmarks', n: 3, kind: 'A set', title: 'Five bookmarks, one photo', photo: '/story/bookmarks-photo.jpg', result: '/story/bookmarks-five.jpg', resultAlt: 'The five bookmarks rebuilt, upright and one size',
     steps: ['Perspective corrected', 'Turned upright', 'Hidden edges rebuilt', 'Made one size'],
     stats: [{ value: '5', label: 'matching pieces' }, { value: '$0.021', label: 'in Meta model calls' }],
-    say: 'Five bookmarks, overlapping and shot at an angle. Katachi corrects the perspective, stands each one upright, rebuilds the hidden edges, and makes all five one size.' }
+    say: 'Five bookmarks, overlapping and shot at an angle. Katachi corrects the perspective, stands each one upright, rebuilds the hidden edges, and makes all five one size.',
+    sample: { src: '/samples/katachi-sample-bookmarks.jpg', file: 'katachi-sample-bookmarks.jpg', size: '460 KB' },
+    tryIt: [
+      'Download the photo, then open the workshop, choose Upload, pick it and press Analyze.',
+      'Katachi finds the five bookmarks, then works through them in the chat: perspective corrected, each one upright, the hidden edges filled in, all five made one size.',
+      'If it finds fewer than five, paste the message below into the chat.',
+      'Choose Cut the sheets to see each bookmark on its sheet, engraving first, then the holes, then the outline.'
+    ],
+    ask: 'try again: remove the background, split into 5 bookmarks, straighten each one, fill in the hidden parts and clean up' }
 ];
 
 export const why = [
@@ -89,14 +118,14 @@ export const slides: Slide[] = [
   { kind: 'title', title: 'Katachi', lines: ['From a photo to pieces you can cut', 'Show it. Say it. Make it.'], notes: 'I’m Jerry. I own a desktop laser, and Katachi is the tool I wished I had: show it a photo you love, and get pieces you can cut. It’s a prototype, built this week on Meta’s models, and this film was made with Muse Code, generated voice included.' },
   { kind: 'why', title: 'Cutting is easy; designing the cut is hard', notes: 'When I got my laser, cutting simple shapes was easy. Turning a picture into cut files took hours of tracing and guessing. So I brought Meta’s models into a craft I know first-hand.' },
   { kind: 'flow', title: 'What it does: one photo in, cut-ready sheets out', notes: 'Snap a photo. Katachi finds the items and layers, cleans them up, lays out sheets for your machine, and guides assembly. You can say what you want or tap a button: the same actions, with one undo.' },
-  { kind: 'example', title: 'Example 1 · A layered cut: the paper cat', example: 'cat', notes: 'Example one, a layered cut. I tell Katachi how to stack it: a solid white base, black with the whiskers cut through, then red, white flowers and gold, every layer keeping the outline. Five sheets, built to that plan. Two cents.' },
+  { kind: 'example', title: 'Example 1 · A layered cut: the paper cat', example: 'cat', notes: 'Example one, a layered cut. I tell Katachi how to stack it: a solid white base, black with the whiskers cut through, then red, white flowers and gold, every layer keeping the outline. Five sheets, built to that plan. Less than five cents.' },
   { kind: 'example', title: 'Example 2 · A collage of crafts: earring charms', example: 'earrings', notes: 'Example two, a collage of crafts. From one tray photo it finds the earrings, matches the pairs by shape and cuts each pair to one size, with repeated holes evened out. About three cents.' },
   { kind: 'example', title: 'Example 3 · A set: five bookmarks, one photo', example: 'bookmarks', notes: 'Example three, a set. Five bookmarks, overlapping and shot at an angle. Katachi corrects the perspective, stands each one upright, rebuilds the hidden edges, and makes all five one size. Two cents.' },
   { kind: 'architecture', title: 'Architecture: models perceive, code measures', notes: 'Under the hood: the browser holds the craft and code does all the geometry. A Cloudflare worker keeps the key server-side. Muse Spark reads and plans; SAM 3.1 outlines. Models never emit coordinates.' },
   { kind: 'actions', title: 'One action set, for the chat and the buttons', notes: 'Every edit is one action with one contract, shared by the chat and the buttons. Simple phrases run instantly. Complex requests go to Muse Spark, which plans the steps as a single undoable change.' },
   { kind: 'status', title: 'A prototype with promise, not a product yet', notes: 'To be clear: this is a prototype, not a finished product. The core works, but traces still follow the photo, hidden fretwork is rebuilt solid, and real size is an estimate.' },
   { kind: 'roadmap', title: 'Roadmap: from prototype to maker’s tool', notes: 'Next: one clean cut line per piece, a reference card for true millimetres, and real cuts on a real machine. Then Muse Image for hidden detail, and jobs sent straight to the cutter. Later, 3D flat-pack.' },
-  { kind: 'close', title: 'Build your world, one sheet at a time', lines: ['Three crafts, under eight cents of model calls.', 'katachi.sensei-hq.com'], notes: 'Three crafts, under eight cents of Meta model calls. The hard part, seeing what to cut, already works. Build your world, one sheet at a time, at katachi dot sensei-hq dot com.' }
+  { kind: 'close', title: 'Build your world, one sheet at a time', lines: ['Three crafts, under ten cents of model calls.', 'katachi.sensei-hq.com'], notes: 'Three crafts, less than ten cents of Meta model calls. The hard part, seeing what to cut, already works. Build your world, one sheet at a time, at katachi dot sensei-hq dot com.' }
 ];
 
 /** Docs: using the app, page by page */

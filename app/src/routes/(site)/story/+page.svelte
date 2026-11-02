@@ -5,6 +5,11 @@ import { reveal } from '$lib/components/site/reveal';
 import { actionGroups, architecture, examples, film, flow, roadmap, status, why } from '$lib/content/site';
 // The story (public): why Katachi, what it does, three examples, how it is built, where it stands and what is next.
 let filmOk = $state(true);
+// try it yourself: copy the words to say in the chat
+let copied = $state('');
+async function copy(id: string, text: string) {
+  try { await navigator.clipboard.writeText(text); copied = id; setTimeout(() => { if (copied === id) copied = ''; }, 1800); } catch { /* select it by hand */ }
+}
 </script>
 <svelte:head><title>Katachi · The story</title><meta name="description" content="Katachi turns a photo of something you love into pieces you can cut on a laser or Cricut. A hackathon prototype on Meta's models." /></svelte:head>
 <SiteShell wide>
@@ -56,7 +61,12 @@ let filmOk = $state(true);
       <h2 use:reveal class="section-title mt-2">{ex.title}</h2>
       <div class="mt-6 grid gap-6 md:grid-cols-2 md:items-start {i % 2 ? 'md:[&>*:first-child]:order-2' : ''}">
         <div use:reveal class="flex flex-col gap-4">
-          <img src={ex.photo} alt={`The photo: ${ex.title}`} class="w-full rounded-lg border border-paper-edge" loading="lazy" />
+          <figure class="m-0 relative">
+            <img src={ex.photo} alt={`The photo: ${ex.title}`} class="w-full rounded-lg border border-paper-edge" loading="lazy" />
+            <!-- the same photo as in the film, to try it yourself -->
+            <a href={resolve(ex.sample.src as '/')} download={ex.sample.file} aria-label={`Download the ${ex.title.toLowerCase()} photo to try it yourself`}
+              class="absolute top-3 right-3 inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-accent text-on-accent text-ui font-medium shadow-lg hover:opacity-90"><span class="i-solar:download-linear" aria-hidden="true"></span>Try this photo</a>
+          </figure>
           <p class="text-lede text-ink-mute">{ex.say}</p>
           <ol class="flex flex-wrap gap-2">{#each ex.steps as s, k (s)}<li class="meta rounded-full border border-accent text-accent px-3 py-1">{k + 1} · {s}</li>{/each}</ol>
         </div>
@@ -68,6 +78,23 @@ let filmOk = $state(true);
           {/if}
           <dl class="grid grid-cols-3 gap-3">{#each ex.stats as st (st.label)}<div><dt class="sr-only">{st.label}</dt><dd class="font-heading text-head text-accent">{st.value}</dd><dd class="meta">{st.label}</dd></div>{/each}</dl>
         </div>
+      </div>
+      <div use:reveal class="mt-8 rounded-lg border border-paper-edge bg-paper-soft p-5 md:p-6 flex flex-col gap-4" aria-label={`Try it yourself: ${ex.title}`} role="group">
+        <div class="flex flex-wrap items-center gap-3">
+          <h3 class="panel-title flex-1 min-w-[200px]">Try it yourself</h3>
+          <a href={resolve(ex.sample.src as '/')} download={ex.sample.file} class="inline-flex items-center gap-2 h-9 px-3 rounded-md bg-accent text-on-accent text-ui font-medium"><span class="i-solar:download-linear" aria-hidden="true"></span>Download the photo <span class="opacity-80">· {ex.sample.size}</span></a>
+        </div>
+        <ol class="flex flex-col gap-2 list-decimal pl-5 text-ink-mute">{#each ex.tryIt as t (t)}<li>{t}</li>{/each}</ol>
+        {#if ex.ask}
+          <div class="flex flex-col gap-2">
+            <p class="meta">Say this in the chat</p>
+            <div class="flex items-start gap-2 rounded-md border border-paper-edge bg-paper p-3">
+              <p class="flex-1 font-mono text-ui text-ink" data-try-ask>{ex.ask}</p>
+              <button type="button" class="shrink-0 h-8 px-3 rounded-md border border-paper-edge text-ui hover:text-ink" onclick={() => copy(ex.id, ex.ask ?? '')}>{copied === ex.id ? 'Copied' : 'Copy'}</button>
+            </div>
+          </div>
+        {/if}
+        <p class="meta">You need an invite code to use the workshop; <a href={resolve('/')} class="text-accent hover:underline">request one on the home page</a>. Each run costs a few cents of the invite’s model budget.</p>
       </div>
     </section>
   {/each}
@@ -104,7 +131,7 @@ let filmOk = $state(true);
 
   <section aria-label="Build your world" class="py-16 md:py-24 hair-t text-center">
     <h2 use:reveal class="font-heading text-display font-normal tracking-display">Build your world, one sheet at a time</h2>
-    <p use:reveal={100} class="mt-3 text-lede text-ink-mute">Three crafts, under eight cents of Meta model calls.</p>
+    <p use:reveal={100} class="mt-3 text-lede text-ink-mute">Three crafts, less than ten cents of Meta model calls.</p>
     <p use:reveal={180} class="mt-6 flex justify-center gap-3"><a href={resolve('/slides')} class="rounded-md bg-accent text-on-accent px-4 py-2 text-ui font-medium">The slides</a><a href={resolve('/docs')} class="rounded-md border border-paper-edge px-4 py-2 text-ui">How to use it</a></p>
     <p class="mt-8 meta">Built during the hackathon. Pre-existing: my UI library Rokkit and open-source tools.</p>
   </section>

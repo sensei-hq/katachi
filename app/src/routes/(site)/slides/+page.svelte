@@ -64,7 +64,7 @@ const part = (node: Element, { i = 0 } = {}) => fly(node, { y: 10, duration: 450
               {:else if slide.kind === 'example' && ex}
                 <div class="grid grid-cols-[1fr_1.6fr] gap-[3%] h-full">
                   <div class="flex flex-col gap-3 min-h-0">
-                    <img in:part={{ i: 1 }} src={ex.photo} alt={`The photo: ${ex.title}`} class="w-full min-h-0 flex-1 object-cover rounded-md" />
+                    <img in:part={{ i: 1 }} src={ex.photo} alt={`The photo: ${ex.title}`} class="w-full min-h-0 flex-1 object-contain rounded-md" />
                     <dl in:part={{ i: 3 }} class="flex gap-[8%]">{#each ex.stats.slice(-2) as st (st.label)}<div><dt class="sr-only">{st.label}</dt><dd class="font-heading text-accent text-[clamp(18px,2.6vw,34px)]">{st.value}</dd><dd class="meta">{st.label}</dd></div>{/each}</dl>
                   </div>
                   <div class="flex flex-col gap-3 min-h-0">

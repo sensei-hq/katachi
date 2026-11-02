@@ -1,28 +1,30 @@
 # Katachi · the submission film: script v2 (deck + app demos, your voice)
 
-**Status:** v2.1 (2026-11-02). It adds a 1 s pause on each slide before the voice; the cat now shows the stack said in the chat (five layers, each with the outline); every number matches the latest live captures (cat $0.022, earrings $0.032, bookmarks $0.021, $0.075 in all); and the opening says the film is made with Muse Code. **Re-record takes 1, 2, 4, 5, 6, 7, 9, 10 and 11** (3 and 8 are unchanged).
+**Status:** v2.2 (2026-11-02): the film drops the bookmarks example and the roadmap; each slide shows 1.5 s before its voice and leaves 0.8 s after; each demo gets about 29 s and holds 1.2 s on every result. No takes need re-recording for v2.2.
+
+v2.1 (2026-11-02). It adds a 1 s pause on each slide before the voice; the cat now shows the stack said in the chat (five layers, each with the outline); every number matches the latest live captures (cat $0.022, earrings $0.032, bookmarks $0.021, $0.075 in all); and the opening says the film is made with Muse Code. **Re-record takes 1, 2, 4, 5, 6, 7, 9, 10 and 11** (3 and 8 are unchanged).
 
 v2 (2026-11-02). It replaces v1, the Muse-made montage: that voice read as robotic and the cut jumped around. v2 is the deck (`docs/submission/katachi-deck.pptx`, also at `/slides`) with **your voice** reading the speaker notes. A sped-up recording of the real app plays after each of the three example slides, and the app's cost pill stays in view.
 
-**Length:** about 2:55 (your takes' pace; the build warns above 178 s, because judges stop at 3:00). Eleven takes of about 35–43 words each, around 400 words in all. **Assembly:** `python3 docs/film/build.py` (ffmpeg). **Output:** `docs/film/out/katachi-demo.mp4`, plus `.vtt` and `.srt` captions.
+**Length:** about 2:55 (the build warns above 178 s, because judges stop at 3:00). Nine takes, about 300 words. **Assembly:** `python3 docs/film/build.py` (ffmpeg). **Output:** `docs/film/out/katachi-demo.mp4`, plus `.vtt` and `.srt` captions.
 
 ## How the film runs
 
 | # | Slide | On screen | About |
 |---|---|---|---|
 | 1 | Katachi | The title slide, slow push-in | 19 s |
-| 2 | Why | The slide | 17 s |
-| 3 | What it does | The slide | 15 s |
-| 4 | **Example 1 · the cat** | Slide for 2 s, then the **cat recording** sped up to fill the take: Analyze, then the stack typed in the chat and **Built 5 layers to your stack**, the exploded view, the cut and Assemble. The cost card ($0.022) shows for the last 2.5 s. | 19 s |
-| 5 | **Example 2 · earrings** | Slide for 2 s, then the **earrings recording**, then the cost card ($0.032) | 17 s |
-| 6 | **Example 3 · bookmarks** | Slide for 2 s, then the **bookmarks recording**, then the cost card ($0.021) | 17 s |
-| 7 | Architecture | The slide | 15 s |
-| 8 | Actions | The slide | 14 s |
-| 9 | Status (honest limits) | The slide | 16 s |
-| 10 | Roadmap | The slide | 15 s |
-| 11 | Build your world | The close | 14 s |
+| 2 | Why | The slide | 15 s |
+| 3 | What it does | The slide | 16 s |
+| 4 | **Example 1 · the cat** | Slide for 2.5 s, then the **cat recording** at about 3×: Analyze, the stack typed in the chat and **Built 5 layers to your stack**, the exploded view, the cut and Assemble. It **holds 1.2 s on each result**, and the cost card ($0.022) shows for the last 2.5 s. | 31 s |
+| 5 | **Example 2 · earrings** | Slide for 2.5 s, then the **earrings recording** up to the fit-to-board layout (its first 170 s, about 7×), holding on each result, then the cost card ($0.032) | 31 s |
+| 7 | Architecture | The slide | 18 s |
+| 8 | Actions | The slide | 16 s |
+| 9 | Status (honest limits) | The slide | 15 s |
+| 11 | Build your world | The close | 16 s |
 
-Each slide shows for 1 s before its take starts. On the example slides the take keeps playing over the recording. A demo gets at least 15 s even when the take is shorter. Segments cross-fade (0.4 s), and captions come from the takes.
+**Left out of the film (v2.2):** slide 6, the bookmarks, and slide 10, the roadmap, so the two demos and the pauses have room. Both stay in the deck, on `/slides` and on `/story`. Their takes (`take-06`, `take-10`) are not used.
+
+Each slide shows for 1.5 s before its take starts and 0.8 s after it. On the example slides the take keeps playing over the recording, which then gets at least 29 s and stops 1.2 s on each result (just before each next chapter of the capture, and at its end). Segments cross-fade (0.4 s), and captions come from the takes.
 
 ## Recording your voice
 
@@ -34,7 +36,7 @@ Each slide shows for 1 s before its take starts. On the example slides the take 
 
 - Read each take as if you were telling one friend about it, not presenting.
 - Smile on the first and last lines; the voice hears it.
-- Leave a breath of silence at the start and end. The build trims nothing; it adds 1 s before each take and 0.3 s after.
+- Leave a breath of silence at the start and end. The build trims nothing; it adds 1.5 s before each take and 0.8 s after.
 - One take per file. If you stumble, redo the whole take; don't patch.
 - Pace is about 150 words a minute. Every take below should run 13–17 s.
 - Keep the same distance, room and energy for all eleven. Record them in one sitting.
@@ -55,7 +57,7 @@ When I got my laser, cutting simple shapes was easy. Turning a picture into cut 
 Snap a photo. Katachi finds the items and layers, cleans them up, lays out sheets for your machine, and guides assembly. You can say what you want or tap a button: the same actions, with one undo.
 
 **take-04 · Example 1, the cat** *(the cat recording plays under it)* · *new: re-record*
-Example one, a layered cut. I tell Katachi how to stack it: a solid white base, black with the whiskers cut through, then red, white flowers and gold, every layer keeping the outline. Five sheets, built to that plan. Two cents.
+Example one, a layered cut. I tell Katachi how to stack it: a solid white base, black with the whiskers cut through, then red, white flowers and gold, every layer keeping the outline. Five sheets, built to that plan. Less than five cents.
 
 **take-05 · Example 2, earrings** *(the earrings recording)* · *new: re-record*
 Example two, a collage of crafts. From one tray photo it finds the earrings, matches the pairs by shape and cuts each pair to one size, with repeated holes evened out. About three cents.
@@ -76,7 +78,7 @@ To be clear: this is a prototype, not a finished product. The core works, but tr
 Next: one clean cut line per piece, a reference card for true millimetres, and real cuts on a real machine. Then Muse Image for hidden detail, and jobs sent straight to the cutter. Later, 3D flat-pack.
 
 **take-11 · Close** · *new: re-record*
-Three crafts, under eight cents of Meta model calls. The hard part, seeing what to cut, already works. Build your world, one sheet at a time, at katachi dot sensei-hq dot com.
+Three crafts, less than ten cents of Meta model calls. The hard part, seeing what to cut, already works. Build your world, one sheet at a time, at katachi dot sensei-hq dot com.
 
 These are the speaker notes from the deck and `/slides`, word for word (`app/src/lib/content/site.ts`; `docs/film/takes.json` is the copy the build reads). If you change a line, change it in both places so the captions match.
 
@@ -127,3 +129,18 @@ The file must stay **under 25 MiB**, because Cloudflare serves static files only
 ## Plan B
 
 If a recording isn't ready, remove the `clip` entry for that slide in `takes.json`. That slide then holds with its push-in for the whole take; slides 4–6 already show the stills and costs.
+
+## The X thread's attachments
+
+After the film is built, `python3 docs/film/social.py` cuts what the thread needs into `docs/film/out/social/`:
+
+| File | For |
+|---|---|
+| `post-1-katachi-40s.mp4` | Post 1, short. About 38 s, 4 MB: the title card, the cat segment, the end card, captions burned in. |
+| `post-1-katachi.mp4` | Post 1, long. About 65 s, 1080p, under 10 MB: the title card, the cat and earrings segments as in the film (voice, holds and cost cards), the end card, with the captions burned in (X plays video muted first). |
+| `post-2-what-it-does.png` | Post 2 (slide 3) |
+| `post-3-cat.png` | Post 3: the cat photo beside its five layer sheets |
+| `post-4-earrings-bookmarks.png` | Post 4: the earrings before and after, beside the five rebuilt bookmarks |
+| `post-5-architecture.png` | Post 5 (slide 7) |
+
+`--images` makes only the pictures (they don't need the film).
