@@ -1,6 +1,8 @@
 # Katachi · the submission film: script v2 (deck + app demos, your voice)
 
-**Status:** v2.3 (2026-11-03): takes 1 and 2 drop the personal intro (“I’m Jerry, I own a desktop laser”) and open on the product instead. **Re-record takes 1 and 2.**
+**Status:** v2.4 (2026-11-03): breathing room — each slide shows 2 s before its voice (was 1.5 s) and leaves 1.2 s after (was 0.8 s); example slides hold 4 s before the demo starts (was 2.5 s). Total 2:55. No takes need re-recording for v2.4.
+
+v2.3 (2026-11-03): takes 1 and 2 drop the personal intro (“I’m Jerry, I own a desktop laser”) and open on the product instead. **Re-record takes 1 and 2.**
 
 v2.2 (2026-11-02): the film drops the bookmarks example and the roadmap; each slide shows 1.5 s before its voice and leaves 0.8 s after; each demo gets about 29 s and holds 1.2 s on every result. No takes need re-recording for v2.2.
 
@@ -14,19 +16,19 @@ v2 (2026-11-02). It replaces v1, the Muse-made montage: that voice read as robot
 
 | # | Slide | On screen | About |
 |---|---|---|---|
-| 1 | Katachi | The title slide, slow push-in | 19 s |
+| 1 | Katachi | The title slide, slow push-in | 15 s |
 | 2 | Why | The slide | 15 s |
 | 3 | What it does | The slide | 16 s |
-| 4 | **Example 1 · the cat** | Slide for 2.5 s, then the **cat recording** at about 3×: Analyze, the stack typed in the chat and **Built 5 layers to your stack**, the exploded view, the cut and Assemble. It **holds 1.2 s on each result**, and the cost card ($0.039) shows for the last 2.5 s. | 31 s |
-| 5 | **Example 2 · earrings** | Slide for 2.5 s, then the **earrings recording** up to the fit-to-board layout (its first 170 s, about 7×), holding on each result, then the cost card ($0.036) | 31 s |
+| 4 | **Example 1 · the cat** | Slide for 4 s, then the **cat recording** at about 3×: Analyze, the stack typed in the chat and **Built 5 layers to your stack**, the exploded view, the cut and Assemble. It **holds 1.2 s on each result**, and the cost card ($0.039) shows for the last 2.5 s. | 33 s |
+| 5 | **Example 2 · earrings** | Slide for 4 s, then the **earrings recording** up to the fit-to-board layout (its first 170 s, about 7×), holding on each result, then the cost card ($0.036) | 33 s |
 | 7 | Architecture | The slide | 18 s |
-| 8 | Actions | The slide | 16 s |
+| 8 | Actions | The slide | 17 s |
 | 9 | Status (honest limits) | The slide | 15 s |
 | 11 | Build your world | The close | 16 s |
 
 **Left out of the film (v2.2):** slide 6, the bookmarks, and slide 10, the roadmap, so the two demos and the pauses have room. Both stay in the deck, on `/slides` and on `/story`. Their takes (`take-06`, `take-10`) are not used.
 
-Each slide shows for 1.5 s before its take starts and 0.8 s after it. On the example slides the take keeps playing over the recording, which then gets at least 29 s and stops 1.2 s on each result (just before each next chapter of the capture, and at its end). Segments cross-fade (0.4 s), and captions come from the takes.
+Each slide shows for 2 s before its take starts and 1.2 s after it. On the example slides the take keeps playing over the recording, which then gets at least 29 s and stops 1.2 s on each result (just before each next chapter of the capture, and at its end). Segments cross-fade (0.4 s), and captions come from the takes.
 
 ## Recording your voice
 
@@ -38,7 +40,7 @@ Each slide shows for 1.5 s before its take starts and 0.8 s after it. On the exa
 
 - Read each take as if you were telling one friend about it, not presenting.
 - Smile on the first and last lines; the voice hears it.
-- Leave a breath of silence at the start and end. The build trims nothing; it adds 1.5 s before each take and 0.8 s after.
+- Leave a breath of silence at the start and end. The build trims nothing; it adds 2 s before each take and 1.2 s after.
 - One take per file. If you stumble, redo the whole take; don't patch.
 - Pace is about 150 words a minute. Every take below should run 13–17 s.
 - Keep the same distance, room and energy for all eleven. Record them in one sitting.

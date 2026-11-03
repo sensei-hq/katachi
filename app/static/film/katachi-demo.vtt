@@ -1,85 +1,85 @@
 WEBVTT
 
-00:00:01.500 --> 00:00:05.160
+00:00:02.000 --> 00:00:05.660
 Katachi turns a photo you love into pieces you can cut.
 
-00:00:05.160 --> 00:00:12.880
+00:00:05.660 --> 00:00:13.380
 It’s a prototype, built this week on Meta’s models, and this film was made with Muse Code, generated voice included.
 
-00:00:14.780 --> 00:00:17.813
+00:00:16.180 --> 00:00:19.213
 Cutting simple shapes on a laser is easy.
 
-00:00:17.813 --> 00:00:22.917
+00:00:19.213 --> 00:00:24.317
 Turning a picture into cut files takes hours of tracing and guessing.
 
-00:00:22.917 --> 00:00:26.320
+00:00:24.317 --> 00:00:27.720
 So Katachi brings Meta’s models to that craft.
 
-00:00:28.220 --> 00:00:29.099
+00:00:30.520 --> 00:00:31.399
 Snap a photo.
 
-00:00:29.099 --> 00:00:36.268
+00:00:31.399 --> 00:00:38.568
 Katachi finds the items and layers, cleans them up, lays out sheets for your machine, and guides assembly.
 
-00:00:36.268 --> 00:00:41.341
+00:00:38.568 --> 00:00:43.641
 You can say what you want or tap a button: the same actions, with one undo.
 
-00:00:43.241 --> 00:00:46.596
+00:00:46.441 --> 00:00:49.864
 Example one, a layered cut.
 
-00:00:46.596 --> 00:01:05.855
+00:00:49.864 --> 00:01:09.520
 I tell Katachi how to stack it: a solid white base, black with the whiskers cut through, then red, white flowers and gold, every layer keeping the outline.
 
-00:01:05.855 --> 00:01:09.831
+00:01:09.520 --> 00:01:13.578
 Five sheets, built to that plan.
 
-00:01:09.831 --> 00:01:12.441
+00:01:13.578 --> 00:01:16.241
 Less than five cents.
 
-00:01:14.341 --> 00:01:19.578
+00:01:19.041 --> 00:01:24.385
 Example two, a collage of crafts.
 
-00:01:19.578 --> 00:01:40.684
+00:01:24.385 --> 00:01:45.925
 From one tray photo it finds the earrings, matches the pairs by shape and cuts each pair to one size, with repeated holes evened out.
 
-00:01:40.684 --> 00:01:43.541
+00:01:45.925 --> 00:01:48.841
 About three cents.
 
-00:01:45.441 --> 00:01:51.243
+00:01:51.641 --> 00:01:57.443
 Under the hood: the browser holds the craft and code does all the geometry.
 
-00:01:51.243 --> 00:01:54.801
+00:01:57.443 --> 00:02:01.001
 A Cloudflare worker keeps the key server-side.
 
-00:01:54.801 --> 00:01:57.431
+00:02:01.001 --> 00:02:03.631
 Muse Spark reads and plans; SAM 3.
 
-00:01:57.431 --> 00:01:58.282
+00:02:03.631 --> 00:02:04.482
 1 outlines.
 
-00:01:58.282 --> 00:02:00.603
+00:02:04.482 --> 00:02:06.803
 Models never emit coordinates.
 
-00:02:02.503 --> 00:02:08.217
+00:02:09.603 --> 00:02:15.317
 Every edit is one action with one contract, shared by the chat and the buttons.
 
-00:02:08.217 --> 00:02:10.315
+00:02:15.317 --> 00:02:17.415
 Simple phrases run instantly.
 
-00:02:10.315 --> 00:02:16.463
+00:02:17.415 --> 00:02:23.563
 Complex requests go to Muse Spark, which plans the steps as a single undoable change.
 
-00:02:18.363 --> 00:02:22.289
+00:02:26.363 --> 00:02:30.289
 To be clear: this is a prototype, not a finished product.
 
-00:02:22.289 --> 00:02:30.143
+00:02:30.289 --> 00:02:38.143
 The core works, but traces still follow the photo, hidden fretwork is rebuilt solid, and real size is an estimate.
 
-00:02:32.043 --> 00:02:36.048
+00:02:40.943 --> 00:02:44.948
 Three crafts, less than ten cents of Meta model calls.
 
-00:02:36.048 --> 00:02:39.683
+00:02:44.948 --> 00:02:48.583
 The hard part, seeing what to cut, already works.
 
-00:02:39.683 --> 00:02:45.023
+00:02:48.583 --> 00:02:53.923
 Build your world, one sheet at a time, at katachi dot sensei-hq dot com.
