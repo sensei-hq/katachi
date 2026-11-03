@@ -6,8 +6,6 @@ import { replayEarrings, sample } from './replay';
 // REC 1:35–1:52 · laser-cut earrings: pairs kept together, tidied in plain words, cut.
 const main = (page: Page) => page.getByRole('main');
 const chat = (page: Page) => page.getByRole('complementary', { name: 'Katachi chat' });
-const steps = (page: Page) => chat(page).locator('[data-timeline-entry="step"]');
-const step = (page: Page, title: RegExp | string) => steps(page).filter({ hasText: title }).last();
 const composer = (page: Page) => chat(page).locator('[data-chat-composer]').getByRole('textbox');
 const rows = (page: Page) => page.getByLabel('Items and layers').locator('[data-layer-row]');
 
@@ -29,25 +27,28 @@ test('earrings film', async ({ page }) => {
   let found = false;
   for (let attempt = 1; attempt <= 3 && !found; attempt++) {
     await expect.poll(async () => {
-      if (await steps(page).filter({ hasText: /Found \d+ items/ }).count()) return 'found';
+      // chat text, not step entries: live narrates "with a note" (plain paragraphs), replay uses steps
+      if (await chat(page).getByText(/Found \d+ items/).count()) return 'found';
       if (await chat(page).getByText('No items found yet').count()) return 'none';
       return 'waiting';
     }, { timeout: 90_000 }).not.toBe('waiting');
-    found = (await steps(page).filter({ hasText: /Found \d+ items/ }).count()) > 0;
+    found = (await chat(page).getByText(/Found \d+ items/).count()) > 0;
     if (!found && attempt < 3) {
       console.log(`FILM NOTE: live found no items (attempt ${attempt}) — taking the background retry`);
       await chat(page).getByRole('group', { name: 'Suggestions' }).getByRole('button', { name: 'Remove the background' }).click();
     }
   }
   console.log(found ? 'FILM NOTE: found items (no retry needed)' : 'FILM NOTE: no items after 3 attempts');
-  await expect(step(page, /Found \d+ items/)).toHaveAttribute('data-step-status', 'done', { timeout: 90_000 });
+  await expect(chat(page).getByText(/Found \d+ items/).last()).toBeVisible({ timeout: 90_000 });
+  await expect.poll(async () => rows(page).count(), { timeout: 90_000 }).toBeGreaterThan(0);
   await pause(2500);
 
   await showCaption(page, 'Tidy up in plain words');
   await chapter(page, '1:38', '"remove the 0% layers", "merge the swirl drops", "undo", "smooth every layer"');
   const count = await rows(page).count();
+  const removedSeen = await chat(page).getByText(/Deleted |Nothing to delete/).count();
   await humanType(page, composer(page), 'remove the 0% layers');
-  await expect(steps(page).last()).toHaveAttribute('data-step-status', /done|failed/, { timeout: 90_000 });
+  await expect.poll(async () => chat(page).getByText(/Deleted |Nothing to delete/).count(), { timeout: 90_000 }).toBe(removedSeen + 1);
   await pause(2000);
   // the scripted swirl pair on replay; whatever the first two rows are when live names differ
   const rowTexts = await rows(page).evaluateAll((els) => els.map((e) => e.textContent?.replace(/\s+/g, ' ').trim() ?? ''));
@@ -66,11 +67,9 @@ test('earrings film', async ({ page }) => {
   await pause(2000);
   await page.screenshot({ path: 'test-results/film/earrings-pre-smooth.png' });
   // one sentence smooths every layer, as one step and one undo (default strength: the honest default)
-  const seen = await steps(page).count();
+  const seen = await chat(page).getByText(/Smoothed \d+ layers?/).count();
   await humanType(page, composer(page), 'smooth every layer');
-  await expect.poll(async () => steps(page).count(), { timeout: 90_000 }).toBe(seen + 1);
-  await expect(steps(page).last()).toHaveAttribute('data-step-status', 'done', { timeout: 120_000 });
-  await expect(steps(page).last()).toContainText(/Smoothed \d+ layers/);
+  await expect.poll(async () => chat(page).getByText(/Smoothed \d+ layers?/).count(), { timeout: 120_000 }).toBe(seen + 1);
   await page.screenshot({ path: 'test-results/film/earrings-post-smooth.png' });
   await pause(2500);
 
@@ -93,7 +92,7 @@ test('earrings film', async ({ page }) => {
   await chapter(page, '1:46', 'Cut run at 1× (extra footage)');
   await pause(1500);
   await main(page).getByRole('button', { name: 'Send to the cut queue' }).click();
-  await expect(step(page, /Added \d+ sheets? to the cut queue/)).toBeVisible({ timeout: 90_000 });
+  await expect(chat(page).getByText(/Added \d+ sheets? to the cut queue|Already in the cut queue/).last()).toBeVisible({ timeout: 90_000 });
   await chat(page).getByRole('link', { name: 'Open the cut queue' }).last().click();
   await expect(page).toHaveURL(/\/queue$/, { timeout: 30_000 });
   const bed = main(page).getByRole('region', { name: 'On the bed' });

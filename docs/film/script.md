@@ -15,8 +15,8 @@ v2 (2026-11-02). It replaces v1, the Muse-made montage: that voice read as robot
 | 1 | Katachi | The title slide, slow push-in | 19 s |
 | 2 | Why | The slide | 15 s |
 | 3 | What it does | The slide | 16 s |
-| 4 | **Example 1 · the cat** | Slide for 2.5 s, then the **cat recording** at about 3×: Analyze, the stack typed in the chat and **Built 5 layers to your stack**, the exploded view, the cut and Assemble. It **holds 1.2 s on each result**, and the cost card ($0.022) shows for the last 2.5 s. | 31 s |
-| 5 | **Example 2 · earrings** | Slide for 2.5 s, then the **earrings recording** up to the fit-to-board layout (its first 170 s, about 7×), holding on each result, then the cost card ($0.032) | 31 s |
+| 4 | **Example 1 · the cat** | Slide for 2.5 s, then the **cat recording** at about 3×: Analyze, the stack typed in the chat and **Built 5 layers to your stack**, the exploded view, the cut and Assemble. It **holds 1.2 s on each result**, and the cost card ($0.039) shows for the last 2.5 s. | 31 s |
+| 5 | **Example 2 · earrings** | Slide for 2.5 s, then the **earrings recording** up to the fit-to-board layout (its first 170 s, about 7×), holding on each result, then the cost card ($0.036) | 31 s |
 | 7 | Architecture | The slide | 18 s |
 | 8 | Actions | The slide | 16 s |
 | 9 | Status (honest limits) | The slide | 15 s |
@@ -96,7 +96,7 @@ It writes `test-results/film/<sample>.webm`, `.chapters.json` and `.costs.json`.
 | Recording | State | Note |
 |---|---|---|
 | `cat.webm` | **Re-capture** | The cat film now types the stack (`tests/film/cat.film.ts`, STACK_ASK) and waits for *Built 5 layers to your stack*, then the exploded view. |
-| `earrings.webm` | **Have it** (11/2, $0.032) | 28 pieces found on the tray; the slide and narration say so (no “twenty-four”). |
+| `earrings.webm` | **Have it** (11/3, $0.036) | 28 pieces found on the tray; the slide and narration say so (no “twenty-four”). |
 | `bookmarks.webm` | **Have it** (11/2, $0.021) | |
 
 To use a different take of a recording, drop it in `docs/film/clips/<sample>.webm`, which wins over the capture. To trim one, set `clip_in` and `clip_out` (seconds) for it in `takes.json`. The whole recording is squeezed into the demo's time: a 60 s capture in 16 s plays at about 4×.

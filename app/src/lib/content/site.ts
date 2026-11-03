@@ -38,7 +38,7 @@ export const examples: Example[] = [
     ask: 'use 5 layers: a solid white base, black with cuts for the whiskers to show through, then red, the white flowers, and gold on top. Every layer keeps the full outline.' },
   { id: 'earrings', n: 2, kind: 'A collage of crafts', title: 'Earring charms', photo: '/samples/katachi-sample-earrings.jpg', result: '/story/earrings-before-after.jpg', resultAlt: 'Two earring pairs before and after the clean-up',
     steps: ['Every earring found', 'Pairs matched by shape', 'Repeated holes evened out', 'Each pair one size'],
-    stats: [{ value: '28', label: 'pieces found on the tray' }, { value: 'Pairs', label: 'matched by shape, each one size' }, { value: '$0.032', label: 'in Meta model calls' }],
+    stats: [{ value: '28', label: 'pieces found on the tray' }, { value: 'Pairs', label: 'matched by shape, each one size' }, { value: '$0.036', label: 'in Meta model calls' }],
     say: 'From one tray photo it finds the earrings, matches the pairs by shape and cuts each pair to one size, with repeated holes evened out.',
     sample: { src: '/samples/katachi-sample-earrings.jpg', file: 'katachi-sample-earrings.jpg', size: '280 KB' },
     tryIt: [
@@ -88,6 +88,35 @@ export const actionGroups = [
 export const status = {
   works: ['Layered art split into colour layers', 'Items found, upright, paired, one size', 'Clean-up: smoothing, specks, patterns', 'Cut files for lasers and Cricuts'],
   gaps: ['Shadows can add stray cut lines', 'Hidden fretwork is rebuilt solid', 'Real size is an estimate', '3D kits from blurry plans are rough']
+};
+/** building it on Muse: what we saw, said plainly (from docs/submission/assets/feedback-notes.md) */
+export const museNotes = {
+  intro: 'Katachi was built in ten days on Meta’s models, and largely with Meta’s coding tool. Here is what that was like, the good and the rough, as candidly as we can put it.',
+  groups: [
+    { title: 'Muse Spark 1.3 and SAM 3.1', sub: 'In the product', worked: [
+      'Far better on real photos than we expected; that is what made the idea buildable.',
+      'Spark reads a photo into a structured brief it can be held to (strict JSON), and saw 28 earrings in 14 pairs on one tray.',
+      'It turns a plain sentence into calls to the app’s own actions, so the chat and the buttons do the same thing.',
+      'SAM gives clean outlines in about two seconds for a quarter of a cent.',
+      'Cheap for what it does: a whole craft is a few cents.'
+    ], rough: [
+      'On one layered piece, SAM returns the same most-salient shape for every phrase (“gold backer”, “red leaves”: both the whole cat), so colour layers are measured in code.',
+      'With many similar items, one phrase can give one mask over several, or the same item for five names.',
+      'Spark’s first read of a large photo can take 30 to 60 seconds.',
+      'Masks come back as bitmaps; every outline is traced into lines in code.'
+    ], ask: ['One mask per instance for a phrase (“each earring”)', 'Polygons as an output option', 'AVIF and HEIC uploads, as phones take them', 'A text-to-speech model (the film’s voice had to come from elsewhere)'] },
+    { title: 'Muse Code', sub: 'Building it', worked: [
+      'Setting a goal and watching progress towards it.',
+      'Fast, and good: an independent review found only two or three issues.',
+      'Strongest at automation: recording the demo runs, building the film and its voiceover, wiring actions from feedback.',
+      'It caught that the narration’s numbers no longer matched the footage, and said so before we published.'
+    ], rough: [
+      'Onboarding: with $150 in credits, a card was still needed, which opened the Playground but not Muse Code, so we took a subscription.',
+      'Two or three runs used the daily limit and neared the weekly one, with no usage view or spend history.',
+      'It took three days to find how to run Muse Code on the credits instead (it worked better that way).',
+      'The first UI it built was cluttered for a Svelte app with its own component library, so we laid the UX skeleton with other tools (Claude Code and Cowork, as development tools only) and carried on with Muse Code.'
+    ], ask: ['Credits that unlock Muse Code directly', 'A usage and spend view per run and per day', 'A clear subscription-or-credits switch', 'Closer adherence to an existing design system'] }
+  ]
 };
 export const roadmap = [
   { when: 'Now', span: 'Next few weeks', items: [

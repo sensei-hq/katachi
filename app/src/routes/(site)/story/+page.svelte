@@ -2,7 +2,7 @@
 import { resolve } from '$app/paths';
 import SiteShell from '$lib/components/site/SiteShell.svelte';
 import { reveal } from '$lib/components/site/reveal';
-import { actionGroups, architecture, examples, film, flow, roadmap, status, why } from '$lib/content/site';
+import { actionGroups, architecture, examples, film, flow, museNotes, roadmap, status, why } from '$lib/content/site';
 // The story (public): why Katachi, what it does, three examples, how it is built, where it stands and what is next.
 let filmOk = $state(true);
 // try it yourself: copy the words to say in the chat
@@ -111,6 +111,21 @@ async function copy(id: string, text: string) {
     <div class="mt-10 grid gap-4 sm:grid-cols-2">
       {#each actionGroups as g, i (g.title)}
         <div use:reveal={i * 70} class="rounded-lg border border-paper-edge bg-paper-soft p-4 flex gap-3"><span class="{g.icon} text-accent text-2xl shrink-0" aria-hidden="true"></span><div><h3 class="font-heading text-lede">{g.title}</h3><p class="text-ui text-ink-mute">{g.list}</p></div></div>
+      {/each}
+    </div>
+  </section>
+
+  <section aria-label="Building it on Muse" class="py-14 md:py-20 hair-t">
+    <h2 use:reveal class="section-title">Building it on Muse: candid notes</h2>
+    <p use:reveal class="mt-3 text-lede text-ink-mute max-w-[62ch]">{museNotes.intro}</p>
+    <div class="mt-8 grid gap-4 md:grid-cols-2">
+      {#each museNotes.groups as g, i (g.title)}
+        <div use:reveal={i * 90} class="rounded-lg border border-paper-edge bg-paper-soft p-5 flex flex-col gap-4" data-muse-notes={g.title}>
+          <div><h3 class="panel-title">{g.title}</h3><p class="meta mt-1">{g.sub}</p></div>
+          <div><p class="eyebrow text-success flex items-center gap-1.5"><span class="i-solar:check-circle-linear" aria-hidden="true"></span>Worked well</p><ul class="mt-2 flex flex-col gap-1.5 list-disc pl-5 text-ink-mute">{#each g.worked as w (w)}<li>{w}</li>{/each}</ul></div>
+          <div><p class="eyebrow text-warning-ink flex items-center gap-1.5"><span class="i-solar:danger-circle-linear" aria-hidden="true"></span>Got in the way</p><ul class="mt-2 flex flex-col gap-1.5 list-disc pl-5 text-ink-mute">{#each g.rough as r (r)}<li>{r}</li>{/each}</ul></div>
+          <div><p class="eyebrow flex items-center gap-1.5"><span class="i-solar:lightbulb-linear" aria-hidden="true"></span>Would ask for</p><ul class="mt-2 flex flex-col gap-1.5 list-disc pl-5 text-ink-mute">{#each g.ask as a (a)}<li>{a}</li>{/each}</ul></div>
+        </div>
       {/each}
     </div>
   </section>
