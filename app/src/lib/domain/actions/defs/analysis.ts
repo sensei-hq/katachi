@@ -7,8 +7,8 @@ import { hiddenShare, hullOf, uprightTurn, type Pt } from '../../toolpath';
 import { rasterisePaths, woodPiece } from '../../layering';
 import type { PixelImage } from '../../colour';
 import type { ActionDef, ActionResult } from '../types';
+import { clone } from './shared';
 
-const clone = <T>(x: T): T => structuredClone(x);
 const itemsOf = (doc: CraftDoc, ids: string[]) => doc.items.filter((i) => ids.includes(i.id));
 /** an item's outline: the cut op of its backmost part (stacked art: the backing) */
 const outlineOp = (item: ItemDoc): OpDoc | undefined => [...item.parts].sort((a, b) => a.z - b.z).flatMap((p) => p.ops).find((o) => o.kind === 'cut');

@@ -3,6 +3,7 @@ import { bbox, transform, translate, type Box, type Geometry } from '../../geo';
 import type { CraftDoc, Id, ItemDoc, PartDoc } from '../../craft/types';
 import { indexCraft } from '../../craft';
 import type { ActionDef, ActionResult } from '../types';
+import { clone } from './shared';
 
 export type AlignTo = 'left' | 'centre-x' | 'right' | 'top' | 'centre-y' | 'bottom' | 'centre';
 export interface AlignOpts { to: AlignTo; relativeTo: 'first' | 'backing' }
@@ -14,7 +15,6 @@ const TO_WORDS: Record<string, AlignTo> = {
 /** chat words → edge (says captures centre/center/middle; the schema constrains to the seven) */
 export function alignTo(to: string): AlignTo | null { return TO_WORDS[to] ?? null; }
 
-const clone = <T>(x: T): T => structuredClone(x);
 
 type Target = { kind: 'item'; item: ItemDoc } | { kind: 'part'; part: PartDoc; item: ItemDoc };
 function targetsOf(doc: CraftDoc, ids: Id[]): (Target | undefined)[] {

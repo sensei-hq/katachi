@@ -6,7 +6,7 @@ import KatachiMark from '../KatachiMark.svelte';
 import type { Section, Tool } from '$lib/content/sections';
 import { appVersion, versionLabel } from '$lib/content/version';
 // Studio (≥ md) rail: Home (start + your crafts) and the tools; when a craft is open, its thumbnail and its steps
-// (Layers · Cut · Assemble) join as a group. Phone layouts use AppNav with the same lists.
+// (Layers · Cut · cut queue · Assemble) join as a group. Phone layouts use AppNav with the same lists.
 let { sections, craft = null, tools = [], current, chatOpen, onToggleChat }: {
   sections: Section[]; craft?: { name: string; image: string; href: string; steps: Section[] } | null; tools?: Tool[]; current: string; chatOpen: boolean; onToggleChat: () => void;
 } = $props();
@@ -25,10 +25,14 @@ let { sections, craft = null, tools = [], current, chatOpen, onToggleChat }: {
       <a href={resolve(craft.href as '/workshop')} title={craft.name} aria-label={`Current craft: ${craft.name}`} class="block w-9 h-9 rounded-md overflow-hidden border border-paper-edge bg-paper-mute">
         {#if craft.image}<img src={craft.image} alt="" class="w-full h-full object-cover" />{:else}<span class="grid place-items-center w-full h-full i-solar:layers-linear text-ink-soft"></span>{/if}
       </a>
-      {#each craft.steps as s (s.id)}{@render item(s)}{/each}
+      <!-- the cut queue sits between Cut and Assemble: you cut the sheets, then put the pieces together -->
+      {#each craft.steps as s (s.id)}
+        {#if s.id === 'assemble'}{#each sections.filter((q) => q.id === 'queue') as q (q.id)}{@render item(q)}{/each}{/if}
+        {@render item(s)}
+      {/each}
     </section>
   {/if}
-  {#each sections.filter((s) => s.id !== 'workshop') as s (s.id)}<span class="mt-1">{@render item(s)}</span>{/each}
+  {#each sections.filter((s) => s.id !== 'workshop' && (!craft || s.id !== 'queue')) as s (s.id)}<span class="mt-1">{@render item(s)}</span>{/each}
   <span class="w-5 h-px my-1.5 bg-paper-edge"></span>
   <Button style={chatOpen ? 'default' : 'ghost'} variant={chatOpen ? 'primary' : 'default'} icon="i-solar:chat-round-line-linear" title="Toggle Katachi chat" aria-label="Toggle Katachi chat" aria-pressed={chatOpen} onclick={onToggleChat} />
   <span class="flex-1"></span>

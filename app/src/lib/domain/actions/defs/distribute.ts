@@ -1,11 +1,10 @@
 // Space items evenly along x (design/14 §6): order kept, the first stays put.
-import type { CraftDoc, Id, ItemDoc } from '../../craft/types';
+import type { ItemDoc } from '../../craft/types';
 import type { ActionDef, ActionResult } from '../types';
+import { clone, itemOf } from './shared';
 
 export interface DistributeOpts { gapMm: number }
 
-const clone = <T>(x: T): T => structuredClone(x);
-const itemOf = (doc: CraftDoc, id: Id): ItemDoc | undefined => doc.items.find((i) => i.id === id);
 
 export const distribute: ActionDef<DistributeOpts> = {
   id: 'distribute', label: 'Distribute', icon: 'i-solar:slider-horizontal-linear', scope: 'item', arity: 'many', kind: 'code',

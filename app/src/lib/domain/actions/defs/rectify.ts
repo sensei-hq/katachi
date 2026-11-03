@@ -7,8 +7,8 @@ import type { Pt } from '../../geo';
 import type { CraftDoc, ItemDoc, OpDoc } from '../../craft/types';
 import { hullOf } from '../../toolpath';
 import type { ActionDef, ActionResult } from '../types';
+import { clone } from './shared';
 
-const clone = <T>(x: T): T => structuredClone(x);
 const area = (l: Pt[]) => Math.abs(l.reduce((a, [x, y], i) => { const [u, v] = l[(i + 1) % l.length]; return a + x * v - u * y; }, 0)) / 2;
 const dist = (a: Pt, b: Pt) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const outlineOp = (it: ItemDoc): OpDoc | undefined => [...it.parts].sort((a, b) => a.z - b.z).flatMap((p) => p.ops).find((o) => o.kind === 'cut');

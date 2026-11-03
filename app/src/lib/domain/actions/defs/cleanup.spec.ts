@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toLoops } from '../../geo';
-import { tidy, repeatPattern, symmetrize } from './cleanup';
+import { tidy, unhook, repeatPattern, symmetrize } from './cleanup';
 import { craftOf, sq, testCtx } from './fixtures';
 import type { Pt } from '../../geo';
 
@@ -23,6 +23,31 @@ describe('the clean-up pass', () => {
     expect(Math.min(...loops.flat().map((p) => p[1]))).toBeGreaterThan(15);
     expect(loops).toHaveLength(3);
     expect(r.detail).toContain('thin wire bits (hooks, cords) taken off 1 outline');
+  });
+  it('unhook takes a thicker hook off and drills a hanging hole at the top when the hook took it', async () => {
+    // pxPerMm 4: a 25 × 25 mm drop with a 1.25 mm (5 px) wire hook rising 5 mm from its top; tidy leaves it (too thick)
+    const drop: Pt[] = [[0, 20], [47, 20], [47, 0], [52, 0], [52, 20], [100, 20], [100, 120], [0, 120]];
+    const doc = one([drop, sq(20, 60, 60)]);
+    expect((await tidy.run(doc, { targets: ['part0-0'], opts: { minMm2: 1, thinMm: 0.6 } }, testCtx())).detail).not.toContain('wire');
+    const r = await unhook.run(doc, { targets: ['part0-0'], opts: { thinMm: 1, holeMm: 1.5 } }, testCtx());
+    const loops = toLoops(r.items[0].parts[0].ops[0].geometry);
+    expect(Math.min(...loops.flat().map((p) => p[1]))).toBeGreaterThan(15);                 // the hook is gone
+    const small = loops.filter((l) => Math.max(...l.map((p) => p[0])) - Math.min(...l.map((p) => p[0])) < 10);
+    expect(small).toHaveLength(1);                                                             // one hole drilled
+    const ys = small[0].map((p) => p[1]), xs = small[0].map((p) => p[0]);
+    expect((Math.max(...xs) - Math.min(...xs)) / 4).toBeCloseTo(1.5, 0);                       // 1.5 mm across
+    expect(Math.min(...ys)).toBeGreaterThan(20 + 0.8 * 4 - 1);                                  // inside the top edge, with a rim
+    expect(r.detail).toContain('1 hook');
+    expect(r.detail).toContain('1.5 mm hole drilled');
+  });
+  it('unhook keeps an earring’s own hanging hole and drills nothing more', async () => {
+    const drop: Pt[] = [[0, 20], [47, 20], [47, 0], [52, 0], [52, 20], [100, 20], [100, 120], [0, 120]];
+    const doc = one([drop, sq(46, 25, 7), sq(20, 60, 60)]);
+    const r = await unhook.run(doc, { targets: ['part0-0'], opts: { thinMm: 1, holeMm: 1.5 } }, testCtx());
+    expect(toLoops(r.items[0].parts[0].ops[0].geometry)).toHaveLength(3);
+    expect(r.detail).toContain('1 kept their hanging hole');
+    expect(unhook.says?.some((re) => re.test('remove the hooks from the earrings'))).toBe(true);
+    expect(unhook.says?.some((re) => re.test('ignore the ear wires'))).toBe(true);
   });
   it('repeat-pattern makes a lattice’s ragged holes identical copies of the cleanest', async () => {
     const ragged = (x: number, y: number, d: number): Pt[] => [[x, y], [x + 5, y - d], [x + 10, y], [x + 10, y + 10], [x + 5, y + 10 + d], [x, y + 10]];

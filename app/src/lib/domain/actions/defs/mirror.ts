@@ -1,13 +1,12 @@
 // Mirror an item into a new, paired item (design/14 §6): the geometry is mirrored, not flagged.
 import { bbox, flip as flipMat, transform, type Pt } from '../../geo';
-import type { CraftDoc, GroupDoc, Id, ItemDoc, OpDoc, PartDoc } from '../../craft/types';
+import type { GroupDoc, ItemDoc, OpDoc, PartDoc } from '../../craft/types';
 import type { ActionCtx, ActionDef, ActionResult } from '../types';
 import { flipAxis } from './flip';
+import { clone, itemOf } from './shared';
 
 export interface MirrorOpts { axis: 'x' | 'y'; pair: boolean }
 
-const clone = <T>(x: T): T => structuredClone(x);
-const itemOf = (doc: CraftDoc, id: Id): ItemDoc | undefined => doc.items.find((i) => i.id === id);
 
 export const mirror: ActionDef<MirrorOpts> = {
   id: 'mirror', label: 'Mirror', icon: 'i-solar:mirror-left-linear', scope: 'item', arity: 'one', kind: 'code',

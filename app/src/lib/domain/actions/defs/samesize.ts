@@ -5,8 +5,8 @@ import * as geo from '../../geo';
 import type { Pt } from '../../geo';
 import type { CraftDoc, ItemDoc, OpDoc } from '../../craft/types';
 import type { ActionDef, ActionResult } from '../types';
+import { clone } from './shared';
 
-const clone = <T>(x: T): T => structuredClone(x);
 const outlineOp = (it: ItemDoc): OpDoc | undefined => [...it.parts].sort((a, b) => a.z - b.z).flatMap((p) => p.ops).find((o) => o.kind === 'cut');
 const rot = (pts: Pt[], deg: number, [cx, cy]: Pt): Pt[] => { const r = (deg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r); return pts.map(([x, y]) => [cx + (x - cx) * c - (y - cy) * s, cy + (x - cx) * s + (y - cy) * c]); };
 const box = (pts: Pt[]) => { const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]); return { x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys) }; };

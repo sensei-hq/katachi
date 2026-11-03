@@ -6,6 +6,7 @@ import { area, fromLoops, toLoops } from '../geo';
 import { toMm, uprightTurn, type Pt } from '../toolpath';
 import type { CraftDoc, GroupDoc, Id, ItemDoc, OpDoc, PartDoc } from './types';
 import { frameSize, tierFor } from './index';
+import { likeness, pairByShape, silhouette } from './pairs';
 
 type Loops = [number, number][][];
 /** the parts of a v1 snapshot this migration reads (everything else is the workflow's, not the craft's) */
@@ -82,28 +83,30 @@ export function migrateV1(project: V1Project, snap: V1Snapshot, newId: () => Id)
       const part: PartDoc = { id: pid, name: strip(cut.l.name), z: 0, material: cut.l.material, colour: cut.l.colour, ops, measured: measured(cut.l), ...(cut.l.regionId ? { regionId: cut.l.regionId } : {}) };
       return { id: `it-${slug(name)}`, name, build: 'single' as const, frame, parts: [part], joins: [] };
     });
-    // left / right of the same design are a pair (cut together)
+    // each item's outline (the largest loop of its cut) and size, for pairing by shape (pairs.ts)
+    const shapeOf = (it: ItemDoc) => {
+      const cut = it.parts[0]?.ops.find((o) => o.kind === 'cut');
+      const loops = cut ? toLoops(cut.geometry, 0.5) : [];
+      // the outline alone (twins' fretwork traces a little differently)
+      const outline = loops.reduce<[number, number][]>((m, l) => (Math.abs(area(fromLoops([l]))) > Math.abs(area(fromLoops([m]))) ? l : m), loops[0] ?? []);
+      return { id: it.id, outline, sizeMm: it.frame.size.map((v) => v / it.frame.pxPerMm) as [number, number] };
+    };
+    // left / right of the same design are a pair (cut together) — when their outlines agree: a name is Spark's
+    // reading, and an outline put under the wrong name would pair two different earrings
     const groups: GroupDoc[] = [];
     const pairKey = (n: string) => n.toLowerCase().replace(/\b(left|right)\b/g, '').replace(/\s+/g, ' ').trim();
+    const alike = (a: ItemDoc, b: ItemDoc) => { const p = shapeOf(a), q = shapeOf(b); return p.outline.length < 3 || q.outline.length < 3 || likeness(silhouette(p.outline), silhouette(q.outline)).score >= 0.7; };
     for (const it of items) {
       if (!/\b(left|right)\b/i.test(it.name) || groups.some((g) => g.items.includes(it.id))) continue;
       const mate = items.find((o) => o !== it && /\b(left|right)\b/i.test(o.name) && pairKey(o.name) === pairKey(it.name) && !groups.some((g) => g.items.includes(o.id)));
-      if (mate) groups.push({ id: `pair-${slug(it.name)}`, name: strip(it.name.replace(/\b(left|right)\b/i, '').trim()), kind: 'pair', items: [it.id, mate.id], rule: 'same-sheet' });
+      if (mate && alike(it, mate)) groups.push({ id: `pair-${slug(it.name)}`, name: strip(it.name.replace(/\b(left|right)\b/i, '').trim()), kind: 'pair', items: [it.id, mate.id], rule: 'same-sheet' });
     }
-    // earrings and the like come in pairs even when they are named "earring 1, earring 2…": Spark lists items in
-    // reading order, so a pair is two neighbours of the same size and the same cut area (mirror twins included)
-    if (!groups.length && /\b(earrings?|cufflinks?|studs?|pairs?)\b/i.test(snap.subject ?? '')) {
-      const look = items.map((it) => { const [w, h] = it.frame.size.map((v) => v / it.frame.pxPerMm); const cut = it.parts[0]?.ops.find((o) => o.kind === 'cut');
-        // the outline's own area (not less its holes: twins' fretwork traces a little differently)
-        const outer = cut ? toLoops(cut.geometry, 0.5).reduce((m, l) => Math.max(m, Math.abs(area(fromLoops([l])))), 0) : 0;
-        return { long: Math.max(w, h), short: Math.min(w, h), area: outer / it.frame.pxPerMm ** 2 }; });
-      const near = (a: number, b: number, tol: number) => Math.abs(a - b) <= tol * Math.max(a, b, 1e-6);
-      for (let i = 0; i + 1 < items.length; i++) {
-        const [a, b] = [look[i], look[i + 1]];
-        if (!near(a.long, b.long, 0.12) || !near(a.short, b.short, 0.12) || !near(a.area, b.area, 0.15)) continue;
-        groups.push({ id: `pair-${slug(items[i].name)}`, name: `Pair ${groups.length + 1}`, kind: 'pair', items: [items[i].id, items[i + 1].id], rule: 'same-sheet' });
-        i++;
-      }
+    // earrings and the like come in pairs even when they are named "earring 1, earring 2…": the rest pair up by
+    // shape, each outline compared with the others as it is and mirrored (pairs.ts)
+    if (/\b(earrings?|cufflinks?|studs?|pairs?)\b/i.test(snap.subject ?? '')) {
+      const paired = new Set(groups.flatMap((g) => g.items));
+      const cands = items.filter((it) => !paired.has(it.id)).map(shapeOf).filter((c) => c.outline.length >= 3);
+      for (const p of pairByShape(cands)) groups.push({ id: `pair-${slug(p.a)}`, name: `Pair ${groups.length + 1}`, kind: 'pair', items: [p.a, p.b], rule: 'same-sheet' });
     }
     return { ...base, kind: 'items', items, groups, sources: [source] };
   }

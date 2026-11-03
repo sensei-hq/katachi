@@ -41,6 +41,14 @@ export type LayerAction =
 const ACTION_WORDS = /\b(merge|delete|remove|combine|join|duplicate|copy|copies|straighten|rotate|turn|flip|mirror|resize|enhance|sharpen|fill in|interpolate|group|pair|rename|recolou?r|engrave instead|again|same for|bring|send|undo|redo|smooth(en)?|simplify|split|weld|bridge|offset|align|distribute|hole)\b/i;
 /** more than one action in one ask ("merge layers 1 and 2 and then smooth it"): Spark plans it as one undo */
 const manyActions = (text: string) => /\b(and then|then|after that|afterwards)\b/i.test(text) || new Set((text.match(new RegExp(ACTION_WORDS.source, 'gi')) ?? []).map((v) => v.toLowerCase())).size >= 2;
+/** the Cut layout a sentence asks for, if it plainly asks for one */
+export function layoutSaid(text: string): CutProfile['layout'] | null {
+  const t = text.toLowerCase();
+  if (/\b(pairs?|sets?)\b.*\btogether\b|\b(each )?pair (on|per) (one|a|its own) sheet\b/.test(t)) return 'groups-together';
+  if (/\b(fit|pack|nest|squeeze)\b.*\b(board|sheet|few(er|est)?)\b|\b(on|onto) (one|a single|the same|a) (board|sheet)\b|\bfit to board\b/.test(t)) return 'nest';
+  if (/\bone (piece |layer |part )?(per|a) sheet\b/.test(t)) return 'one-part-per-sheet';
+  return null;
+}
 /** "remove the background", "get rid of the textured wall", "no shadows"… — the user wants the backdrop gone */
 export const BACKDROP_ASK = /\b(remove|drop|delete|erase|clear|get rid of|cut out|without|no|lose)\b[^.]*\b(background|backdrop|wall|shadows?|plants?|shelf|surroundings)\b|\b(background|backdrop|wall)\b[^.]*\b(removed|gone|out|needs to go|should go)\b/i;
 
@@ -73,6 +81,7 @@ import { BatchState } from './batch.svelte';
 import { CaptureState, thumbnail } from './capture.svelte';
 import { SessionState } from './session.svelte';
 import { LayerFlowState } from './layer-flow.svelte';
+import { VoiceState } from './voice.svelte';
 import { ProjectStore, projectName, type ProjectRecord } from './project.svelte';
 import { EditorState } from './editor.svelte';
 
@@ -210,14 +219,20 @@ export class AppState {
   async cleanUp(via: 'pass' | 'chat' = 'pass') {
     const rows = rowsOf(this.craft.doc); if (!rows.length) return;
     const parts = rows.filter((r) => !r.op);
+    // what was asked with the photo ("remove the hook wires… on a single board") is done here, not just kept
+    const asked = via === 'pass' ? this.layers.notes.map((x) => x.text).join(' · ') : '';
+    const unhook = this.layers.separateItems && /\b(hooks?|ear ?wires?|findings|bails?)\b/i.test(asked) && /\b(remove|drop|take off|ignore|without|no|cut off|get rid of|just (keep|the))\b/i.test(asked);
     const r = await this.actions.performAll([
       // wire bits (hooks, cords) only hang off separate items; a one-piece picture's outline is left as traced
       { action: 'tidy', refs: [{ all: true }], opts: this.layers.separateItems ? {} : { thinMm: 0 } },
+      ...(unhook ? [{ action: 'unhook' as ActionId, refs: [{ all: true as const }], opts: {} }] : []),
       { action: 'repeat-pattern', refs: [{ all: true }], opts: {} },
       ...(this.layers.separateItems ? [{ action: 'symmetrize' as ActionId, refs: [{ all: true as const }], opts: {} }] : []),
       ...parts.map((p) => ({ action: 'smooth' as ActionId, refs: [{ n: p.n }], opts: { strength: 4, passes: 2 } }))
-    ], via, `Cleaned up ${parts.length} layer${parts.length === 1 ? '' : 's'}: specks and wire bits off, repeated holes evened out${this.layers.separateItems ? ', symmetric items made exact' : ''}, outlines smoothed`);
+    ], via, `Cleaned up ${parts.length} layer${parts.length === 1 ? '' : 's'}: specks and wire bits off${unhook ? ', hooks removed (holes kept)' : ''}, repeated holes evened out${this.layers.separateItems ? ', symmetric items made exact' : ''}, outlines smoothed`);
     if (r.ok) this.writeBack();
+    const layout = asked ? layoutSaid(asked) : null;
+    if (r.ok && layout && this.cutLayouts.some((o) => o.value === layout)) this.setCutLayout(layout);
   }
   /** Spark reads the request into action calls (design/14 §7); false = nothing it could plan. Besides the craft's
    *  actions it can re-run a stage of the breakdown ("try again splitting into 5 bookmarks"): find the items, remove
@@ -269,6 +284,14 @@ export class AppState {
     const r = await this.actions.performAll(edits.map((x) => ({ action: x.action as ActionId, refs: refsFromPlan(x.refs), opts: x.opts })), 'chat', stage.length ? undefined : a.reply || undefined);
     if (r.ok) this.writeBack();
     return true;
+  }
+  /** push-to-talk in the chat: hold the mic, let go, and what you said goes in as a message (Muse Voice Transcribe) */
+  voice = new VoiceState();
+  async voiceStart() { if (!(await this.voice.start()) && this.voice.problem) this.flow.conversation.say(this.voice.problem); }
+  async voiceStop(): Promise<string | null> {
+    const text = await this.voice.stop();
+    if (!text && this.voice.problem) this.flow.conversation.say(this.voice.problem);
+    return text;
   }
   /** The invite code is the user_id (demo-grade identity): crafts live under that user's storage namespace. */
   userId = $state('guest');
@@ -624,9 +647,10 @@ export class AppState {
       await this.act('straighten', [{ all: true }], {}, 'pass');
       // every item is looked at: the action knows its family (a bookmark narrower than the others had a strip
       // hidden under a neighbour; a bite out of a convex one was a tassel) and says what it filled
-      if (this.project?.id === craft) await this.act('interpolate', [{ all: true }], { maxAddPct: 40 }, 'pass');
-      // the bitten ones have all four corners now: their perspective too (the rest are square already, so untouched)
-      if (this.project?.id === craft) await this.act('rectify', [{ all: true }], {}, 'pass');
+      const filled = this.project?.id === craft ? await this.act('interpolate', [{ all: true }], { maxAddPct: 40 }, 'pass') : null;
+      // the bitten ones have all four corners now: their perspective too (only when something was filled — else it
+      // is the same "No perspective to correct" said twice)
+      if (this.project?.id === craft && filled?.ok && /^Filled/.test(filled.entry.summary)) await this.act('rectify', [{ all: true }], {}, 'pass');
       // a set is cut one size: pairs together, or all of one kind (five bookmarks), like the one shot best
       if (this.project?.id === craft && setsOf(this.craft.doc, this.craft.doc.items.map((i) => i.id)).length) await this.act('same-size', [{ all: true }], {}, 'pass');
       return;
@@ -1097,12 +1121,17 @@ export class AppState {
     if (path === '/capture') return this.analyzeFromChat(t);
     // Cut: "play the whole run" / "start cutting" runs every pass, said in the chat
     if (path === '/make/output' && /\b(play|run|start cutting|cut (them|it|all)|simulate)\b/i.test(t)) { this.flow.conversation.ingestTranscript(t); void this.playRun(); return null; }
+    // "fit them on one board" / "pairs together" / "one per sheet": the Cut layout, said anywhere in the craft
+    // the layout is read from the words first: the cut plan (packing 28 earrings) is only worked out when one was said
+    const layout = this.project ? layoutSaid(t) : null;
+    if (layout && this.craft.doc.items.length && this.cutLayouts.some((o) => o.value === layout)) { this.setCutLayout(layout); return path === '/make/output' ? null : '/make/output'; }
     if (step && this.project) {
       await this.refine(t, path, quote);
       // a change to the breakdown (background, layer count, a layer's mask) is seen on Layers: go there
       const breakdown = BACKDROP_ASK.test(t) || /\b\d{1,2}\s+(colour |color )?layers\b/i.test(t) || Boolean(parseLayerOp(t));
       return breakdown && !/^\/make\/(layers|gaps)$/.test(path) && this.canVisit('layers') && this.layers.kind !== '3d' ? '/make/layers' : null;
     }
+    if (this.project && this.project.reached >= 0 && this.canVisit('layers')) { await this.refine(t, '/make/layers', quote); return null; }
     if (await this.flow.runCommand(t)) return null;
     this.flow.conversation.ingestTranscript(t);
     await this.flow.analyse();

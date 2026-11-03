@@ -47,7 +47,7 @@ const part = (node: Element, { i = 0 } = {}) => fly(node, { y: 10, duration: 450
                 {#each slide.lines as l, k (l)}<p in:part={{ i: 2 + k }} class="text-[clamp(14px,1.8vw,22px)] {k === 1 ? 'text-accent italic' : 'text-ink-mute'}">{l}</p>{/each}
                 {#if slide.kind === 'title'}<p in:part={{ i: 4 }} class="meta mt-4">Meta AI Developer Hackathon 2026 · Indie · Build for Your World</p>{/if}
               </div>
-              <img in:fade={{ duration: 700, delay: 150 }} src={slide.kind === 'title' ? '/story/cat-photo.jpg' : '/story/spark.jpg'} alt="" class="h-full w-full object-cover rounded-md" />
+              <img in:fade={{ duration: 700, delay: 150 }} src={slide.kind === 'title' ? '/samples/katachi-sample-cat.jpg' : '/story/spark.jpg'} alt="" class="h-full w-full object-cover rounded-md" />
             </div>
           {:else}
             <h2 in:part class="font-heading font-normal tracking-display text-[clamp(18px,2.7vw,34px)]">{slide.title}</h2>

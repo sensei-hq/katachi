@@ -1,16 +1,11 @@
 // Simplify a layer (design/14 §6): fewer points, same shape (helps engraving files).
 import { simplify as geoSimplify, type Geometry } from '../../geo';
-import type { CraftDoc, Id, ItemDoc, PartDoc } from '../../craft/types';
-import { indexCraft } from '../../craft';
+import type { PartDoc } from '../../craft/types';
 import type { ActionDef, ActionResult } from '../types';
+import { clone, partIn } from './shared';
 
 export interface SimplifyOpts { toleranceMm: number }
 
-const clone = <T>(x: T): T => structuredClone(x);
-const partIn = (doc: CraftDoc, id: Id): { part: PartDoc; item: ItemDoc } | undefined => {
-  const n = indexCraft(doc).get(id);
-  return n?.kind === 'part' ? { part: n.node, item: n.item } : undefined;
-};
 const points = (g: Geometry): number => g.paths.reduce((n, p) => n + 1 + p.segs.length, 0);
 
 export const simplify: ActionDef<SimplifyOpts> = {

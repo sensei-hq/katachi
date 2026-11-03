@@ -4,8 +4,8 @@ import * as geo from '../../geo';
 import type { CraftDoc, GroupDoc, Id, ItemDoc, OpDoc, PartDoc } from '../../craft/types';
 import { indexCraft } from '../../craft';
 import type { ActionDef, ActionResult } from '../types';
+import { clone } from './shared';
 
-const clone = <T>(x: T): T => structuredClone(x);
 /** targets can be parts or (engraving rows) ops: the part ids they belong to */
 const partIds = (doc: CraftDoc, ids: Id[]) => { const ix = indexCraft(doc); return [...new Set(ids.map((id) => { const n = ix.get(id); return n?.kind === 'op' ? n.part.id : id; }))]; };
 const opTargets = (doc: CraftDoc, ids: Id[]) => { const ix = indexCraft(doc); return ids.map((id) => ix.get(id)).filter((n): n is Extract<ReturnType<typeof ix.get>, { kind: 'op' }> => n?.kind === 'op'); };
@@ -74,7 +74,7 @@ export const del: ActionDef<Record<string, never>> = {
   id: 'delete', label: 'Delete', icon: 'i-solar:trash-bin-minimalistic-linear', scope: 'part', arity: 'any', kind: 'code',
   hint: 'Delete layers (an item with no layers left goes too).', schema: { type: 'object', properties: {} }, defaults: {},
   // "remove the wall from the gold layer" is a correction to a layer, not a delete
-  says: [/\b(delete|remove|drop|get rid of|discard)\b(?!.*\bfrom\b)/i],
+  says: [/\b(delete|remove|drop|get rid of|discard)\b(?!.*\bfrom\b)(?!.*\b(hooks?|ear ?wires?|findings|bails?)\b)/i],
   can: (_d, i) => (i.targets.length ? true : 'Nothing to delete'),
   run(doc, { targets }): ActionResult {
     // an engraving row is an op of its part: deleting it leaves the part; a part with nothing left goes, and an

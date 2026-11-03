@@ -81,7 +81,7 @@ test.describe('earrings · clean-up on the real tray', () => {
     await expect(cards.first()).toBeVisible({ timeout: 30_000 });
     const eyebrows = (await cards.locator('.eyebrow').allInnerTexts()).map((t) => t.trim());
     console.log('ASSEMBLE', eyebrows.slice(0, 8).join(' | '));
-    const pairOf = eyebrows.map((t) => /^(pair[^·]*?)\s·/i.exec(t)?.[1]?.trim() ?? null);
+    const pairOf = eyebrows.map((t) => /^(pair[^·]*?)(\s·|$)/i.exec(t)?.[1]?.trim() ?? null);
     expect(pairOf.filter(Boolean).length).toBeGreaterThanOrEqual(20);
     // every pair's two cards are next to each other
     for (const name of new Set(pairOf.filter(Boolean))) {

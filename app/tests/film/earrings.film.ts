@@ -65,14 +65,12 @@ test('earrings film', async ({ page }) => {
   await expect.poll(async () => rows(page).count(), { timeout: 90_000 }).toBe(count);
   await pause(2000);
   await page.screenshot({ path: 'test-results/film/earrings-pre-smooth.png' });
-  // smooth is one-layer-per-call, so the pass goes row by row (default strength: the honest default)
-  const layers = await rows(page).count();
-  for (let i = 1; i <= layers; i++) {
-    const seen = await steps(page).count();
-    await humanType(page, composer(page), `smooth layer ${i}`);
-    await expect.poll(async () => steps(page).count(), { timeout: 90_000 }).toBe(seen + 1);
-    await expect(steps(page).last()).toHaveAttribute('data-step-status', 'done', { timeout: 90_000 });
-  }
+  // one sentence smooths every layer, as one step and one undo (default strength: the honest default)
+  const seen = await steps(page).count();
+  await humanType(page, composer(page), 'smooth every layer');
+  await expect.poll(async () => steps(page).count(), { timeout: 90_000 }).toBe(seen + 1);
+  await expect(steps(page).last()).toHaveAttribute('data-step-status', 'done', { timeout: 120_000 });
+  await expect(steps(page).last()).toContainText(/Smoothed \d+ layers/);
   await page.screenshot({ path: 'test-results/film/earrings-post-smooth.png' });
   await pause(2500);
 

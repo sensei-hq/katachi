@@ -1,16 +1,11 @@
 // Offset an outline by mm (design/14 §6): grow it in place, or add a border behind it.
 import { offset as geoOffset, union as geoUnion } from '../../geo';
-import type { CraftDoc, Id, ItemDoc, PartDoc } from '../../craft/types';
-import { indexCraft } from '../../craft';
+import type { PartDoc } from '../../craft/types';
 import type { ActionCtx, ActionDef, ActionResult } from '../types';
+import { clone, partIn } from './shared';
 
 export interface OffsetOpts { mm: number; as: 'grow' | 'new-part'; material?: string; colour?: string }
 
-const clone = <T>(x: T): T => structuredClone(x);
-const partIn = (doc: CraftDoc, id: Id): { part: PartDoc; item: ItemDoc } | undefined => {
-  const n = indexCraft(doc).get(id);
-  return n?.kind === 'part' ? { part: n.node, item: n.item } : undefined;
-};
 
 export const offset: ActionDef<OffsetOpts> = {
   id: 'offset', label: 'Offset', icon: 'i-solar:expand-linear', scope: 'part', arity: 'one', kind: 'code',

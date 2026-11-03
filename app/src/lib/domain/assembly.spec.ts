@@ -64,7 +64,7 @@ describe('assembly keeps the pairs found at Layers', () => {
     expect(steps.filter((s) => s.layer).map((s) => s.layer)).toEqual([1, 3, 2, 4, 5]);
     expect(steps[1]).toMatchObject({ group: 'Pair 01', title: 'Pair 01 · swirl left' });
     expect(steps[1].detail).toContain('with swirl right');
-    expect(steps[2].detail).toMatch(/^The other of the pair with swirl left/);
+    expect(steps[2].detail).toMatch(/^Pairs with swirl left\. Weed it and lay it beside its twin/);
     expect(steps[5].title).toBe('Cut odd one');
     expect(steps[0].detail).toContain('2 pairs');
   });

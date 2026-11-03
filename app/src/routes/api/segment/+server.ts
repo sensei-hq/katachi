@@ -4,9 +4,11 @@ import { segmentPiece, segmentRegions } from '$lib/server/meta/sam';
 export async function POST({ request }) {
   const body = await request.json().catch(() => ({}));
   const imageDataUrl = String(body?.imageDataUrl ?? '');
-  if (Array.isArray(body?.regions) && body.regions.length) {
-    const regions = body.regions.map((r: any, i: number) => ({ id: String(r?.id ?? `r${i + 1}`), label: String(r?.label ?? r?.samPrompt ?? `Region ${i + 1}`), samPrompt: String(r?.samPrompt ?? r?.label ?? ''), likelyBought: Boolean(r?.likelyBought), note: String(r?.note ?? '') })).filter((r: any) => r.samPrompt);
-    const r = await segmentRegions({ META_API_KEY: env.META_API_KEY }, imageDataUrl, regions, undefined, { multiple: Boolean(body?.multiple), subjectPrompt: typeof body?.subjectPrompt === 'string' ? body.subjectPrompt : undefined, items: Array.isArray(body?.items) ? body.items : undefined });
+  // separate items may come as items only (each with its own parts), with no top-level regions
+  const items = Array.isArray(body?.items) ? body.items : [];
+  if ((Array.isArray(body?.regions) && body.regions.length) || (body?.multiple && items.length)) {
+    const regions = (Array.isArray(body?.regions) ? body.regions : []).map((r: any, i: number) => ({ id: String(r?.id ?? `r${i + 1}`), label: String(r?.label ?? r?.samPrompt ?? `Region ${i + 1}`), samPrompt: String(r?.samPrompt ?? r?.label ?? ''), likelyBought: Boolean(r?.likelyBought), note: String(r?.note ?? '') })).filter((r: any) => r.samPrompt);
+    const r = await segmentRegions({ META_API_KEY: env.META_API_KEY }, imageDataUrl, regions, undefined, { multiple: Boolean(body?.multiple), subjectPrompt: typeof body?.subjectPrompt === 'string' ? body.subjectPrompt : undefined, items: items.length ? items : undefined });
     return json({ regions: r.regions, source: r.source, trace: [{ model: 'sam-3.1', purpose: `segment ${r.regions.length} regions`, stage: 'S4', latencyMs: 1200, costUsd: r.costUsd }] });
   }
   const r = await segmentPiece({ META_API_KEY: env.META_API_KEY }, imageDataUrl, String(body?.prompt ?? ''));

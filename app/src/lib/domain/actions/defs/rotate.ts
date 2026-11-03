@@ -1,11 +1,10 @@
 // Rotate an item's frame by an angle (design/14 §6): straighten is the automatic version.
-import type { CraftDoc, Id, ItemDoc } from '../../craft/types';
+import type { ItemDoc } from '../../craft/types';
 import type { ActionDef, ActionResult } from '../types';
+import { clone, itemOf } from './shared';
 
 export interface RotateOpts { deg: number; snap: boolean }
 
-const clone = <T>(x: T): T => structuredClone(x);
-const itemOf = (doc: CraftDoc, id: Id): ItemDoc | undefined => doc.items.find((i) => i.id === id);
 
 /** normalise to (−180, 180] */
 export function normDeg(deg: number): number {

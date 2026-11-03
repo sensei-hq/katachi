@@ -95,6 +95,8 @@ function downloadSheet(format: 'svg' | 'dxf') { const x = app.sheetDownload(f.jo
         <div><h2 class="font-heading text-head font-normal tracking-display">{planned.length} sheet{planned.length === 1 ? '' : 's'} · {planned[0].board.wMm} × {planned[0].board.hMm} mm</h2><p class="text-ui text-ink-mute mt-1">Laid out “{layouts.find((o) => o.value === f.cutLayout)?.label ?? 'One per sheet'}” for the {f.currentDevice.label}: engraving first, then the holes, then the outlines.</p></div>
         <p class="readout text-ink whitespace-nowrap mt-2">{app.title.toLowerCase().replace(/\s+/g, '-')}_S01–S{pad(planned.length)}</p>
       </header>
+      <!-- how the parts go on sheets, on the sheets themselves too (also in the panel, or said: "fit them on one board") -->
+      {#if layouts.length > 1}<div class="flex flex-wrap items-center gap-2" data-sheet-layouts><span class="eyebrow">Lay out</span><Toggle options={layouts} value={f.cutLayout} label="How the parts go on the sheets" class="chips" onchange={(v) => app.setCutLayout(v as typeof f.cutLayout)} /></div>{/if}
       <div class="grid grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
         {#each planned as sh (sh.n)}
           <div class="rounded-lg border bg-paper-soft p-2 md:p-3 flex flex-col gap-2 {sh.warnings.length ? 'border-warning' : 'border-paper-edge'}">

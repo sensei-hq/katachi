@@ -18,6 +18,16 @@ const f = app.layers;
 $effect(() => app.setScreen(app.title, f.layers.length ? `${f.items.length} item${f.items.length === 1 ? '' : 's'} · ${f.layers.length} layers` : 'breaking it down'));
 const sel = $derived(f.selected);
 const hidden = $derived(f.layers.length ? app.hiddenItems() : []);
+// pairs and sets found at Layers (by name, else by shape): each item says its pair, and partners are listed together
+const groupOf = $derived.by(() => {
+  const doc = app.craft.doc, out: Record<string, { name: string; kind: string; at: number; with: string[] }> = {};
+  doc.groups.forEach((g, at) => {
+    const names = g.items.map((id) => doc.items.find((i) => i.id === id)?.name).filter((n): n is string => Boolean(n));
+    for (const n of names) out[n] = { name: g.name, kind: g.kind, at, with: names.filter((o) => o !== n) };
+  });
+  return out;
+});
+const listed = $derived([...f.items].sort((a, b) => (groupOf[a.name]?.at ?? Infinity) - (groupOf[b.name]?.at ?? Infinity)));
 const tune = $derived(sel.tune ?? { detail: 3, weight: 0 });
 const allHidden = $derived(f.layers.length > 0 && f.layers.every((l) => !f.isLayerVisible(l.n)));
 // the stage: every visible layer as a hairline, the selected one showing the photo itself inside its mask;
@@ -140,9 +150,10 @@ $effect(() => { void sel.n; merging = false; });
     <p class="text-ui text-ink-mute">{app.working ? `${app.working}…` : 'No layers yet — say “remove the background” in the chat to try again.'}</p>
     <div class="flex flex-col gap-2" aria-hidden="true">{#each [0, 1, 2] as i (i)}<span class="h-11 rounded-md bg-paper-mute {app.working ? 'animate-pulse' : 'opacity-50'}"></span>{/each}</div>
   {/if}
-  {#each f.items as item (item.name)}
+  {#each listed as item (item.name)}
     <section aria-label={`Item: ${item.name}`} class="flex flex-col gap-1">
-      {#if f.items.length > 1}{@const z = f.itemSize(item.name)}<p class="text-ui text-ink font-medium truncate">{item.name}<span class="meta ml-1.5">{item.layers.length} layer{item.layers.length === 1 ? '' : 's'}{z ? ` · ${z.wMm} × ${z.hMm} mm` : ''}</span></p>
+      {#if f.items.length > 1}{@const z = f.itemSize(item.name)}{@const g = groupOf[item.name]}<p class="text-ui text-ink font-medium truncate">{item.name}<span class="meta ml-1.5">{item.layers.length} layer{item.layers.length === 1 ? '' : 's'}{z ? ` · ${z.wMm} × ${z.hMm} mm` : ''}</span></p>
+        {#if g}<p class="meta text-accent truncate" data-item-group={g.name}>{g.name} · {g.kind === 'pair' ? `with ${g.with[0]}` : `a set of ${g.with.length + 1}`}</p>{/if}
         {#if hidden.includes(item.name)}<p class="meta text-warning-ink">Partly hidden by a neighbour in the photo — say “complete the hidden edges of the {item.name}”</p>{/if}{/if}
       <ul aria-label={f.items.length > 1 ? `${item.name} layers` : 'Layer stack, back to front'} class="flex flex-col gap-1.5">
         {#each item.layers as l (l.n)}

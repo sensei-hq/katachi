@@ -36,6 +36,8 @@ export async function analyseImage(env: Record<string, string | undefined>, imag
         // items (bookmarks, coasters, earrings) even when Spark under-reports the arrangement/items.
         if (brief.class === 'pattern-shape' && brief.regions.length >= 3 && brief.arrangement !== 'multiple-items' && /separate|set of|items|bookmarks|coasters|earrings|ornaments|each (is|bookmark|item)/i.test(brief.subject + ' ' + brief.notes)) brief = { ...brief, arrangement: 'multiple-items' };
         if (brief.arrangement === 'multiple-items' && !brief.items.length) brief = { ...brief, items: brief.regions.filter((r) => !r.likelyBought).map((r) => ({ id: r.id, label: r.label, samPrompt: r.samPrompt, arrangement: 'single-item' as const, regions: [] })) };
+        // and the other way: items listed with no top-level regions still get one region each (what Layers lists)
+        if (brief.arrangement === 'multiple-items' && brief.items.length && !brief.regions.length) brief = { ...brief, regions: brief.items.map((it) => ({ id: it.id, label: it.label, samPrompt: it.samPrompt, likelyBought: false, note: '' })) };
         return { brief, source: 'live', trace: [{ model: 'muse-spark-1.3', purpose: 'analyze_image', stage: 'S2', latencyMs: r.latencyMs, costUsd: r.costUsd }] };
       }
       console.error('ImageBrief parse failed, using fixture');

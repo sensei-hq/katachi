@@ -1,6 +1,7 @@
 // Flip an item over in place (design/14 §6): a frame flag, the geometry untouched.
-import type { CraftDoc, Id, ItemDoc } from '../../craft/types';
+import type { ItemDoc } from '../../craft/types';
 import type { ActionDef, ActionResult } from '../types';
+import { clone, itemOf } from './shared';
 
 export type FlipAxis = 'x' | 'y';
 export interface FlipOpts { axis: FlipAxis }
@@ -12,8 +13,6 @@ export function flipAxis(axis: string): FlipAxis | null {
   return null;
 }
 
-const clone = <T>(x: T): T => structuredClone(x);
-const itemOf = (doc: CraftDoc, id: Id): ItemDoc | undefined => doc.items.find((i) => i.id === id);
 
 export const flip: ActionDef<FlipOpts> = {
   id: 'flip', label: 'Flip', icon: 'i-solar:flip-horizontal-linear', scope: 'item', arity: 'one', kind: 'code',

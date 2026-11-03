@@ -2,6 +2,7 @@
 import { Clipper, ClipperOffset, EndType, FillRule, JoinType } from 'clipper2-js';
 import type { Path64, Paths64 } from 'clipper2-js';
 import { hullOf } from '../toolpath';
+import { pointInPoly } from './measure';
 import { fromLoops, toLoops, type Geometry, type Loops, type Pt } from './index';
 
 // clipper2-js@1.2.4's ClipperOffset.offsetPolygon passes a constant `prev`
@@ -103,7 +104,7 @@ function pointSegDist(p: Pt, a: Pt, b: Pt): number {
 
 /** inside and away from the boundary (a vertex exactly on an edge doesn't count) */
 function strictlyInside(p: Pt, poly: Pt[], eps: number): boolean {
-  if (!pointIn(poly, p)) return false;
+  if (!pointInPoly(p, poly)) return false;
   for (let i = 0; i < poly.length; i++) {
     if (pointSegDist(p, poly[i], poly[(i + 1) % poly.length]) <= eps) return false;
   }
@@ -288,7 +289,7 @@ export function bridge(g: Geometry, opts: BridgeOpts): Geometry {
     let hi = -1;
     loops.forEach((h, j) => {
       if (ds[j] !== ds[i] - 1) return;
-      if (!pointIn(h, isl[0])) return;
+      if (!pointInPoly(isl[0], h)) return;
       if (hi < 0 || areas[j] < areas[hi]) hi = j;
     });
     if (hi < 0) return;
@@ -316,14 +317,4 @@ export function bridge(g: Geometry, opts: BridgeOpts): Geometry {
     else paths.push(g.paths[closedIdx[i]]);
   });
   return { paths: [...paths, ...opensOf(g)] };
-}
-
-function pointIn(poly: Pt[], p: Pt): boolean {
-  if (poly.length < 3) return false;
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
-    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
 }

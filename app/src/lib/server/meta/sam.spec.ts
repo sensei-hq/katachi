@@ -126,3 +126,39 @@ describe('segmentRegions · overlapping items (fanned bookmarks)', () => {
     expect(boxes.every((b) => b && b[1] - b[0] < 500)).toBe(true);
   });
 });
+
+describe('segmentRegions · a tray of earrings on bought hooks', () => {
+  const SUN = "203,326,!!!!#kAq1j9u_Sx(hp_i:l?dD&f5.i@g`U2Asv7r897@+5GX`Iznq$:CRh7Xt_Dx*ve!C1[P/PsuIyHQc+UT03ZeJxmRmjV$Tc6ZNqm3F_w@UhJ%lOxL0M*4'A91G^reWlWm0rhKZK_?a^rS9X&B2.a$PS^!6J[0Q/-F9g!UCBBBTlxd[Qg:+CSu'ik`VE3a2!3e!!";
+  const at = (x: number, y: number) => `<|box;x1=${x * 4};y1=${y * 4};x2=${x * 4 + 160};y2=${y * 4 + 360};w=4000;h=4000|><|mask;x=0;y=0;data=${SUN}|>`;
+  const tray = (n: number) => Array.from({ length: n }, (_, i) => at(20 + (i % 7) * 130, 50 + Math.floor(i / 7) * 230)).join('');
+  const items = Array.from({ length: 28 }, (_, i) => ({ id: `e${i + 1}`, label: `earring ${i + 1}`, samPrompt: `earring ${i + 1}`, arrangement: 'stacked' as const,
+    regions: [{ id: `e${i + 1}-p`, label: 'wood pendant', samPrompt: 'wooden pendant' }, { id: `e${i + 1}-h`, label: 'fish hook', samPrompt: 'metal ear hook', likelyBought: true }] }));
+  it('one call for the whole tray: the bought hooks need no SAM call and one part left is the item itself', async () => {
+    const { segmentRegions } = await import('./sam');
+    let n = 0;
+    const client = { samText: async () => { n++; return tray(28); } };
+    const r = await segmentRegions({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', [], client as never, { subjectPrompt: 'wooden earrings', items });
+    expect(n).toBe(1);
+    expect(r.regions).toHaveLength(28);
+    expect(r.regions.every((x) => x.paths?.length && x.keep)).toBe(true);
+  });
+  it('a few short (26 of 28): only a handful of own-phrase calls, the rest take the free instances', async () => {
+    const { segmentRegions } = await import('./sam');
+    let n = 0;
+    const client = { samText: async () => { n++; return tray(26); } };
+    const r = await segmentRegions({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', [], client as never, { subjectPrompt: 'wooden earrings', items });
+    expect(n).toBeLessThanOrEqual(5);
+    expect(r.regions.filter((x) => x.paths?.length).length).toBe(26);
+  });
+});
+
+describe('readingOrder (how SAM masks meet Spark’s item list)', () => {
+  it('rows top to bottom, each left to right — not by x alone, which put row 1 and row 4 of a column side by side', async () => {
+    const { readingOrder } = await import('./sam');
+    const b = (x: number, y: number, tag: string) => ({ tag, box: { x1: x, y1: y, x2: x + 60, y2: y + 150 } });
+    const ms = [b(30, 620, 'r4c1'), b(40, 20, 'r1c1'), b(200, 30, 'r1c2'), b(190, 610, 'r4c2'), b(35, 220, 'r2c1'), b(210, 225, 'r2c2')];
+    expect(readingOrder(ms).map((m) => m.tag)).toEqual(['r1c1', 'r1c2', 'r2c1', 'r2c2', 'r4c1', 'r4c2']);
+    // fanned in one row: left to right
+    expect(readingOrder([b(500, 100, 'c'), b(20, 140, 'a'), b(260, 80, 'b')]).map((m) => m.tag)).toEqual(['a', 'b', 'c']);
+  });
+});

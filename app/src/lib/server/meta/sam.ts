@@ -57,6 +57,20 @@ async function pool<T, R>(xs: T[], n: number, f: (x: T) => Promise<R>): Promise<
   await Promise.all(Array.from({ length: Math.min(n, xs.length) }, async () => { while (next < xs.length) { const i = next++; out[i] = await f(xs[i]); } }));
   return out;
 }
+/** masks in reading order — rows top to bottom, each left to right — the order Spark lists items in. Sorting by x
+ *  alone matched the first column's earrings (row 1 and row 4) to the first pair's two names. A mask joins a row
+ *  when its centre is within half a typical mask height of the row's centre; one row (fanned bookmarks) stays left
+ *  to right. */
+export function readingOrder<T extends { box: SamBox }>(ms: T[]): T[] {
+  if (ms.length < 2) return [...ms];
+  const cy = (d: T) => (d.box.y1 + d.box.y2) / 2, hs = ms.map((d) => d.box.y2 - d.box.y1).sort((a, b) => a - b), half = hs[Math.floor(hs.length / 2)] / 2;
+  const rows: T[][] = [];
+  for (const d of [...ms].sort((a, b) => cy(a) - cy(b))) {
+    const row = rows.at(-1), mid = row ? row.reduce((a, x) => a + cy(x), 0) / row.length : 0;
+    if (row && Math.abs(cy(d) - mid) <= half) row.push(d); else rows.push([d]);
+  }
+  return rows.flatMap((r) => r.sort((a, b) => a.box.x1 - b.box.x1));
+}
 export async function segmentRegions(env: Record<string, string | undefined>, imageDataUrl: string, regions: SamRegionInput[], client?: MetaClient, opts: { multiple?: boolean; subjectPrompt?: string; items?: SamItemInput[] } = {}): Promise<{ regions: SamRegion[]; source: 'live' | 'fixture'; costUsd: number }> {
   if (env.META_API_KEY && imageDataUrl && (regions.length || opts.items?.length)) {
     try {
@@ -68,10 +82,10 @@ export async function segmentRegions(env: Record<string, string | undefined>, im
       const c = { samText: async (img: string, phrase: string) => { if (calls >= SAM_BUDGET) return ''; calls++; try { return await meta.samText(img, phrase); } catch (e) { console.error('sam call failed:', e instanceof Error ? e.message : String(e)); return ''; } } };
       const cost = () => Math.round(calls * 0.0025 * 10000) / 10000;
       // Multiple separate items: one generic SAM call returns every instance mask at once.
-      // Spark lists items left→right, so match instances sorted by box x to items in order.
+      // Spark lists items in reading order, so instances are matched to items in reading order too.
       if (opts.items?.length && opts.subjectPrompt) {
         const text = await c.samText(imageDataUrl, opts.subjectPrompt);
-        const instances = decodeSamText(text).sort((a, b) => a.box.x1 - b.box.x1);
+        const instances = readingOrder(decodeSamText(text));
         const centreIn = (d: DecodedSamMask, box: SamBox | null) => { if (!box) return true; const cx = (d.box.x1 + d.box.x2) / 2, cy = (d.box.y1 + d.box.y2) / 2; return cx >= box.x1 - 20 && cx <= box.x2 + 20 && cy >= box.y1 - 20 && cy <= box.y2 + 20; };
         const found: SamRegion[] = [];
         // Items that touch or overlap (fanned bookmarks) come back from the generic phrase as fewer masks than items,
@@ -81,29 +95,38 @@ export async function segmentRegions(env: Record<string, string | undefined>, im
         const one = instances.reduce((a, d) => a + d.areaPct, 0) / opts.items.length;
         const merged = (d: DecodedSamMask) => short && one > 0 && d.areaPct > 1.8 * one;
         const used: SamBox[] = [];
+        let asked = 0;
         const iou = (a: SamBox, b: SamBox) => { const w = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1)), h = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1)), i = w * h; return i / ((a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - i || 1); };
         const free = (d: DecodedSamMask) => !merged(d) && !used.some((b) => iou(b, d.box) > 0.5);
         for (const [i, item] of opts.items.entries()) {
           let inst: DecodedSamMask | undefined = short ? undefined : instances[i];
-          if (!inst) {
+          // many items (a tray of earrings): only a few own-phrase calls, the rest take the next free instance —
+          // every SAM answer holds every earring, and decoding it 28 times is beyond a Worker request's CPU
+          if (!inst && asked >= (opts.items.length > 12 ? 4 : opts.items.length)) inst = instances.find(free);
+          else if (!inst) {
+            asked++;
             // the item's own phrase: SAM often answers with the whole set again (every bookmark for "Fox bookmark"),
             // so the set is read left to right and this item takes its place in it; else the first that fits
-            const own = decodeSamText(await c.samText(imageDataUrl, item.samPrompt)).sort((a, b) => a.box.x1 - b.box.x1);
+            const own = readingOrder(decodeSamText(await c.samText(imageDataUrl, item.samPrompt)));
             const ownOne = own.length >= 2 ? [...own].map((d) => d.areaPct).sort((a, b) => a - b)[Math.floor(own.length / 2)] : 0;
             const fits = (d: DecodedSamMask) => free(d) && !(ownOne > 0 && d.areaPct > 2.5 * ownOne);
             inst = (own.length === opts.items.length && fits(own[i]) ? own[i] : undefined) ?? own.find(fits) ?? instances.find(free);
           }
           if (inst) used.push(inst.box);
           const base = { itemId: item.id, itemName: item.label };
-          if (item.arrangement === 'single-item' || !item.regions.length) {
+          // the parts SAM must find inside the item: bought findings (a hook, a chain) are not cut, so they need no
+          // call; one part left is the item itself. Each extra call decodes every instance on the photo again (28
+          // earrings × a hook and a pendant was ~60 full decodes: more CPU than a Worker request is allowed)
+          const parts = item.regions.filter((r) => !r.likelyBought);
+          if (item.arrangement === 'single-item' || !parts.length || (parts.length === 1 && parts.length < item.regions.length)) {
             found.push({ id: item.id, label: item.label, samPrompt: item.samPrompt, ...base, box: inst?.box ?? null, mask: inst ? { h: inst.maskH, w: inst.maskW } : null, areaPct: inst?.areaPct ?? 0, ones: inst?.ones, paths: inst?.paths, keep: true });
             continue;
           }
-          for (const r of item.regions) {
-            const rtext = await c.samText(imageDataUrl, r.samPrompt);
-            const scoped = decodeSamText(rtext).find((d) => centreIn(d, inst?.box ?? null)) ?? decodeSamText(rtext)[0];
+          for (const r of parts) {
+            const all = decodeSamText(await c.samText(imageDataUrl, r.samPrompt));
+            const scoped = all.find((d) => centreIn(d, inst?.box ?? null)) ?? all[0];
             const d = scoped ?? inst;
-            found.push({ ...r, ...base, box: d?.box ?? null, mask: d ? { h: d.maskH, w: d.maskW } : null, areaPct: d?.areaPct ?? 0, ones: d?.ones, paths: d?.paths ?? inst?.paths, keep: !r.likelyBought });
+            found.push({ ...r, ...base, box: d?.box ?? null, mask: d ? { h: d.maskH, w: d.maskW } : null, areaPct: d?.areaPct ?? 0, ones: d?.ones, paths: d?.paths ?? inst?.paths, keep: true });
           }
         }
         if (instances.length >= 2 || found.some((r) => r.box)) return { regions: found, source: 'live', costUsd: cost() };
@@ -113,7 +136,7 @@ export async function segmentRegions(env: Record<string, string | undefined>, im
         const words = opts.subjectPrompt.replace(/^(a|an|the|some|\d+|two|three|four|five|six|seven|eight|nine|ten|many|several)\s+/i, '').split(/\s+/).filter(Boolean);
         let instances: DecodedSamMask[] = [];
         for (const phrase of [...new Set([opts.subjectPrompt, words.slice(-2).join(' '), words.at(-1) ?? ''].filter(Boolean))]) {
-          instances = decodeSamText(await c.samText(imageDataUrl, phrase)).sort((a, b) => a.box.x1 - b.box.x1);
+          instances = readingOrder(decodeSamText(await c.samText(imageDataUrl, phrase)));
           if (instances.length >= 2) break;
         }
         if (instances.length >= 2) {

@@ -18,7 +18,7 @@ test.describe('three parts: nav · work area · assistant (1280×800)', () => {
     await assistant.locator('[data-chat-composer]').getByRole('textbox').fill('merge sun and sky');
     await assistant.getByRole('button', { name: 'Send' }).click();
     await expect(assistant.getByRole('log')).toContainText('merge sun and sky');
-    await expect(assistant.getByRole('button', { name: 'Voice input' })).toBeVisible();
+    await expect(assistant.getByRole('button', { name: 'Hold to talk' })).toBeVisible();
   });
   test('the assistant is Rokkit ChatShell with a timeline: Katachi and you each have an icon, suggestions sit inline after the last entry', async ({ page }) => {
     await page.goto('/workshop'); await page.waitForLoadState('networkidle');

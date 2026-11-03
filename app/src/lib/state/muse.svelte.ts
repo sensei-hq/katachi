@@ -183,7 +183,8 @@ export class MuseAgents {
           return { result: found, summary: opts.plan ? `${found.length} layers built to your stack (code)` : `${found.length} colour layers measured from your photo (code)`, source: 'live' as const, costUsd: 0, model: 'Code' as const };
         }
       }
-      const j = sendable(opts.imageDataUrl) && opts.briefRegions?.length ? await post('/api/segment', { imageDataUrl: opts.imageDataUrl, regions: opts.briefRegions, ...(opts.brief?.arrangement === 'multiple-items' ? { multiple: true, subjectPrompt: opts.brief.subjectPrompt, items: opts.brief.items ?? [] } : {}) }) : null;
+      const many = opts.brief?.arrangement === 'multiple-items' && Boolean(opts.brief.items?.length);
+      const j = sendable(opts.imageDataUrl) && (opts.briefRegions?.length || many) ? await post('/api/segment', { imageDataUrl: opts.imageDataUrl, regions: opts.briefRegions ?? [], ...(opts.brief?.arrangement === 'multiple-items' ? { multiple: true, subjectPrompt: opts.brief.subjectPrompt, items: opts.brief.items ?? [] } : {}) }) : null;
       const live = (j?.regions ?? []) as { id: string; label: string; note?: string; areaPct?: number; keep?: boolean; ones?: number; paths?: [number, number][][]; box?: { x1: number; y1: number; x2: number; y2: number }; itemId?: string; itemName?: string }[];
       if (live.length) {
         const tones = ['warn', 'accent', 'ok', 'ink', 'muted'] as const;

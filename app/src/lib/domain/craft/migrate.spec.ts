@@ -56,6 +56,16 @@ describe('v1 → v2 migration', () => {
     const pruned = prune({ ...d, items: d.items.filter((i) => i.name !== 'Swirl drop right') });
     expect(pruned.groups.map((g) => g.name)).toEqual(['Mandala circle']);
   });
+  it('a left/right name pair whose outlines differ is not trusted: the earrings pair by their shapes instead', () => {
+    const tri = (x: number): [number, number][] => [[x, 100], [x + 100, 100], [x + 50, 260]];
+    const names = ['Diamond lattice left', 'Diamond lattice right', 'Monstera leaf left', 'Monstera leaf right'];
+    // the outlines came back under the wrong names: 1 and 4 are triangles, 2 and 3 rectangles
+    const shapes = [[tri(50)], [rect(200, 100, 100, 160)], [rect(350, 100, 100, 160)], [tri(500)]];
+    const snap: V1Snapshot = { subject: 'laser-cut wooden earrings', aspect: 1, widthMm: 400, regionList: names.map((n, i) => ({ id: `r${i}`, name: n, paths: shapes[i] })), stack: names.map((n, i) => L(i + 1, `${n} · cut`, `r${i}`, { itemName: n, role: 'cut' })) };
+    const d = migrateV1(project, snap, ids());
+    const pairs = d.groups.map((g) => g.items.map((id) => d.items.find((i) => i.id === id)!.name).sort());
+    expect(pairs).toEqual(expect.arrayContaining([['Diamond lattice left', 'Monstera leaf right'], ['Diamond lattice right', 'Monstera leaf left']]));
+  });
   it('earrings named "earring 1…6" (live Spark): neighbours of the same size and cut area are paired; bookmarks never', () => {
     const sizes = [[100, 150], [100, 150], [80, 160], [82, 158], [120, 120], [60, 140]];
     const names = sizes.map((_, i) => `top row earring ${i + 1}`);

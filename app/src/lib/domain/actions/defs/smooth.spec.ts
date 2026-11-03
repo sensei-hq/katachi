@@ -44,6 +44,16 @@ describe('smooth', () => {
     expect(r.summary).toContain('strength 2');
     expect(doc).toEqual(before);
   });
+  it('smooths several layers in one step, across items, one entry for undo', async () => {
+    const doc = craftOf({ items: [
+      { name: 'Fox', parts: [{ name: 'A', ops: [{ kind: 'cut', loops: [wobbly()] }] }, { name: 'B', ops: [{ kind: 'cut', loops: [wobbly()] }] }] },
+      { name: 'Owl', parts: [{ name: 'C', ops: [{ kind: 'cut', loops: [wobbly()] }] }] },
+    ] });
+    const r = await smooth.run(doc, { targets: ['part0-0', 'part0-1', 'part1-0'], opts: { strength: 2, passes: 1, keepCorners: true, cornerDeg: 35 } }, testCtx());
+    expect(r.items).toHaveLength(2);                                  // both items, each once
+    expect(r.items[0].parts.every((p, k) => JSON.stringify(p.ops[0].geometry) !== JSON.stringify(doc.items[0].parts[k].ops[0].geometry))).toBe(true);
+    expect(r.summary).toBe('Smoothed 3 layers (strength 2, 1 pass)');
+  });
   it('leaves untargeted parts alone and refuses out-of-range options', () => {
     const doc = twoParts();
     const good = { strength: 2, passes: 1, keepCorners: true, cornerDeg: 35 };

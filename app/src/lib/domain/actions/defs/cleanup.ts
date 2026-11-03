@@ -9,8 +9,8 @@ import type { Pt } from '../../geo';
 import type { CraftDoc, Id, ItemDoc, OpDoc, PartDoc } from '../../craft/types';
 import { indexCraft } from '../../craft';
 import type { ActionDef, ActionResult } from '../types';
+import { breathe, clone } from './shared';
 
-const clone = <T>(x: T): T => structuredClone(x);
 const loopArea = (l: Pt[]) => Math.abs(l.reduce((a, [x, y], k) => { const [u, v] = l[(k + 1) % l.length]; return a + x * v - u * y; }, 0)) / 2;
 const boxOf = (l: Pt[]) => { const xs = l.map((p) => p[0]), ys = l.map((p) => p[1]); const x = Math.min(...xs), y = Math.min(...ys); return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }; };
 const inside = ([x, y]: Pt, poly: Pt[]) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
@@ -53,9 +53,10 @@ export const tidy: ActionDef<TidyOpts> = {
   schema: { type: 'object', properties: { minMm2: { type: 'number', minimum: 0.1, maximum: 20 }, thinMm: { type: 'number', minimum: 0, maximum: 3 } } }, defaults: { minMm2: 1, thinMm: 0.6 },
   says: [/\b(tidy|clean ?up|clean it|remove (the )?(specks|noise|dots))\b/i],
   can: (d, i) => (partsOf(d, i.targets).some(({ part }) => part.ops.length) ? true : 'Nothing to tidy'),
-  run(doc, { targets, opts }): ActionResult {
+  async run(doc, { targets, opts }): Promise<ActionResult> {
     const changed = new Map<Id, PartDoc>(); let specks = 0, pins = 0, wires = 0;
     for (const { part, item } of partsOf(doc, targets)) {
+      await breathe();
       const mm2 = item.frame.pxPerMm ** 2, min = opts.minMm2 * mm2;
       const ops = part.ops.map((o0): OpDoc => {
         const open = o0.kind === 'cut' ? withoutWire(o0.geometry, (opts.thinMm ?? 0) * item.frame.pxPerMm) : null;
@@ -158,4 +159,51 @@ export const symmetrize: ActionDef<SymOpts> = {
   }
 };
 
-export const cleanupActions = [tidy, repeatPattern, symmetrize];
+// ── unhook
+export interface UnhookOpts { thinMm: number; holeMm: number }
+/** a round hole of diameter d (px) at (x, y), as a loop */
+const ring = (x: number, y: number, d: number): Pt[] => Array.from({ length: 24 }, (_, k) => [x + (Math.cos((k / 24) * 2 * Math.PI) * d) / 2, y + (Math.sin((k / 24) * 2 * Math.PI) * d) / 2] as Pt);
+/**
+ * Take an earring's hook (or a pendant's bail, a bookmark's cord) off and keep where it hangs from: the outline
+ * opened wider than tidy does (anything under ~2 mm across that hangs off the outline goes; inner fretwork is never
+ * touched), the hanging hole near the top kept, and one drilled just inside the top edge when the hook took it.
+ */
+export const unhook: ActionDef<UnhookOpts> = {
+  id: 'unhook', label: 'Remove hooks', icon: 'i-solar:link-broken-linear', scope: 'part', arity: 'any', kind: 'code',
+  hint: 'Remove the hooks (ear wires, bails, cords) from earrings or pendants and keep a hanging hole at the top of each piece, on the given layers or all.',
+  schema: { type: 'object', properties: { thinMm: { type: 'number', minimum: 0.4, maximum: 3 }, holeMm: { type: 'number', minimum: 0.8, maximum: 4 } } }, defaults: { thinMm: 1, holeMm: 1.5 },
+  says: [/\b(remove|drop|take off|ignore|without|no|cut off|get rid of)\b.{0,12}\b(hooks?|ear ?wires?|findings|bails?)\b/i],
+  can: (d, i) => (partsOf(d, i.targets).some(({ part }) => part.ops.some((o) => o.kind === 'cut')) ? true : 'Nothing with an outline to take a hook off'),
+  async run(doc, { targets, opts }): Promise<ActionResult> {
+    const changed = new Map<Id, PartDoc>(); let hooks = 0, kept = 0, drilled = 0;
+    for (const { part, item } of partsOf(doc, targets)) {
+      await breathe();
+      const px = item.frame.pxPerMm;
+      const ops = part.ops.map((o0): OpDoc => {
+        if (o0.kind !== 'cut') return o0;
+        const open = withoutWire(o0.geometry, opts.thinMm * px);
+        if (open) hooks++;
+        const g = open ?? o0.geometry, ls = nested(g), outer = ls.filter((x) => x.depth === 0).sort((a, b) => b.area - a.area)[0];
+        if (!outer) return o0;
+        const box = boxOf(outer.l), top = box.y;
+        // the hanging hole: a small hole in the top fifth of the piece (up to ~4 mm across)
+        const hanging = ls.some((x) => x.depth % 2 === 1 && x.area <= (4 * px) ** 2 && boxOf(x.l).y - top <= box.h * 0.2);
+        if (hanging) { kept++; return open ? { ...clone(o0), geometry: open } : o0; }
+        // drill one: on the top edge's middle, moved in until the hole and a 0.8 mm rim fit inside the wood
+        const d = opts.holeMm * px, rim = 0.8 * px, cx = box.x + box.w / 2;
+        const topAt = outer.l.reduce((m, p) => (Math.abs(p[0] - cx) < Math.abs(m[0] - cx) && p[1] < top + box.h / 3 ? p : m), [cx, top + box.h] as Pt);
+        const fits = (y: number) => ring(cx, y, d + 2 * rim).every((p) => inside(p, outer.l)) && !ls.some((x) => x.depth % 2 === 1 && ring(cx, y, d + 2 * rim).some((p) => inside(p, x.l)));
+        let y = Math.min(topAt[1], top + d) + d / 2 + rim;
+        while (y < top + box.h * 0.35 && !fits(y)) y += px * 0.25;
+        if (!fits(y)) return open ? { ...clone(o0), geometry: open } : o0;
+        drilled++;
+        return { ...clone(o0), geometry: geo.fromLoops([...ls.map((x) => x.l), ring(cx, y, d)]) };
+      });
+      if (ops.some((o, k) => o !== part.ops[k])) changed.set(part.id, { ...clone(part), ops });
+    }
+    return { items: withParts(doc, changed), summary: hooks || drilled ? `Took the hooks off ${hooks} item${hooks === 1 ? '' : 's'}` : 'No hooks to take off',
+      detail: [hooks ? `${hooks} hook${hooks === 1 ? '' : 's'} (thin wire on the outline) taken off` : '', kept ? `${kept} kept their hanging hole` : '', drilled ? `${drilled} got a ${opts.holeMm} mm hole drilled at the top` : ''].filter(Boolean).join(' · ') };
+  }
+};
+
+export const cleanupActions = [tidy, unhook, repeatPattern, symmetrize];

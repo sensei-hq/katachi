@@ -40,7 +40,8 @@ const act = (a: ChatAction) => {
 };
 // Autosave: any change to the project or its flow choices is written to the saved project.
 $effect(() => { void app.layers.snapshot(); if (app.project) void $state.snapshot(app.project); untrack(() => app.save()); });
-const listen = { onMicDown: () => app.flow.startListen(), onMicUp: () => app.flow.stopListen() };
+// hold the mic to talk: what you said is sent like a typed message
+const listen = $derived({ voice: app.voice.status, onMicDown: () => void app.voiceStart(), onMicUp: () => void app.voiceStop().then((t) => { if (t) ask(t); }) });
 // quoting: a message or a layer rides along with the next thing you say
 const quoting = { onQuote: (t: string) => app.quoteMessage(t), onQuoteLayer: (n: number) => app.quoteLayer(n), onClearQuote: () => app.clearQuote() };
 </script>

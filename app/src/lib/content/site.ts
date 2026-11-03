@@ -22,7 +22,7 @@ export interface Example { id: string; n: number; kind: string; title: string; p
   tryIt: string[];
   ask?: string }
 export const examples: Example[] = [
-  { id: 'cat', n: 1, kind: 'A layered cut', title: 'The paper cat', photo: '/story/cat-photo.jpg', result: '/story/cat-exploded.jpg', resultAlt: 'The cat’s layers lifted apart in the app',
+  { id: 'cat', n: 1, kind: 'A layered cut', title: 'The paper cat', photo: '/samples/katachi-sample-cat.jpg', result: '/story/cat-exploded.jpg', resultAlt: 'The cat’s layers lifted apart in the app',
     steps: ['Background off', 'The stack said in the chat', 'Five layers built to it', 'Cut and stacked'],
     stats: [{ value: '5', label: 'layers, each with the outline' }, { value: '$0.039', label: 'in Meta model calls' }, { value: '~1 min', label: 'photo to cut queue' }],
     say: 'Katachi lifts the paper cat off the wall. Then I say how to stack it: a solid white base, black with the whiskers cut through, red, the white flowers and gold on top, every layer keeping the outline. It builds the five sheets to that plan.',
@@ -36,7 +36,7 @@ export const examples: Example[] = [
       'Choose Cut the sheets, then Send to the cut queue. Assemble shows how they stack, back to front.'
     ],
     ask: 'use 5 layers: a solid white base, black with cuts for the whiskers to show through, then red, the white flowers, and gold on top. Every layer keeps the full outline.' },
-  { id: 'earrings', n: 2, kind: 'A collage of crafts', title: 'Earring charms', photo: '/story/earrings-photo.jpg', result: '/story/earrings-before-after.jpg', resultAlt: 'Two earring pairs before and after the clean-up',
+  { id: 'earrings', n: 2, kind: 'A collage of crafts', title: 'Earring charms', photo: '/samples/katachi-sample-earrings.jpg', result: '/story/earrings-before-after.jpg', resultAlt: 'Two earring pairs before and after the clean-up',
     steps: ['Every earring found', 'Pairs matched by shape', 'Repeated holes evened out', 'Each pair one size'],
     stats: [{ value: '28', label: 'pieces found on the tray' }, { value: 'Pairs', label: 'matched by shape, each one size' }, { value: '$0.032', label: 'in Meta model calls' }],
     say: 'From one tray photo it finds the earrings, matches the pairs by shape and cuts each pair to one size, with repeated holes evened out.',
@@ -48,7 +48,7 @@ export const examples: Example[] = [
       'Open Assemble: each pair’s two earrings come one after the other, named by their pair.',
       'Not right? Say it in the chat, for example “merge layers 3 and 4”, “smooth every layer” or “undo”.'
     ] },
-  { id: 'bookmarks', n: 3, kind: 'A set', title: 'Five bookmarks, one photo', photo: '/story/bookmarks-photo.jpg', result: '/story/bookmarks-five.jpg', resultAlt: 'The five bookmarks rebuilt, upright and one size',
+  { id: 'bookmarks', n: 3, kind: 'A set', title: 'Five bookmarks, one photo', photo: '/samples/katachi-sample-bookmarks.jpg', result: '/story/bookmarks-five.jpg', resultAlt: 'The five bookmarks rebuilt, upright and one size',
     steps: ['Perspective corrected', 'Turned upright', 'Hidden edges rebuilt', 'Made one size'],
     stats: [{ value: '5', label: 'matching pieces' }, { value: '$0.021', label: 'in Meta model calls' }],
     say: 'Five bookmarks, overlapping and shot at an angle. Katachi corrects the perspective, stands each one upright, rebuilds the hidden edges, and makes all five one size.',

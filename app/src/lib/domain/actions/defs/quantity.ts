@@ -1,11 +1,9 @@
 // How many of an item to make (design/14 §6): a count, not copies to edit.
-import type { CraftDoc, Id, ItemDoc } from '../../craft/types';
 import type { ActionDef, ActionResult } from '../types';
+import { clone, itemOf } from './shared';
 
 export interface QuantityOpts { qty: number }
 
-const clone = <T>(x: T): T => structuredClone(x);
-const itemOf = (doc: CraftDoc, id: Id): ItemDoc | undefined => doc.items.find((i) => i.id === id);
 
 export const quantity: ActionDef<QuantityOpts> = {
   id: 'quantity', label: 'Quantity', icon: 'i-solar:hashtag-circle-linear', scope: 'item', arity: 'one', kind: 'code',

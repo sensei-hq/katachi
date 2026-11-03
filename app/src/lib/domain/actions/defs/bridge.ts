@@ -1,16 +1,11 @@
 // Bridge a layer's floating islands to their holes (design/14 §6): nothing falls out.
 import { bridge as geoBridge, islands as geoIslands } from '../../geo';
-import type { CraftDoc, Id, ItemDoc, PartDoc } from '../../craft/types';
-import { indexCraft } from '../../craft';
+import type { PartDoc } from '../../craft/types';
 import type { ActionDef, ActionResult } from '../types';
+import { clone, partIn } from './shared';
 
 export interface BridgeOpts { widthMm: number; per: number }
 
-const clone = <T>(x: T): T => structuredClone(x);
-const partIn = (doc: CraftDoc, id: Id): { part: PartDoc; item: ItemDoc } | undefined => {
-  const n = indexCraft(doc).get(id);
-  return n?.kind === 'part' ? { part: n.node, item: n.item } : undefined;
-};
 const islandCount = (part: PartDoc): number =>
   part.ops.filter((o) => o.kind === 'cut').reduce((n, o) => n + geoIslands(o.geometry).length, 0);
 

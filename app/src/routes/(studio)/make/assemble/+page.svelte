@@ -38,6 +38,8 @@ let settle = $state(1), finale = $state(0), flying = $state(-1), playing = $stat
 let stage = $state<StackStage | null>(null);
 let cards = $state<HTMLElement | null>(null);
 const current = $derived(placed === 0 ? null : layerSteps[placed - 1]);
+// separate items: a cut and its engraving are one item (one number on both cards)
+const itemNo = (l: { itemName?: string; name: string }) => [...new Set(layerSteps.map((x) => x.l.itemName ?? x.l.name))].indexOf(l.itemName ?? l.name) + 1;
 $effect(() => app.setScreen(app.title, `assemble · ${placed} of ${f.layers.length} layers${finished ? ' · saved' : ''}`));
 const reduce = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 let raf = 0, hold = 0;
@@ -118,8 +120,9 @@ const at3d = $derived(Math.min(f.assembleAt, steps.length - 1));
           class="rounded-lg border bg-paper-soft p-2.5 grid grid-cols-[72px_minmax(0,1fr)] gap-2.5 items-start transition-transform {i === placed - 1 ? 'border-accent -translate-y-0.5' : 'border-paper-edge'} {i < placed - 1 ? 'opacity-75' : ''}">
           <span class="w-[72px] h-[72px] rounded-md bg-paper p-1" data-card-sheet>{#if x.d}<CutSheet d={x.d} colour={x.l.colour} aspect={x.aspect} label="" small />{/if}</span>
           <div class="min-w-0 flex flex-col gap-1">
-            <p class="eyebrow">{f.separateItems ? `${'group' in x.step && x.step.group ? `${x.step.group} · ` : ''}${x.l.itemName} · ${x.l.role === 'engrave' ? 'engrave' : 'cut'}` : `Layer ${i + 1} · ${where(i, layerSteps.length)}`}{app.queue.items.some((q) => q.craftId === app.project?.id) ? (cut.includes(x.l.n) ? ' · cut' : ' · not cut yet') : ''}</p>
-            <h3 class="text-ui font-medium text-ink">{x.l.name}</h3>
+            <!-- separate items: the pair (or "item") above, the item's own name, what to do; no name said twice -->
+            <p class="eyebrow">{f.separateItems ? ('group' in x.step && x.step.group ? x.step.group : `Item ${itemNo(x.l)}`) : `Layer ${i + 1} · ${where(i, layerSteps.length)}`}{app.queue.items.some((q) => q.craftId === app.project?.id) ? (cut.includes(x.l.n) ? ' · cut' : ' · not cut yet') : ''}</p>
+            <h3 class="text-ui font-medium text-ink">{f.separateItems ? `${x.l.itemName ?? x.l.name}${x.l.role === 'engrave' ? ' · engraving' : ''}` : x.l.name}</h3>
             <p class="text-ui text-ink-mute">{x.step.detail}</p>
           </div>
         </article>

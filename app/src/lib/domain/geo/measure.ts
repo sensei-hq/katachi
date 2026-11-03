@@ -25,7 +25,7 @@ const loopArea = (l: Pt[]): number => {
 };
 
 /** even-odd ray cast */
-function pointInPoly(p: Pt, poly: Pt[]): boolean {
+export function pointInPoly(p: Pt, poly: Pt[]): boolean {
   if (poly.length < 3) return false;
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {

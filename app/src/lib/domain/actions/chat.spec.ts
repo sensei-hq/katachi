@@ -12,6 +12,16 @@ const doc = migrateV1({ id: 'e', name: 'E', createdAt: 1, updatedAt: 1, kind: 'f
   stack: names.map((n, i) => ({ n: i + 1, name: `${n} · cut`, colour: '#C89B6A', material: 'birch', visiblePct: i === 2 ? 0 : 3, hiddenPct: 0, regionId: `r${i}`, itemName: n, role: 'cut' as const })) }, () => `m${++k}`);
 
 describe('the chat fast path', () => {
+  it('“smooth all layers” and “remove the hooks” are one call on everything, no model', () => {
+    for (const t of ['smooth all layers', 'smooth every layer', 'remove the hooks']) {
+      const r = fastPath(t, doc);
+      expect(r?.kind).toBe('calls');
+      const c = r && r.kind === 'calls' ? r.calls : [];
+      expect(c).toHaveLength(1);
+      expect(c[0].action).toBe(t.startsWith('smooth') ? 'smooth' : 'unhook');
+      if (t.startsWith('smooth')) expect(c[0].refs).toEqual([{ all: true }]);
+    }
+  });
   it('undo / redo / again need no model', () => {
     expect(fastPath('undo', doc)).toEqual({ kind: 'undo' });
     expect(fastPath('Undo that.', doc)).toEqual({ kind: 'undo' });

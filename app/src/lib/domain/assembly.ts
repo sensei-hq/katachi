@@ -37,8 +37,8 @@ export function assemblySteps({ kind, layers, set, joinery, multiple = false, sh
       if (g && ls.length === 1) {
         const others = g.items.filter((x) => x !== item), first = g.items[0] === item;
         steps.push({ layer: ls[0].n, group: g.name, title: `${g.name} · ${item}${on(item)}`, detail: g.kind === 'pair'
-          ? `${first ? 'One' : 'The other'} of the pair with ${others.join(', ')}: the same size, cut on the same sheet. Weed it and lay it beside its partner so the two stay together.`
-          : `Part of the set (${g.items.length}, all one size) with ${others.length > 3 ? `${others.slice(0, 3).join(', ')} and ${others.length - 3} more` : others.join(', ')}. Weed it and keep the set together.` });
+          ? `Pairs with ${others.join(', ')}. ${first ? 'Weed it; its twin comes next.' : 'Weed it and lay it beside its twin.'}`
+          : `In a set of ${g.items.length} with ${others.length > 3 ? `${others.slice(0, 3).join(', ')} and ${others.length - 3} more` : others.join(', ')}. Weed it and keep the set together.` });
         continue;
       }
       if (ls.length === 1) steps.push({ layer: ls[0].n, title: `Cut ${item}${on(item)}`, detail: `One ${ls[0].material} sheet, outline from its own mask. Weed the inside pieces and lift it off whole.` });

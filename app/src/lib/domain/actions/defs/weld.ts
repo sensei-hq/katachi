@@ -1,14 +1,9 @@
 // Weld a layer's cuts into one outline (design/14 §6): no internal cut lines.
 import { toLoops, weld as geoWeld } from '../../geo';
-import type { CraftDoc, Id, ItemDoc, PartDoc } from '../../craft/types';
-import { indexCraft } from '../../craft';
+import type { PartDoc } from '../../craft/types';
 import type { ActionDef, ActionResult } from '../types';
+import { clone, partIn } from './shared';
 
-const clone = <T>(x: T): T => structuredClone(x);
-const partIn = (doc: CraftDoc, id: Id): { part: PartDoc; item: ItemDoc } | undefined => {
-  const n = indexCraft(doc).get(id);
-  return n?.kind === 'part' ? { part: n.node, item: n.item } : undefined;
-};
 
 export const weld: ActionDef<Record<string, never>> = {
   id: 'weld', label: 'Weld', icon: 'i-solar:union-linear', scope: 'part', arity: 'one', kind: 'code',

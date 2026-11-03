@@ -9,6 +9,13 @@ export interface Quote { kind: 'layer' | 'message'; label: string; text?: string
 export interface StepEntry { key: string; job?: string; status: 'thinking' | 'working' | 'done' | 'failed'; title: string; detail?: string; swatches?: { hex: string; label: string; /** the layer it stands for (quoting) */ n?: number }[]; calls: ModelCall[] }
 /** a timeline row as the chat renders it (AppState.messages) */
 export type TimelineMsg = { id: string; role: 'user' | 'assistant'; text: string; data?: { actions?: ChatAction[]; call?: ModelCall; step?: StepEntry; quote?: Quote } };
+/** the timeline as shown: of the steps still thinking or working, only the latest — each new thought takes the
+ *  place of the one before, and each step comes back in its own place once it has found something */
+export function oneThought(messages: TimelineMsg[]): TimelineMsg[] {
+  const open = (m: TimelineMsg) => m.data?.step && (m.data.step.status === 'thinking' || m.data.step.status === 'working');
+  const last = messages.findLastIndex(open);
+  return last < 0 ? messages : messages.filter((m, i) => i === last || !open(m));
+}
 export interface LogEntry { role: 'user' | 'assistant'; text: string; actions?: ChatAction[]; call?: ModelCall; step?: StepEntry; quote?: Quote }
 export interface Slots { intent?: string; qty?: number; material?: string; thicknessMm?: number; deviceId?: string; art?: string }
 const NUMWORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };

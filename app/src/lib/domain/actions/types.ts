@@ -8,7 +8,7 @@ export type ActionId =
   | 'straighten' | 'rotate' | 'flip' | 'mirror' | 'align' | 'distribute' | 'quantity'
   | 'interpolate' | 'fill' | 'smooth' | 'simplify' | 'bolder' | 'thinner' | 'detail' | 'offset' | 'weld'
   | 'bridge' | 'add-hole' | 'resize' | 'enhance' | 'remove-colour' | 'add-colour' | 'draw' | 'move'
-  | 'group' | 'ungroup' | 'fit-to-board' | 'tidy' | 'repeat-pattern' | 'symmetrize' | 'rectify' | 'same-size';
+  | 'group' | 'ungroup' | 'fit-to-board' | 'tidy' | 'unhook' | 'repeat-pattern' | 'symmetrize' | 'rectify' | 'same-size';
 
 /** what a request names; resolved to ids before an action runs (design/14 §4) */
 export type Ref =

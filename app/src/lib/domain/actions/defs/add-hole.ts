@@ -1,12 +1,12 @@
 // Hang an item on a hole (design/14 §6): a circle on the long axis, cut from the outline.
 import { apply, difference as geoDifference, fromLoops, longAxisDeg, rotate, toLoops, transform, type Geometry, type Pt } from '../../geo';
-import type { CraftDoc, Id, ItemDoc, OpDoc, PartDoc } from '../../craft/types';
+import { pointInPoly } from '../../geo/measure';
+import type { ItemDoc, OpDoc, PartDoc } from '../../craft/types';
 import type { ActionDef, ActionResult } from '../types';
+import { clone, itemOf } from './shared';
 
 export interface AddHoleOpts { diaMm: number; at: 'top' }
 
-const clone = <T>(x: T): T => structuredClone(x);
-const itemOf = (doc: CraftDoc, id: Id): ItemDoc | undefined => doc.items.find((i) => i.id === id);
 const outlinePart = (item: ItemDoc): PartDoc | undefined =>
   item.parts.filter((p) => p.ops.some((o) => o.kind === 'cut')).sort((a, b) => a.z - b.z)[0];
 
@@ -20,16 +20,6 @@ function circleGeom(c: Pt, r: number): Geometry {
     { k: 'C', c1: [x - r, y - k], c2: [x - k, y - r], to: [x, y - r] },
     { k: 'C', c1: [x + k, y - r], c2: [x + r, y - k], to: [x + r, y] },
   ], closed: true }] };
-}
-
-function pointInPoly(p: Pt, poly: Pt[]): boolean {
-  if (poly.length < 3) return false;
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
-    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
 }
 
 function pointSegDist(p: Pt, a: Pt, b: Pt): number {
