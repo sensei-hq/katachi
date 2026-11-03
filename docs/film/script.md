@@ -1,6 +1,8 @@
 # Katachi · the submission film: script v2 (deck + app demos, your voice)
 
-**Status:** v2.2 (2026-11-02): the film drops the bookmarks example and the roadmap; each slide shows 1.5 s before its voice and leaves 0.8 s after; each demo gets about 29 s and holds 1.2 s on every result. No takes need re-recording for v2.2.
+**Status:** v2.3 (2026-11-03): takes 1 and 2 drop the personal intro (“I’m Jerry, I own a desktop laser”) and open on the product instead. **Re-record takes 1 and 2.**
+
+v2.2 (2026-11-02): the film drops the bookmarks example and the roadmap; each slide shows 1.5 s before its voice and leaves 0.8 s after; each demo gets about 29 s and holds 1.2 s on every result. No takes need re-recording for v2.2.
 
 v2.1 (2026-11-02). It adds a 1 s pause on each slide before the voice; the cat now shows the stack said in the chat (five layers, each with the outline); every number matches the latest live captures (cat $0.022, earrings $0.032, bookmarks $0.021, $0.075 in all); and the opening says the film is made with Muse Code. **Re-record takes 1, 2, 4, 5, 6, 7, 9, 10 and 11** (3 and 8 are unchanged).
 
@@ -48,10 +50,10 @@ Each slide shows for 1.5 s before its take starts and 0.8 s after it. On the exa
 > Pronunciation: **Katachi** = *ka-TAH-chee*. **Muse Spark**, **SAM three-point-one**. Read the site as *katachi dot sensei-hq dot com*.
 
 **take-01 · Katachi** · *new: re-record*
-I’m Jerry. I own a desktop laser, and Katachi is the tool I wished I had: show it a photo you love, and get pieces you can cut. It’s a prototype, built this week on Meta’s models, and this film was made with Muse Code, generated voice included.
+Katachi turns a photo you love into pieces you can cut. It’s a prototype, built this week on Meta’s models, and this film was made with Muse Code, generated voice included.
 
 **take-02 · Why** · *new: re-record*
-When I got my laser, cutting simple shapes was easy. Turning a picture into cut files took hours of tracing and guessing. So I brought Meta’s models into a craft I know first-hand.
+Cutting simple shapes on a laser is easy. Turning a picture into cut files takes hours of tracing and guessing. So Katachi brings Meta’s models to that craft.
 
 **take-03 · What it does**
 Snap a photo. Katachi finds the items and layers, cleans them up, lays out sheets for your machine, and guides assembly. You can say what you want or tap a button: the same actions, with one undo.
