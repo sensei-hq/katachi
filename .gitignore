@@ -21,6 +21,6 @@ docs/submission/
 generated_images/
 Claude outputs/
 .patches/
-docs/film/
-!docs/fil,/script.md
+docs/film/*
+!docs/film/script.md
 docs/ops
