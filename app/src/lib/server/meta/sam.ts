@@ -9,6 +9,17 @@ export function parseSamBoxes(text: string): SamBox[] {
   return boxes;
 }
 export interface SamMask { box: SamBox; mask: { h: number; w: number; dataLen: number }; areaPct: number }
+/** SAM box+mask pairs with boxes and raw text but no bit decode: pick by box, decode only the taken one. */
+export function matchSamPairs(text: string): { box: SamBox; areaPct: number; raw: string }[] {
+  const out: { box: SamBox; areaPct: number; raw: string }[] = [];
+  const re = /<\|box;x1=(\d+);y1=(\d+);x2=(\d+);y2=(\d+);w=(\d+);h=(\d+)\|><\|mask;x=\d+;y=\d+;data=(\d+),(\d+),([^|]*)\|>/g;
+  for (const m of text.matchAll(re)) {
+    const [, x1, y1, x2, y2, w, h] = m as unknown as [string, ...string[]];
+    const box: SamBox = { x1: Math.round((Number(x1) / Number(w)) * 1000), y1: Math.round((Number(y1) / Number(h)) * 1000), x2: Math.round((Number(x2) / Number(w)) * 1000), y2: Math.round((Number(y2) / Number(h)) * 1000) };
+    out.push({ box, areaPct: Math.round((((box.x2 - box.x1) * (box.y2 - box.y1)) / 10000) * 10) / 10, raw: m[0] });
+  }
+  return out;
+}
 /** SAM masks follow their box: <|mask;x=0;y=0;data=<h>,<w>,<encoded bits>|>. The header is the crop size. */
 export function parseSamMasks(text: string): SamMask[] {
   const out: SamMask[] = [];
@@ -85,32 +96,52 @@ export async function segmentRegions(env: Record<string, string | undefined>, im
       // Spark lists items in reading order, so instances are matched to items in reading order too.
       if (opts.items?.length && opts.subjectPrompt) {
         const text = await c.samText(imageDataUrl, opts.subjectPrompt);
-        const instances = readingOrder(decodeSamText(text));
+        let instances = readingOrder(decodeSamText(text));
         const centreIn = (d: DecodedSamMask, box: SamBox | null) => { if (!box) return true; const cx = (d.box.x1 + d.box.x2) / 2, cy = (d.box.y1 + d.box.y2) / 2; return cx >= box.x1 - 20 && cx <= box.x2 + 20 && cy >= box.y1 - 20 && cy <= box.y2 + 20; };
         const found: SamRegion[] = [];
+        const iou = (a: SamBox, b: SamBox) => { const w = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1)), h = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1)), i = w * h; return i / ((a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - i || 1); };
+        // A short pool (fewer masks than items): shorter generic phrases often find the missing ones — one more
+        // set-sized answer, not one call per item. New masks join the pool; overlaps with it don't.
+        if (instances.length < opts.items.length) {
+          const core = opts.subjectPrompt.replace(/\s+(on|in|of|with|against|over|under)\s+\S+$/i, '');
+          const words = core.replace(/^(a|an|the|some|\d+|two|three|four|five|six|seven|eight|nine|ten|many|several)\s+/i, '').split(/\s+/).filter(Boolean);
+          const phrases = [...new Set([words.slice(-2).join(' '), words.at(-1) ?? ''].filter(Boolean))].filter((p) => p !== opts.subjectPrompt);
+          for (const phrase of phrases) {
+            if (instances.length >= opts.items.length) break;
+            const more = readingOrder(decodeSamText(await c.samText(imageDataUrl, phrase)));
+            for (const d of more) if (!instances.some((e) => iou(e.box, d.box) > 0.5)) instances.push(d);
+          }
+          instances = readingOrder(instances);
+        }
         // Items that touch or overlap (fanned bookmarks) come back from the generic phrase as fewer masks than items,
         // some covering several items at once. Then each item is asked for by its own phrase, and a mask is only
         // taken if it is one item's size (not several merged) and not already another item's.
         const short = instances.length < opts.items.length;
-        const one = instances.reduce((a, d) => a + d.areaPct, 0) / opts.items.length;
+        // One item's size: the pool's average share when the pool covers most of the photo (a short pool
+        // then holds masks over several items); the pool's median mask otherwise (stragglers are item-sized —
+        // the average share of a near-empty pool would call every mask merged).
+        const boxArea = (b: SamBox) => ((b.x2 - b.x1) * (b.y2 - b.y1)) / 10000;
+        const poolBox = instances.map((d) => boxArea(d.box)).sort((a, b) => a - b);
+        const poolCovers = poolBox.reduce((a, x) => a + x, 0);
+        const poolOnes = instances.map((d) => d.areaPct).sort((a, b) => a - b);
+        const one = poolCovers > 50 ? instances.reduce((a, d) => a + d.areaPct, 0) / opts.items.length : (poolOnes[Math.floor(poolOnes.length / 2)] ?? 0);
+        const oneBox = poolCovers > 50 ? poolCovers / opts.items.length : (poolBox[Math.floor(poolBox.length / 2)] ?? 0);
         const merged = (d: DecodedSamMask) => short && one > 0 && d.areaPct > 1.8 * one;
         const used: SamBox[] = [];
-        let asked = 0;
-        const iou = (a: SamBox, b: SamBox) => { const w = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1)), h = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1)), i = w * h; return i / ((a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - i || 1); };
         const free = (d: DecodedSamMask) => !merged(d) && !used.some((b) => iou(b, d.box) > 0.5);
+        const freeBox = (d: { box: SamBox; areaPct: number }) => !(short && oneBox > 0 && d.areaPct > 1.8 * oneBox) && !used.some((b) => iou(b, d.box) > 0.5);
         for (const [i, item] of opts.items.entries()) {
           let inst: DecodedSamMask | undefined = short ? undefined : instances[i];
-          // many items (a tray of earrings): only a few own-phrase calls, the rest take the next free instance —
-          // every SAM answer holds every earring, and decoding it 28 times is beyond a Worker request's CPU
-          if (!inst && asked >= (opts.items.length > 12 ? 4 : opts.items.length)) inst = instances.find(free);
-          else if (!inst) {
-            asked++;
-            // the item's own phrase: SAM often answers with the whole set again (every bookmark for "Fox bookmark"),
-            // so the set is read left to right and this item takes its place in it; else the first that fits
-            const own = readingOrder(decodeSamText(await c.samText(imageDataUrl, item.samPrompt)));
+          if (!inst) inst = instances.find(free);
+          if (!inst) {
+            // the pool is spent: the item asks in its own words. The answer holds the whole set again, so the
+            // taken mask is picked by box and bit-decoded alone — decoding every answer in full, 28 times over,
+            // is beyond a Worker request's CPU. The call budget still caps how many items may ask.
+            const own = readingOrder(matchSamPairs(await c.samText(imageDataUrl, item.samPrompt)));
             const ownOne = own.length >= 2 ? [...own].map((d) => d.areaPct).sort((a, b) => a - b)[Math.floor(own.length / 2)] : 0;
-            const fits = (d: DecodedSamMask) => free(d) && !(ownOne > 0 && d.areaPct > 2.5 * ownOne);
-            inst = (own.length === opts.items.length && fits(own[i]) ? own[i] : undefined) ?? own.find(fits) ?? instances.find(free);
+            const fits = (d: { box: SamBox; areaPct: number }) => freeBox(d) && !(ownOne > 0 && d.areaPct > 2.5 * ownOne);
+            const pick = (own.length === opts.items.length && fits(own[i]) ? own[i] : undefined) ?? own.find(fits);
+            inst = (pick ? decodeSamText(pick.raw)[0] : undefined) ?? instances.find(free);
           }
           if (inst) used.push(inst.box);
           const base = { itemId: item.id, itemName: item.label };

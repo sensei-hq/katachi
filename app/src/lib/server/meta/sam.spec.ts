@@ -152,6 +152,29 @@ describe('segmentRegions · a tray of earrings on bought hooks', () => {
   });
 });
 
+describe('segmentRegions · short pool (live earrings: generic phrase missed 7 of 28)', () => {
+  const SUN = "203,326,!!!!#kAq1j9u_Sx(hp_i:l?dD&f5.i@g`U2Asv7r897@+5GX`Iznq$:CRh7Xt_Dx*ve!C1[P/PsuIyHQc+UT03ZeJxmRmjV$Tc6ZNqm3F_w@UhJ%lOxL0M*4'A91G^reWlWm0rhKZK_?a^rS9X&B2.a$PS^!6J[0Q/-F9g!UCBBBTlxd[Qg:+CSu'ik`VE3a2!3e!!";
+  const at = (x: number) => `<|box;x1=${x};y1=100;x2=${x + 40};y2=200;w=1000;h=1000|><|mask;x=0;y=0;data=${SUN}|>`;
+  const items = (n: number, samPrompt: (i: number) => string) => Array.from({ length: n }, (_, i) => ({ id: `e${i}`, label: `earring ${i}`, samPrompt: samPrompt(i), arrangement: 'single-item' as const, regions: [] }));
+  it('shorter generic phrases refill the pool before any item asks in its own words', async () => {
+    const { segmentRegions } = await import('./sam');
+    const said: string[] = [];
+    const client = { samText: async (_: string, phrase: string) => { said.push(phrase); return phrase === 'four wooden earrings on fabric' ? at(0) + at(100) : phrase === 'wooden earrings' ? at(200) + at(300) : ''; } };
+    const r = await segmentRegions({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', [], client as never, { subjectPrompt: 'four wooden earrings on fabric', items: items(4, (i) => `earring ${i}`) });
+    expect(said).toContain('wooden earrings');
+    expect(r.regions.filter((x) => x.box).length).toBe(4);
+  });
+  it('every bare item asks in its own words (no 4-ask cliff past 12 items), taking one mask from the set-sized answer', async () => {
+    const { segmentRegions } = await import('./sam');
+    let n = 0;
+    // the generic phrase finds 2 of 13; each own phrase answers with the set again plus one new mask
+    const client = { samText: async (_: string, phrase: string) => { n++; if (phrase === 'beads') return at(0) + at(100); const i = Number(phrase.split(' ')[1]); return Number.isNaN(i) ? '' : at(0) + at(100) + at(200 + i * 60); } };
+    const r = await segmentRegions({ META_API_KEY: 'k' }, 'data:image/webp;base64,AA', [], client as never, { subjectPrompt: 'beads', items: items(13, (i) => `bead ${i}`) });
+    expect(r.regions.filter((x) => x.box).length).toBe(13);
+    expect(n).toBe(12);
+  });
+});
+
 describe('readingOrder (how SAM masks meet Spark’s item list)', () => {
   it('rows top to bottom, each left to right — not by x alone, which put row 1 and row 4 of a column side by side', async () => {
     const { readingOrder } = await import('./sam');
