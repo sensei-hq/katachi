@@ -7,7 +7,8 @@ test('chains run, build and save', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Chains', exact: true })).toBeVisible();
   // the built-in polish chain (Run waits for an open craft), and a saved chain round-trip
   const polish = page.locator('[data-chain-card="polish"]');
-  await expect(polish).toBeVisible();
+  // the cards render after hydration (the heading above is SSR); the dev server is slow under a parallel suite
+  await expect(polish).toBeVisible({ timeout: 30_000 });
   await expect(polish.getByRole('button', { name: 'Run' })).toBeDisabled();
   await page.locator('[data-chain-name]').fill('Gallery shine');
   await page.locator('[data-chain-add]').selectOption('tidy');
