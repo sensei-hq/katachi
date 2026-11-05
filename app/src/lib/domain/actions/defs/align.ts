@@ -51,7 +51,7 @@ function edge(ref: Box, box: Box, to: AlignTo): [number | null, number | null] {
 const TO_WORD: Record<AlignTo, string> = { left: 'left', 'centre-x': 'the horizontal centre', right: 'right', top: 'top', 'centre-y': 'the vertical centre', bottom: 'bottom', centre: 'the centre' };
 
 export const align: ActionDef<AlignOpts> = {
-  id: 'align', label: 'Align', icon: 'i-solar:align-left-linear', scope: 'item', arity: 'many', kind: 'code',
+  id: 'align', label: 'Align', icon: 'i-solar:align-left-linear', scope: 'item', arity: 'many', group: 'shape', ask: ['align to the top'], kind: 'code',
   hint: 'Line items or layers up on an edge or the centre.',
   schema: {
     type: 'object',

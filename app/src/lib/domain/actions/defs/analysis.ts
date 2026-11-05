@@ -17,7 +17,7 @@ const shoelace = (l: Pt[]) => Math.abs(l.reduce((a, p, i) => { const q = l[(i + 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 export const straighten: ActionDef<{ snapDeg: number }> = {
-  id: 'straighten', label: 'Straighten', icon: 'i-solar:ruler-angular-linear', scope: 'item', arity: 'any', kind: 'code',
+  id: 'straighten', label: 'Straighten', icon: 'i-solar:ruler-angular-linear', scope: 'item', arity: 'any', group: 'photo', ask: ['straighten the charms'], kind: 'code',
   hint: 'Turn items upright along their long axis (each onto its own sheet, its engraving with it).',
   schema: { type: 'object', properties: { snapDeg: { type: 'number', minimum: 0.1, maximum: 15 } } }, defaults: { snapDeg: 0.5 },
   says: [/\b(straighten|upright|level|tilted|crooked)\b/i],
@@ -51,7 +51,7 @@ function uprightOf(pts: Pt[], deg: number) {
 }
 
 export const interpolate: ActionDef<{ maxAddPct: number; onlyHidden: boolean }> = {
-  id: 'interpolate', label: 'Fill in hidden edges', icon: 'i-solar:magic-stick-3-linear', scope: 'item', arity: 'any', kind: 'code',
+  id: 'interpolate', label: 'Fill in hidden edges', icon: 'i-solar:magic-stick-2-linear', scope: 'item', arity: 'any', group: 'photo', ask: ['fill in the hidden edges'], kind: 'code',
   hint: 'Rebuild the parts of items a neighbour or a tassel lay over in the photo, from the visible outline and the items like it; their holes stay.',
   schema: { type: 'object', properties: { maxAddPct: { type: 'number', minimum: 1, maximum: 60 }, onlyHidden: { type: 'boolean' } } }, defaults: { maxAddPct: 25, onlyHidden: true },
   says: [/\b(complete|restore|recover|rebuild|fill in|interpolate|extrapolate)\b.*\b(hidden|edges?|corners?|missing|covered|parts?)\b|\bfill (the )?missing\b/i],
@@ -159,7 +159,7 @@ export const interpolate: ActionDef<{ maxAddPct: number; onlyHidden: boolean }> 
 };
 
 export const resize: ActionDef<{ wMm?: number; hMm?: number; scale?: number; keepAspect: boolean }> = {
-  id: 'resize', label: 'Resize', icon: 'i-solar:ruler-cross-pen-linear', scope: 'item', arity: 'any', kind: 'code',
+  id: 'resize', label: 'Resize', icon: 'i-solar:ruler-cross-pen-linear', scope: 'item', arity: 'any', group: 'photo', ask: ['make it 40 mm tall'], kind: 'code',
   hint: 'Set an item’s real size in mm (width, height or a scale); proportions kept unless told otherwise.',
   schema: { type: 'object', properties: { wMm: { type: 'number', minimum: 5, maximum: 2000 }, hMm: { type: 'number', minimum: 5, maximum: 2000 }, scale: { type: 'number', minimum: 0.05, maximum: 20 }, keepAspect: { type: 'boolean' } } }, defaults: { keepAspect: true },
   says: [/\b(\d+(?:\.\d+)?)\s*(mm|cm|in)\b.*\b(wide|tall|high|across)\b|\bscale\b.*\d+\s*%/i],
@@ -199,7 +199,7 @@ function cropTo(img: PixelImage, box: { x: number; y: number; w: number; h: numb
 const NEXT: Record<Tier, Tier> = { S: 'M', M: 'L', L: 'XL', XL: 'XL' };
 
 export const enhance: ActionDef<{ tier: 'auto' | Tier; resegment: boolean }> = {
-  id: 'enhance', label: 'Enhance', icon: 'i-solar:magnifer-zoom-in-linear', scope: 'item', arity: 'any', kind: 'model',
+  id: 'enhance', label: 'Enhance', icon: 'i-solar:magnifier-zoom-in-linear', scope: 'item', arity: 'any', group: 'photo', ask: ['enhance this item'], kind: 'model',
   hint: 'Look closer at small or fine items: the item is cropped from the original photo at a higher resolution, outlined again by SAM, and its holes and engraving re-measured.',
   schema: { type: 'object', properties: { tier: { enum: ['auto', 'S', 'M', 'L', 'XL'] }, resegment: { type: 'boolean' } } }, defaults: { tier: 'auto', resegment: true },
   says: [/\b(enhance|sharpen|upscale|closer look|more detail|higher res)\b/i],

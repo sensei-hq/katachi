@@ -15,7 +15,7 @@ export function flipAxis(axis: string): FlipAxis | null {
 
 
 export const flip: ActionDef<FlipOpts> = {
-  id: 'flip', label: 'Flip', icon: 'i-solar:flip-horizontal-linear', scope: 'item', arity: 'one', kind: 'code',
+  id: 'flip', label: 'Flip', icon: 'i-solar:flip-horizontal-linear', scope: 'item', arity: 'one', group: 'shape', ask: ['flip it horizontally'], kind: 'code',
   hint: 'Turn an item over in place (cut from the back, iron-on vinyl).',
   schema: { type: 'object', properties: { axis: { type: 'string', enum: ['x', 'y'] } } },
   defaults: { axis: 'x' },

@@ -20,7 +20,9 @@ export interface Example { id: string; n: number; kind: string; title: string; p
   /** try it yourself: the same photo as in the film, the steps, and the words to type (copied as they are) */
   sample: { src: string; file: string; size: string };
   tryIt: string[];
-  ask?: string }
+  ask?: string;
+  /** the try-it step the ask belongs to (1-based): its copy box renders inside that step */
+  askStep?: number }
 export const examples: Example[] = [
   { id: 'cat', n: 1, kind: 'A layered cut', title: 'The paper cat', photo: '/samples/katachi-sample-cat.jpg', result: '/story/cat-exploded.jpg', resultAlt: 'The cat’s layers lifted apart in the app',
     steps: ['Background off', 'The stack said in the chat', 'Five layers built to it', 'Cut and stacked'],
@@ -30,12 +32,12 @@ export const examples: Example[] = [
     sample: { src: '/samples/katachi-sample-cat.jpg', file: 'katachi-sample-cat.jpg', size: '450 KB' },
     tryIt: [
       'Download the photo, then sign in on the home page and open the workshop.',
-      'Choose Upload, pick the photo, and press Analyze. The wall comes off and the picture splits into its colour layers (about a minute).',
-      'When the layers are done, paste the message below into the chat and press Enter. Katachi rebuilds to that stack and says “Built 5 layers to your stack”.',
+      'Choose Upload, pick the photo, and press Analyze. The wall comes off and the picture splits into its colour layers — about four, named for their colours (about a minute). That split is the starting point, not the demo’s stack.',
+      'When the colour layers are done, paste this message into the chat and press Enter. Katachi rebuilds to that stack — a solid white base, black cat, red leaves, white flowers, gold outline — and says “Built 5 layers to your stack”.',
       'In Layers, switch the view to Exploded to see the five sheets lifted apart, or pick a layer and choose Its sheet to see what gets cut.',
       'Choose Cut the sheets, then Send to the cut queue. Assemble shows how they stack, back to front.'
     ],
-    ask: 'use 5 layers: a solid white base, black with cuts for the whiskers to show through, then red, the white flowers, and gold on top. Every layer keeps the full outline.' },
+    ask: 'use 5 layers: a solid white base, black with cuts for the whiskers to show through, then red, the white flowers, and gold on top. Every layer keeps the full outline.', askStep: 3 },
   { id: 'earrings', n: 2, kind: 'A collage of crafts', title: 'Earring charms', photo: '/samples/katachi-sample-earrings.jpg', result: '/story/earrings-before-after.jpg', resultAlt: 'Two earring pairs before and after the clean-up',
     steps: ['Every earring found', 'Pairs matched by shape', 'Repeated holes evened out', 'Each pair one size'],
     stats: [{ value: '28', label: 'pieces found on the tray' }, { value: 'Pairs', label: 'matched by shape, each one size' }, { value: '$0.036', label: 'in Meta model calls' }],
@@ -56,10 +58,10 @@ export const examples: Example[] = [
     tryIt: [
       'Download the photo, then open the workshop, choose Upload, pick it and press Analyze.',
       'Katachi finds the five bookmarks, then works through them in the chat: perspective corrected, each one upright, the hidden edges filled in, all five made one size.',
-      'If it finds fewer than five, paste the message below into the chat.',
+      'If it finds fewer than five, paste this message into the chat.',
       'Choose Cut the sheets to see each bookmark on its sheet, engraving first, then the holes, then the outline.'
     ],
-    ask: 'try again: remove the background, split into 5 bookmarks, straighten each one, fill in the hidden parts and clean up' }
+    ask: 'try again: remove the background, split into 5 bookmarks, straighten each one, fill in the hidden parts and clean up', askStep: 3 }
 ];
 
 export const why = [
@@ -70,7 +72,7 @@ export const why = [
 export const flow = [
   { icon: 'i-solar:camera-linear', title: 'Snap', body: 'A photo, a sketch, or several views' },
   { icon: 'i-solar:layers-linear', title: 'Analyze', body: 'Background off, items and layers found' },
-  { icon: 'i-solar:magic-stick-3-linear', title: 'Clean up', body: 'Upright, perspective, gaps, smoothing' },
+  { icon: 'i-solar:magic-stick-2-linear', title: 'Clean up', body: 'Upright, perspective, gaps, smoothing' },
   { icon: 'i-solar:scissors-linear', title: 'Cut', body: 'Sheets per device, SVG · DXF · G-code' },
   { icon: 'i-solar:widget-add-linear', title: 'Assemble', body: 'Step by step, in stacking order' }
 ];

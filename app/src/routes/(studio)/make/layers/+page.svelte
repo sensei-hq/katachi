@@ -92,7 +92,7 @@ $effect(() => { void sel.n; merging = false; });
       {#if f.tool === 'line'}<label class="flex items-center gap-1.5 meta">Width<input type="range" min="2" max="60" value={f.strokeWidth} class="w-20 text-accent" aria-label="Line width" oninput={(e) => f.setStrokeWidth(Number(e.currentTarget.value))} /></label>{/if}
     {/if}
     {#if f.tool === 'area' && f.area}
-      <Button size="sm" style="outline" icon="i-solar:magic-stick-3-linear" label="Smooth" onclick={() => void app.layerAction(sel.n, { kind: 'smoothArea', box: f.area!, strength: 2 })} />
+      <Button size="sm" style="outline" icon="i-solar:magic-stick-2-linear" label="Smooth" onclick={() => void app.layerAction(sel.n, { kind: 'smoothArea', box: f.area!, strength: 2 })} />
       <Button size="sm" style="outline" label="Reduce jitter" onclick={() => void app.layerAction(sel.n, { kind: 'smoothArea', box: f.area!, strength: 3 })} />
     {/if}
     <Button size="sm" style="ghost" icon="i-solar:undo-left-round-linear" title={app.canUndo ? `Undo: ${app.undoLabel}` : 'Nothing to undo'} aria-label="Undo" disabled={!app.canUndo} onclick={() => app.undoLast()} />

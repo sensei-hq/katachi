@@ -47,7 +47,7 @@ const warp = (m: number[], [x, y]: Pt): Pt => { const w = m[6] * x + m[7] * y + 
 
 export interface RectifyOpts { minFit: number }
 export const rectify: ActionDef<RectifyOpts> = {
-  id: 'rectify', label: 'Correct perspective', icon: 'i-solar:crop-minimalistic-linear', scope: 'item', arity: 'any', kind: 'code',
+  id: 'rectify', label: 'Correct perspective', icon: 'i-solar:crop-minimalistic-linear', scope: 'item', arity: 'any', group: 'photo', ask: ['fix the perspective'], kind: 'code',
   hint: 'Correct the perspective of four-cornered items photographed at an angle (bookmarks, coasters, tags): each becomes a true rectangle, its holes and engraving with it.',
   schema: { type: 'object', properties: { minFit: { type: 'number', minimum: 0.8, maximum: 1 } } }, defaults: { minFit: 0.94 },
   says: [/\b(perspective|keystone|square (it|them) up|skew(ed)?)\b/i],

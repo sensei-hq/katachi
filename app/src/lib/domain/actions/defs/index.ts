@@ -1,6 +1,7 @@
 // Every action, registered once (design/14): the stack's own (structure), whole-item analysis, and the geometry
 // actions (task T3).
 import { register } from '../registry';
+import { registerComposites } from '../composites';
 import { structureActions } from './structure';
 import { analysisActions } from './analysis';
 import { addHole } from './add-hole';
@@ -18,7 +19,8 @@ import { weld } from './weld';
 import { cleanupActions } from './cleanup';
 import { rectify } from './rectify';
 import { sameSize } from './samesize';
+import { shadowActions } from './deshadow';
 
 export const geometryActions = [flip, mirror, rotate, quantity, smooth, simplify, offset, weld, bridge, addHole, align, distribute];
 let done = false;
-export function registerAll() { if (done) return; done = true; for (const a of [...structureActions, ...analysisActions, ...geometryActions, ...cleanupActions, rectify, sameSize]) register(a as never); }
+export function registerAll() { if (done) return; done = true; for (const a of [...structureActions, ...analysisActions, ...geometryActions, ...cleanupActions, ...shadowActions, rectify, sameSize]) register(a as never); registerComposites(); }

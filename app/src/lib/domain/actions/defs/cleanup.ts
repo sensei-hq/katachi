@@ -48,7 +48,7 @@ function withoutWire(g: geo.Geometry, r: number): geo.Geometry | null {
   return geo.fromLoops([...kept, ...ls.filter((x) => x.depth > 0 && kept.some((o) => inside(x.l[0], o))).map((x) => x.l)]);
 }
 export const tidy: ActionDef<TidyOpts> = {
-  id: 'tidy', label: 'Tidy', icon: 'i-solar:broom-linear', scope: 'part', arity: 'any', kind: 'code',
+  id: 'tidy', label: 'Tidy', icon: 'i-solar:broom-linear', scope: 'part', arity: 'any', group: 'cleanup', ask: ['tidy up'], kind: 'code',
   hint: 'Drop specks and pin-holes too small to cut (trace noise), and thin wire bits on the outline (an earring hook, a bookmark cord), on the given layers or all.',
   schema: { type: 'object', properties: { minMm2: { type: 'number', minimum: 0.1, maximum: 20 }, thinMm: { type: 'number', minimum: 0, maximum: 3 } } }, defaults: { minMm2: 1, thinMm: 0.6 },
   says: [/\b(tidy|clean ?up|clean it|remove (the )?(specks|noise|dots))\b/i],
@@ -84,7 +84,7 @@ export const tidy: ActionDef<TidyOpts> = {
 // ── repeat-pattern
 export interface PatternOpts { tolerancePct: number }
 export const repeatPattern: ActionDef<PatternOpts> = {
-  id: 'repeat-pattern', label: 'Even out the pattern', icon: 'i-solar:widget-4-linear', scope: 'part', arity: 'any', kind: 'code',
+  id: 'repeat-pattern', label: 'Even out the pattern', icon: 'i-solar:widget-4-linear', scope: 'part', arity: 'any', group: 'cleanup', ask: ['even out the pattern'], kind: 'code',
   hint: 'Find holes that repeat (a lattice, a ring of petals) and make every copy identical — the cleanest one, placed where each was.',
   schema: { type: 'object', properties: { tolerancePct: { type: 'number', minimum: 5, maximum: 40 } } }, defaults: { tolerancePct: 20 },
   says: [/\b(even out|regulari[sz]e|repeat|pattern)\b.*\b(pattern|holes?|lattice|cut-?outs?)\b/i],
@@ -134,7 +134,7 @@ const tryAxis = (g: geo.Geometry, deg: number) => {
   return { off, ax, c, b };
 };
 export const symmetrize: ActionDef<SymOpts> = {
-  id: 'symmetrize', label: 'Make symmetric', icon: 'i-solar:align-horizontal-center-linear', scope: 'item', arity: 'any', kind: 'code',
+  id: 'symmetrize', label: 'Make symmetric', icon: 'i-solar:align-horizontal-center-linear', scope: 'item', arity: 'any', group: 'cleanup', ask: ['make it symmetric'], kind: 'code',
   hint: 'An item that is nearly mirror-symmetric (a charm, an earring, a leaf) is made exactly symmetric about its upright axis; others are left alone.',
   schema: { type: 'object', properties: { maxOffPct: { type: 'number', minimum: 1, maximum: 10 } } }, defaults: { maxOffPct: 3 },
   says: [/\bsymmetr(ic|ical|y|i[sz]e)\b/i],
@@ -169,7 +169,7 @@ const ring = (x: number, y: number, d: number): Pt[] => Array.from({ length: 24 
  * touched), the hanging hole near the top kept, and one drilled just inside the top edge when the hook took it.
  */
 export const unhook: ActionDef<UnhookOpts> = {
-  id: 'unhook', label: 'Remove hooks', icon: 'i-solar:link-broken-linear', scope: 'part', arity: 'any', kind: 'code',
+  id: 'unhook', label: 'Remove hooks', icon: 'i-solar:link-broken', scope: 'part', arity: 'any', group: 'cleanup', ask: ['remove the hooks'], kind: 'code',
   hint: 'Remove the hooks (ear wires, bails, cords) from earrings or pendants and keep a hanging hole at the top of each piece, on the given layers or all.',
   schema: { type: 'object', properties: { thinMm: { type: 'number', minimum: 0.4, maximum: 3 }, holeMm: { type: 'number', minimum: 0.8, maximum: 4 } } }, defaults: { thinMm: 1, holeMm: 1.5 },
   says: [/\b(remove|drop|take off|ignore|without|no|cut off|get rid of)\b.{0,12}\b(hooks?|ear ?wires?|findings|bails?)\b/i],

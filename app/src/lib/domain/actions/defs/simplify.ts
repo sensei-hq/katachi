@@ -9,7 +9,7 @@ export interface SimplifyOpts { toleranceMm: number }
 const points = (g: Geometry): number => g.paths.reduce((n, p) => n + 1 + p.segs.length, 0);
 
 export const simplify: ActionDef<SimplifyOpts> = {
-  id: 'simplify', label: 'Simplify', icon: 'i-solar:filter-linear', scope: 'part', arity: 'one', kind: 'code',
+  id: 'simplify', label: 'Simplify', icon: 'i-solar:filter-linear', scope: 'part', arity: 'one', group: 'shape', ask: ['simplify the outline'], kind: 'code',
   hint: 'Drop needless points from a layer’s outlines (same shape, smaller engraving files).',
   schema: { type: 'object', properties: { toleranceMm: { type: 'number', minimum: 0 } } },
   defaults: { toleranceMm: 0.1 },

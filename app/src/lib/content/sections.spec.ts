@@ -33,8 +33,8 @@ describe('sectionFor (which rail item is current)', () => {
 });
 
 describe('studio tools (rail only)', () => {
-  it('lists materials, annotations and settings below the divider', async () => {
+  it('lists actions, chains, materials, annotations and settings below the divider', async () => {
     const { tools } = await import('./sections');
-    expect(tools.map((t) => [t.id, t.href])).toEqual([['materials', '/materials'], ['annotations', '/annotations'], ['settings', '/settings']]);
+    expect(tools.map((t) => [t.id, t.href])).toEqual([['actions', '/actions'], ['chains', '/chains'], ['materials', '/materials'], ['annotations', '/annotations'], ['settings', '/settings']]);
   });
 });

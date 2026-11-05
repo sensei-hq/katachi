@@ -8,7 +8,7 @@ export interface OffsetOpts { mm: number; as: 'grow' | 'new-part'; material?: st
 
 
 export const offset: ActionDef<OffsetOpts> = {
-  id: 'offset', label: 'Offset', icon: 'i-solar:expand-linear', scope: 'part', arity: 'one', kind: 'code',
+  id: 'offset', label: 'Offset', icon: 'i-solar:maximize-linear', scope: 'part', arity: 'one', group: 'shape', ask: ['2 mm offset'], kind: 'code',
   hint: 'Grow or shrink an outline by mm, or add a border behind it.',
   schema: {
     type: 'object',

@@ -35,7 +35,7 @@ export function setsOf(doc: CraftDoc, ids: string[]): ItemDoc[][] {
 
 export interface SameSizeOpts { tolerancePct: number }
 export const sameSize: ActionDef<SameSizeOpts> = {
-  id: 'same-size', label: 'Same size', icon: 'i-solar:ruler-linear', scope: 'item', arity: 'any', kind: 'code',
+  id: 'same-size', label: 'Same size', icon: 'i-solar:ruler-linear', scope: 'item', arity: 'any', group: 'shape', ask: ['make them the same size'], kind: 'code',
   hint: 'Make the items of a set the same size: a pair (left and right) together, or all items of one kind (five bookmarks). The one the photo shows squarest and whole is the reference.',
   schema: { type: 'object', properties: { tolerancePct: { type: 'number', minimum: 5, maximum: 50 } } }, defaults: { tolerancePct: 40 },
   says: [/\b(same size|equal size|match (the )?sizes?|all the same)\b/i],

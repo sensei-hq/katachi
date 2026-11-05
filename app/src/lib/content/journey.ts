@@ -53,7 +53,7 @@ export const starts: readonly Start[] = [
     say: 'A layered picture. Snap or upload the image and I’ll split it into layers you can cut.' },
   { id: '3d', label: '3D object', hint: 'A real object rebuilt from flat parts joined together', icon: 'i-solar:box-linear', kind: '3d', mode: 'multi', source: 'camera',
     say: 'A 3D object. Take a few pictures from different sides — any number, in any order; I’ll work out which side each shows and unfold it into parts with joints.' },
-  { id: 'ref', label: 'Remix a picture', hint: 'Start from something you like and tell Katachi what to change', icon: 'i-solar:magic-stick-3-linear', kind: 'ref', mode: 'single', source: 'upload',
+  { id: 'ref', label: 'Remix a picture', hint: 'Start from something you like and tell Katachi what to change', icon: 'i-solar:magic-stick-2-linear', kind: 'ref', mode: 'single', source: 'upload',
     say: 'A remix. Show me the picture, then tell me what to change.' },
   { id: 'sketch', label: 'Sketch it', hint: 'Draw it yourself; Katachi cleans it up and splits it', icon: 'i-solar:pen-new-square-linear', kind: 'flat', mode: 'single', source: 'sketch',
     say: 'Sketch it right here — a rough drawing is fine. I’ll find the shapes and turn them into layers.' }

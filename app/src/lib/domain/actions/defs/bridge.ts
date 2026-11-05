@@ -10,7 +10,7 @@ const islandCount = (part: PartDoc): number =>
   part.ops.filter((o) => o.kind === 'cut').reduce((n, o) => n + geoIslands(o.geometry).length, 0);
 
 export const bridge: ActionDef<BridgeOpts> = {
-  id: 'bridge', label: 'Bridge', icon: 'i-solar:link-circle-linear', scope: 'part', arity: 'one', kind: 'code',
+  id: 'bridge', label: 'Bridge', icon: 'i-solar:link-circle-linear', scope: 'part', arity: 'one', group: 'shape', ask: ['bridge the gaps'], kind: 'code',
   hint: 'Add small tabs across a hole so a floating island stays attached instead of falling out.',
   schema: {
     type: 'object',

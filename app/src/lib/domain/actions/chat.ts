@@ -4,6 +4,7 @@
 import { layersOf } from '../craft';
 import type { CraftDoc } from '../craft/types';
 import { allActions } from './registry';
+import { allComposites, expandCalls } from './composites';
 import type { ActionId, Ref } from './types';
 
 export type Said = { kind: 'undo' } | { kind: 'redo' } | { kind: 'again'; refs?: Ref[] } | { kind: 'calls'; calls: { action: ActionId; refs: Ref[]; opts: Record<string, unknown> }[] };
@@ -72,7 +73,13 @@ export function fastPath(text: string, doc: CraftDoc): Said | null {
   const names = layersOf(doc).flatMap((l) => [l.part.name, l.item.name]).sort((a, b) => b.length - a.length);
   const bare = names.reduce((acc, n) => (n.length > 2 ? acc.replace(new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' ') : acc), text);
   const hits = allActions().filter((a) => a.says?.some((re) => re.test(bare)));
-  if (hits.length !== 1) return null;
+  const chains = allComposites().filter((c) => c.says?.some((re) => re.test(bare)));
+  if (hits.length + chains.length !== 1) return null;
+  if (chains.length) {
+    // a chain, said plainly: named layers retarget every step, else each step keeps its own targets
+    const refs = refsIn(text, doc);
+    return { kind: 'calls', calls: expandCalls([{ action: chains[0].id, refs, opts: {} }]) };
+  }
   const a = hits[0], refs = refsIn(text, doc);
   // destructive actions need their layers named: "delete this layer", "delete layer 5", "the empty layers" —
   // never a guess at the selection ("remove the red parts" is a colour edit, not a delete)

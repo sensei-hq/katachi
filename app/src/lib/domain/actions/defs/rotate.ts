@@ -14,7 +14,7 @@ export function normDeg(deg: number): number {
 }
 
 export const rotate: ActionDef<RotateOpts> = {
-  id: 'rotate', label: 'Rotate', icon: 'i-solar:restart-linear', scope: 'item', arity: 'one', kind: 'code',
+  id: 'rotate', label: 'Rotate', icon: 'i-solar:restart-linear', scope: 'item', arity: 'one', group: 'shape', ask: ['rotate 90 degrees'], kind: 'code',
   hint: 'Turn an item by an angle (straighten is the automatic version).',
   schema: { type: 'object', properties: { deg: { type: 'number' }, snap: { type: 'boolean' } } },
   defaults: { deg: 90, snap: true },

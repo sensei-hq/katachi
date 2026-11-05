@@ -7,7 +7,7 @@ export interface DistributeOpts { gapMm: number }
 
 
 export const distribute: ActionDef<DistributeOpts> = {
-  id: 'distribute', label: 'Distribute', icon: 'i-solar:slider-horizontal-linear', scope: 'item', arity: 'many', kind: 'code',
+  id: 'distribute', label: 'Distribute', icon: 'i-solar:slider-horizontal-linear', scope: 'item', arity: 'many', group: 'shape', ask: ['distribute with 5 mm gaps'], kind: 'code',
   hint: 'Space items evenly with a fixed gap between them.',
   schema: { type: 'object', properties: { gapMm: { type: 'number', minimum: 0 } } },
   defaults: { gapMm: 5 },

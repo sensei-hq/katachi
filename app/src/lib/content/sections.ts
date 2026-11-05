@@ -30,8 +30,10 @@ export function craftSections(kind: 'flat' | '3d' | 'ref' = 'flat'): Section[] {
 }
 
 /** Studio-only tools, shown in the rail below the divider (not in the phone icon nav). */
-export interface Tool { id: 'materials' | 'annotations' | 'settings'; href: string; label: string; icon: string }
+export interface Tool { id: 'actions' | 'chains' | 'materials' | 'annotations' | 'settings'; href: string; label: string; icon: string }
 export const tools: Tool[] = [
+  { id: 'actions', href: '/actions', label: 'Actions', icon: 'i-solar:gallery-linear' },
+  { id: 'chains', href: '/chains', label: 'Chains', icon: 'i-solar:link-linear' },
   { id: 'materials', href: '/materials', label: 'Materials', icon: 'i-solar:palette-linear' },
   { id: 'annotations', href: '/annotations', label: 'Annotations', icon: 'i-solar:notes-linear' },
   { id: 'settings', href: '/settings', label: 'Settings', icon: 'i-solar:settings-linear' }

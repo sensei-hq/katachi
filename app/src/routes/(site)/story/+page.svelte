@@ -12,6 +12,15 @@ async function copy(id: string, text: string) {
 }
 </script>
 <svelte:head><title>Katachi · The story</title><meta name="description" content="Katachi turns a photo of something you love into pieces you can cut on a laser or Cricut. A hackathon prototype on Meta's models." /></svelte:head>
+{#snippet askBox(id: string, text: string)}
+  <div class="flex flex-col gap-2 mt-2">
+    <p class="meta">Say this in the chat</p>
+    <div class="flex items-start gap-2 rounded-md border border-paper-edge bg-paper p-3">
+      <p class="flex-1 font-mono text-ui text-ink" data-try-ask>{text}</p>
+      <button type="button" class="shrink-0 h-8 px-3 rounded-md border border-paper-edge text-ui hover:text-ink" onclick={() => copy(id, text)}>{copied === id ? 'Copied' : 'Copy'}</button>
+    </div>
+  </div>
+{/snippet}
 <SiteShell wide>
   <section aria-label="Katachi" class="pt-10 md:pt-16 grid gap-8 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] md:items-center">
     <div use:reveal>
@@ -84,15 +93,13 @@ async function copy(id: string, text: string) {
           <h3 class="panel-title flex-1 min-w-[200px]">Try it yourself</h3>
           <a href={resolve(ex.sample.src as '/')} download={ex.sample.file} class="inline-flex items-center gap-2 h-9 px-3 rounded-md bg-accent text-on-accent text-ui font-medium"><span class="i-solar:download-linear" aria-hidden="true"></span>Download the photo <span class="opacity-80">· {ex.sample.size}</span></a>
         </div>
-        <ol class="flex flex-col gap-2 list-decimal pl-5 text-ink-mute">{#each ex.tryIt as t (t)}<li>{t}</li>{/each}</ol>
-        {#if ex.ask}
-          <div class="flex flex-col gap-2">
-            <p class="meta">Say this in the chat</p>
-            <div class="flex items-start gap-2 rounded-md border border-paper-edge bg-paper p-3">
-              <p class="flex-1 font-mono text-ui text-ink" data-try-ask>{ex.ask}</p>
-              <button type="button" class="shrink-0 h-8 px-3 rounded-md border border-paper-edge text-ui hover:text-ink" onclick={() => copy(ex.id, ex.ask ?? '')}>{copied === ex.id ? 'Copied' : 'Copy'}</button>
-            </div>
-          </div>
+        <ol class="flex flex-col gap-2 list-decimal pl-5 text-ink-mute">{#each ex.tryIt as t, k (t)}<li>{t}
+          {#if ex.ask && ex.askStep === k + 1}
+            {@render askBox(ex.id, ex.ask)}
+          {/if}
+        </li>{/each}</ol>
+        {#if ex.ask && !ex.askStep}
+          {@render askBox(ex.id, ex.ask)}
         {/if}
         <p class="meta">You need an invite code to use the workshop; <a href={resolve('/')} class="text-accent hover:underline">request one on the home page</a>. Each run costs a few cents of the invite’s model budget.</p>
       </div>

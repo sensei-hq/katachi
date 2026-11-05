@@ -64,7 +64,7 @@ function place(item: ItemDoc, part: PartDoc, op: OpDoc, diaMm: number): Placemen
 }
 
 export const addHole: ActionDef<AddHoleOpts> = {
-  id: 'add-hole', label: 'Add hole', icon: 'i-solar:record-circle-linear', scope: 'item', arity: 'one', kind: 'code',
+  id: 'add-hole', label: 'Add hole', icon: 'i-solar:record-circle-linear', scope: 'item', arity: 'one', group: 'shape', ask: ['add a 3 mm hole'], kind: 'code',
   hint: 'Add a hanging hole on the item’s axis: earring hook, ornament string, bookmark tassel.',
   schema: { type: 'object', properties: { diaMm: { type: 'number', minimum: 0 }, at: { type: 'string', enum: ['top'] } } },
   defaults: { diaMm: 3, at: 'top' },

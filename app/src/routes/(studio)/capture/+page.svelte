@@ -58,7 +58,7 @@ async function useThese() {
     {#if c.source === 'camera' && c.current}
       <button type="button" aria-label="Take photo" class="w-16 h-16 grid place-items-center rounded-full ring-3 ring-ink" onclick={shoot}><span class="w-12 h-12 rounded-full bg-ink"></span></button>
     {/if}
-    {#if c.media.length}<Button variant="primary" size="lg" disabled={!c.done} icon="i-solar:magic-stick-3-linear" label={c.mode === 'single' ? (app.project?.kind === 'ref' ? 'Continue' : 'Analyze') : `Analyze ${c.media.length} views`} onclick={() => void useThese()} />{/if}
+    {#if c.media.length}<Button variant="primary" size="lg" disabled={!c.done} icon="i-solar:magic-stick-2-linear" label={c.mode === 'single' ? (app.project?.kind === 'ref' ? 'Continue' : 'Analyze') : `Analyze ${c.media.length} views`} onclick={() => void useThese()} />{/if}
   </div>
   <footer class="shrink-0 hair-t pt-2">
     <SlotStrip slots={c.slots} selected={c.viewingId} currentId={c.current?.id ?? null} onSelect={(id) => c.view(c.slots.find((s) => s.id === id)?.url ? id : null)} onRetake={(id) => c.retake(id)} />

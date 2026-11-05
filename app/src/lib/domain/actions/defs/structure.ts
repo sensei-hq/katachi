@@ -26,7 +26,7 @@ function join(gs: geo.Geometry[]): geo.Geometry {
 }
 
 export const merge: ActionDef<{ name?: string }> = {
-  id: 'merge', label: 'Merge', icon: 'i-solar:layers-minimalistic-linear', scope: 'part', arity: 'many', kind: 'code',
+  id: 'merge', label: 'Merge', icon: 'i-solar:layers-minimalistic-linear', scope: 'part', arity: 'many', group: 'stack', ask: ['merge layers 1 and 2'], kind: 'code',
   hint: 'Join two or more layers into one (their cut and engraving joined); it sits where the frontmost was.',
   schema: { type: 'object', properties: { name: { type: 'string' } } }, defaults: {},
   says: [/\b(merge|combine|join)\b/i],
@@ -71,7 +71,7 @@ export const merge: ActionDef<{ name?: string }> = {
 };
 
 export const del: ActionDef<Record<string, never>> = {
-  id: 'delete', label: 'Delete', icon: 'i-solar:trash-bin-minimalistic-linear', scope: 'part', arity: 'any', kind: 'code',
+  id: 'delete', label: 'Delete', icon: 'i-solar:trash-bin-minimalistic-linear', scope: 'part', arity: 'any', group: 'stack', ask: ['delete layer 3'], kind: 'code',
   hint: 'Delete layers (an item with no layers left goes too).', schema: { type: 'object', properties: {} }, defaults: {},
   // "remove the wall from the gold layer" is a correction to a layer, not a delete
   says: [/\b(delete|remove|drop|get rid of|discard)\b(?!.*\bfrom\b)(?!.*\b(hooks?|ear ?wires?|findings|bails?)\b)/i],
@@ -92,7 +92,7 @@ export const del: ActionDef<Record<string, never>> = {
 };
 
 export const duplicate: ActionDef<Record<string, never>> = {
-  id: 'duplicate', label: 'Duplicate', icon: 'i-solar:copy-linear', scope: 'part', arity: 'one', kind: 'code',
+  id: 'duplicate', label: 'Duplicate', icon: 'i-solar:copy-linear', scope: 'part', arity: 'one', group: 'stack', ask: ['duplicate layer 1'], kind: 'code',
   hint: 'Copy a layer; the copy sits just in front of it.', schema: { type: 'object', properties: {} }, defaults: {},
   says: [/\b(duplicate|copy)\b/i],
   can: (_d, i) => (i.targets.length === 1 ? true : 'Pick one layer to duplicate'),
@@ -104,7 +104,7 @@ export const duplicate: ActionDef<Record<string, never>> = {
 };
 
 export const reorder: ActionDef<{ to: 'front' | 'back' | 'forward' | 'backward' }> = {
-  id: 'reorder', label: 'Move in the stack', icon: 'i-solar:sort-vertical-linear', scope: 'part', arity: 'one', kind: 'code',
+  id: 'reorder', label: 'Move in the stack', icon: 'i-solar:sort-vertical-linear', scope: 'part', arity: 'one', group: 'stack', ask: ['bring layer 2 to the front'], kind: 'code',
   hint: 'Move a layer to the front or back of its item’s stack, or one step.', schema: { type: 'object', properties: { to: { enum: ['front', 'back', 'forward', 'backward'] } } }, defaults: { to: 'front' },
   says: [/\b(bring|send|move)\b.*\b(front|back|forward|backward)\b/i],
   can: (d, i) => ((itemOfPart(d, partIds(d, i.targets)[0])?.parts.length ?? 0) > 1 ? true : 'It is the only layer of its item'),
@@ -120,29 +120,29 @@ export const reorder: ActionDef<{ to: 'front' | 'back' | 'forward' | 'backward' 
 const editPart = (doc: CraftDoc, raw: Id[], f: (p: PartDoc) => PartDoc) => { const ids = partIds(doc, raw); return doc.items.filter((i) => i.parts.some((p) => ids.includes(p.id))).map((it) => ({ ...clone(it), parts: it.parts.map((p) => (ids.includes(p.id) ? f(clone(p)) : p)) })); };
 
 export const rename: ActionDef<{ name: string }> = {
-  id: 'rename', label: 'Rename', icon: 'i-solar:pen-linear', scope: 'part', arity: 'one', kind: 'code',
+  id: 'rename', label: 'Rename', icon: 'i-solar:pen-linear', scope: 'part', arity: 'one', group: 'stack', ask: ['rename layer 1 to Backer'], kind: 'code',
   hint: 'Rename a layer.', schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }, defaults: { name: '' },
   can: (_d, i) => (i.targets.length === 1 && i.opts.name.trim() ? true : 'Say the new name'),
   run: (doc, { targets, opts }) => ({ items: editPart(doc, targets, (p) => ({ ...p, name: opts.name.trim() })), summary: `Renamed to ${opts.name.trim()}` })
 };
 
 export const recolour: ActionDef<{ colour?: string; material?: string }> = {
-  id: 'recolour', label: 'Colour / material', icon: 'i-solar:palette-linear', scope: 'part', arity: 'any', kind: 'code',
+  id: 'recolour', label: 'Colour / material', icon: 'i-solar:palette-linear', scope: 'part', arity: 'any', group: 'stack', ask: ['recolour it red'], kind: 'code',
   hint: 'Change the colour or material a layer is cut from (it moves to that material’s sheets).', schema: { type: 'object', properties: { colour: { type: 'string' }, material: { type: 'string' } } }, defaults: {},
   can: (_d, i) => (i.targets.length && (i.opts.colour || i.opts.material) ? true : 'Say the colour or material'),
   run: (doc, { targets, opts }) => ({ items: editPart(doc, targets, (p) => ({ ...p, ...(opts.colour ? { colour: opts.colour } : {}), ...(opts.material ? { material: opts.material } : {}) })), summary: `Now ${[opts.colour, opts.material].filter(Boolean).join(', ')}` })
 };
 
 export const setRole: ActionDef<{ role: 'cut' | 'engrave' }> = {
-  id: 'set-role', label: 'Cut or engrave', icon: 'i-solar:scissors-linear', scope: 'part', arity: 'any', kind: 'code',
+  id: 'set-role', label: 'Cut or engrave', icon: 'i-solar:scissors-linear', scope: 'part', arity: 'any', group: 'stack', ask: ['make layer 2 an engraving'], kind: 'code',
   hint: 'Make a layer cut through, or engraved only.', schema: { type: 'object', properties: { role: { enum: ['cut', 'engrave'] } } }, defaults: { role: 'engrave' },
-  says: [/\b(engrave|etch|burn)\b.*\binstead\b|\bmake (it|this) (an )?(engrav|cut)/i],
+  says: [/\b(engrave|etch|burn)\b.*\binstead\b/i, /\bmake\b[^.]*?\b(an\s+)?engraving\b/i, /\bmake (it|this) (an )?(engrav|cut)/i],
   can: (_d, i) => (i.targets.length ? true : 'Pick a layer'),
   run: (doc, { targets, opts }) => ({ items: editPart(doc, targets, (p) => ({ ...p, ops: p.ops.map((o) => (o.kind === (opts.role === 'cut' ? 'engrave' : 'cut') ? { ...o, kind: opts.role } : o)) })), summary: `Now ${opts.role === 'cut' ? 'cut through' : 'engraved'}` })
 };
 
 export const group: ActionDef<{ kind: 'pair' | 'set'; name?: string }> = {
-  id: 'group', label: 'Group', icon: 'i-solar:link-linear', scope: 'item', arity: 'many', kind: 'code',
+  id: 'group', label: 'Group', icon: 'i-solar:link-linear', scope: 'item', arity: 'many', group: 'stack', ask: ['group layers 1 and 2 together'], kind: 'code',
   hint: 'Make items a pair (cut together) or a set.', schema: { type: 'object', properties: { kind: { enum: ['pair', 'set'] }, name: { type: 'string' } } }, defaults: { kind: 'set' },
   says: [/\b(pair|group)\b.*\b(together|up)\b/i],
   can: (_d, i) => (i.targets.length >= 2 && (i.opts.kind !== 'pair' || i.targets.length === 2) ? true : i.opts.kind === 'pair' ? 'A pair is two items' : 'Pick two or more items'),
@@ -156,7 +156,7 @@ export const group: ActionDef<{ kind: 'pair' | 'set'; name?: string }> = {
 };
 
 export const ungroup: ActionDef<Record<string, never>> = {
-  id: 'ungroup', label: 'Ungroup', icon: 'i-solar:link-broken-linear', scope: 'item', arity: 'any', kind: 'code',
+  id: 'ungroup', label: 'Ungroup', icon: 'i-solar:link-broken', scope: 'item', arity: 'any', group: 'stack', ask: ['ungroup this set'], kind: 'code',
   hint: 'Take items out of their pair or set.', schema: { type: 'object', properties: {} }, defaults: {},
   says: [/\bungroup|unpair|separate them\b/i],
   can: (d, i) => (d.groups.some((g) => g.items.some((x) => i.targets.includes(x))) ? true : 'Not in a pair or set'),
@@ -186,7 +186,7 @@ function realPieces(g: geo.Geometry): geo.Geometry[] {
   return big.map((x) => x.g);
 }
 export const split: ActionDef<Record<string, never>> = {
-  id: 'split', label: 'Split', icon: 'i-solar:scissors-linear', scope: 'part', arity: 'one', kind: 'code',
+  id: 'split', label: 'Split', icon: 'i-solar:scissors-linear', scope: 'part', arity: 'one', group: 'stack', ask: ['split layer 1'], kind: 'code',
   hint: 'Split a layer into its separate pieces (each piece with its own holes).', schema: { type: 'object', properties: {} }, defaults: {},
   says: [/\bsplit\b|\bseparate (the )?pieces\b/i],
   can(d, i) { const pid = partIds(d, i.targets)[0], p = d.items.flatMap((x) => x.parts).find((x) => x.id === pid); const cut = p?.ops.find((o) => o.kind === 'cut'); return p?.from?.length || (cut && realPieces(cut.geometry).length > 1) ? true : 'One piece — nothing to split'; },

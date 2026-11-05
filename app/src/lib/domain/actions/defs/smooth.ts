@@ -13,7 +13,7 @@ export const TOL_MM = [0.05, 0.1, 0.2, 0.35, 0.6];
 
 
 export const smooth: ActionDef<SmoothOpts> = {
-  id: 'smooth', label: 'Smooth', icon: 'i-solar:pen-nib-linear', scope: 'part', arity: 'any', kind: 'code',
+  id: 'smooth', label: 'Smooth', icon: 'i-solar:pen-new-round-linear', scope: 'part', arity: 'any', group: 'shape', ask: ['smooth every layer'], kind: 'code',
   hint: 'Smooth the jagged outlines of one layer, several, or all of them into clean curves, keeping sharp corners.',
   schema: {
     type: 'object',

@@ -8,7 +8,7 @@ export type ActionId =
   | 'straighten' | 'rotate' | 'flip' | 'mirror' | 'align' | 'distribute' | 'quantity'
   | 'interpolate' | 'fill' | 'smooth' | 'simplify' | 'bolder' | 'thinner' | 'detail' | 'offset' | 'weld'
   | 'bridge' | 'add-hole' | 'resize' | 'enhance' | 'remove-colour' | 'add-colour' | 'draw' | 'move'
-  | 'group' | 'ungroup' | 'fit-to-board' | 'tidy' | 'unhook' | 'repeat-pattern' | 'symmetrize' | 'rectify' | 'same-size';
+  | 'group' | 'ungroup' | 'fit-to-board' | 'tidy' | 'unhook' | 'repeat-pattern' | 'symmetrize' | 'rectify' | 'same-size' | 'deshadow';
 
 /** what a request names; resolved to ids before an action runs (design/14 §4) */
 export type Ref =
@@ -43,16 +43,27 @@ export interface ActionCtx {
   device?: { board: { wMm: number; hMm: number } };
 }
 export interface JsonSchema { type: 'object'; properties: Record<string, unknown>; required?: string[]; additionalProperties?: false }
+/** the gallery's shelves: what the action is for */
+export type ActionGroup = 'stack' | 'shape' | 'photo' | 'cleanup';
+export const ACTION_GROUPS: { id: ActionGroup; label: string; blurb: string }[] = [
+  { id: 'stack', label: 'Stack', blurb: 'Arrange the layers: join, split, order, rename.' },
+  { id: 'shape', label: 'Shape', blurb: 'Change outlines: turn, size, smooth, holes, patterns.' },
+  { id: 'photo', label: 'Photo', blurb: 'Read the picture again: upright, hidden edges, size, detail.' },
+  { id: 'cleanup', label: 'Clean up', blurb: 'Finish the traces: specks, shadows, hooks, symmetry.' }
+];
 export interface ActionDef<O = Record<string, unknown>> {
   id: ActionId;
   label: string;
   icon: string;
   scope: Scope;
   arity: 'one' | 'many' | 'any';
+  group: ActionGroup;
   schema: JsonSchema;
   defaults: O;
   /** chat fast path: phrases that need no model (design/14 §7); captures fill options */
   says?: RegExp[];
+  /** example asks for the gallery ("say …"): each either matches this action's fast path or is planner-routed (never another action's) */
+  ask: string[];
   kind: 'code' | 'model';
   /** a one-line description for the chat model's tool list */
   hint: string;

@@ -6,6 +6,8 @@ import { applyPatch, applyResult, diff, isEmpty } from '../../domain/actions/his
 import type { ActionCtx, ActionId, Ref } from '../../domain/actions/types';
 import type { CraftDoc, EntryDoc, Id } from '../../domain/craft/types';
 import { registerAll } from '../../domain/actions/defs';
+import { expandCalls } from '../../domain/actions/composites';
+import { ChainStore } from '../chains';
 import { prune } from '../../domain/craft';
 import type { CraftState } from './craft.svelte';
 
@@ -15,14 +17,15 @@ export interface Narrator {
   done?(key: string, title: string, detail?: string): void;
   fail?(key: string, title: string, detail?: string): void;
 }
-export interface Call { action: ActionId; refs: Ref[]; opts?: Record<string, unknown> }
+/** a call names an action or a saved chain (chains expand to their steps when the group runs) */
+export interface Call { action: ActionId | string; refs: Ref[]; opts?: Record<string, unknown> }
 export type Outcome = { ok: true; entry: EntryDoc } | { ok: false; reason: string };
 const KEEP = 50;
 
 export class ActionState {
   /** what the screen has selected (for { selected: true }) */
   selected = $state<Id[]>([]);
-  constructor(private craft: CraftState, private ctx: () => ActionCtx, private say: Narrator = {}) { registerAll(); }
+  constructor(private craft: CraftState, private ctx: () => ActionCtx, private say: Narrator = {}, chains: ChainStore = new ChainStore()) { registerAll(); chains.load(); }
 
   get done() { return this.craft.doc.history.done; }
   get undone() { return this.craft.doc.history.undone; }
@@ -37,10 +40,11 @@ export class ActionState {
   /** several actions as one undoable step (a chat request, a recipe) — design/14 §5 groups */
   async performAll(calls: Call[], via: EntryDoc['via'] = 'chat', summary?: string): Promise<Outcome> {
     const start = this.craft.toJSON();
+    const flat = expandCalls(calls);
     let doc: CraftDoc = start;
     let lastDetail: string | undefined;
-    const children: EntryDoc[] = [], key = `act:${this.done.length}:${calls.map((c) => c.action).join('+')}`;
-    for (const c of calls) {
+    const children: EntryDoc[] = [], key = `act:${this.done.length}:${flat.map((c) => c.action).join('+')}`;
+    for (const c of flat) {
       const def = actionOf(c.action);
       if (!def) return this.refuse(key, `I don’t know how to ${c.action} yet`);
       const o = withDefaults(def, c.opts as never);
@@ -51,7 +55,7 @@ export class ActionState {
       if (ok !== true) return this.refuse(key, ok);
       this.say.think?.(key, `${def.label}…`);
       // a long group (the clean-up pass) lets the page draw between its actions
-      if (calls.length > 2) await new Promise((r) => setTimeout(r, 0));
+      if (flat.length > 2) await new Promise((r) => setTimeout(r, 0));
       let r;
       try { r = await def.run(doc, input, this.ctx()); }
       catch (e) { return this.refuse(key, `${def.label} failed`, e instanceof Error ? e.message : String(e)); }

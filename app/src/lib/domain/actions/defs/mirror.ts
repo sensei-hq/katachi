@@ -9,7 +9,7 @@ export interface MirrorOpts { axis: 'x' | 'y'; pair: boolean }
 
 
 export const mirror: ActionDef<MirrorOpts> = {
-  id: 'mirror', label: 'Mirror', icon: 'i-solar:mirror-left-linear', scope: 'item', arity: 'one', kind: 'code',
+  id: 'mirror', label: 'Mirror', icon: 'i-solar:mirror-left-linear', scope: 'item', arity: 'one', group: 'shape', ask: ['mirror this layer'], kind: 'code',
   hint: 'Make a mirrored copy as a new item, paired to cut together.',
   schema: { type: 'object', properties: { axis: { type: 'string', enum: ['x', 'y'] }, pair: { type: 'boolean' } } },
   defaults: { axis: 'x', pair: true },

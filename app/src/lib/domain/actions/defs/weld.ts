@@ -6,7 +6,7 @@ import { clone, partIn } from './shared';
 
 
 export const weld: ActionDef<Record<string, never>> = {
-  id: 'weld', label: 'Weld', icon: 'i-solar:union-linear', scope: 'part', arity: 'one', kind: 'code',
+  id: 'weld', label: 'Weld', icon: 'i-solar:layers-linear', scope: 'part', arity: 'one', group: 'shape', ask: ['weld these together'], kind: 'code',
   hint: 'Join a layer’s touching pieces so they cut as one shape, with no internal cut lines.',
   schema: { type: 'object', properties: {} },
   defaults: {},

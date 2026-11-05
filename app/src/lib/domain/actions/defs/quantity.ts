@@ -6,7 +6,7 @@ export interface QuantityOpts { qty: number }
 
 
 export const quantity: ActionDef<QuantityOpts> = {
-  id: 'quantity', label: 'Quantity', icon: 'i-solar:hashtag-circle-linear', scope: 'item', arity: 'one', kind: 'code',
+  id: 'quantity', label: 'Quantity', icon: 'i-solar:hashtag-circle-linear', scope: 'item', arity: 'one', group: 'shape', ask: ['make 4 copies'], kind: 'code',
   hint: 'How many of an item to make (the cut plan places it that many times).',
   schema: { type: 'object', properties: { qty: { type: 'integer', minimum: 1, maximum: 99 } } },
   defaults: { qty: 2 },

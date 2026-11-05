@@ -63,7 +63,7 @@ const layerNo = (label: string) => Number(label.match(/^(\d+)\s·/)?.[1] ?? 0);
     {@render calls([m.data.call])}
   </IconTimeline>
 {:else}
-  <IconTimeline icon="i-solar:magic-stick-3-linear" data-timeline-entry="katachi">
+  <IconTimeline icon="i-solar:magic-stick-2-linear" data-timeline-entry="katachi">
     <div class="group relative pr-7">
       <p class="eyebrow h-[27px] flex items-center">Katachi</p>
       <p class="text-ui text-ink">{m.text}</p>

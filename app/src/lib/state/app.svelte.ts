@@ -16,12 +16,16 @@ import { namesAStack, parseLayerOp, stackPlanFrom, translatePaths, type Box, typ
 import { pointsToPath } from '../domain/vector';
 import { hiddenShare } from '../domain/toolpath';
 import { CraftState, emptyCraft } from './craft/craft.svelte';
+import { ChainStore } from './chains';
+import { GalleryState } from './gallery.svelte';
 import { setsOf } from '../domain/actions/defs/samesize';
 import { ActionState, type Narrator, type Outcome } from './craft/actions.svelte';
 import { migrateV1, type V1Snapshot } from '../domain/craft/migrate';
 import { craftToFlow } from '../domain/craft/bridge';
 import { rowsOf, type CraftDoc } from '../domain/craft';
 import { fastPath, refsFromPlan, toolList, type Said } from '../domain/actions/chat';
+import { compositeList } from '../domain/actions/composites';
+import { DESHADOW_DEFAULTS, shadePairs } from '../domain/actions/defs/deshadow';
 import type { ActionCtx, ActionId } from '../domain/actions/types';
 import { planCut } from '../domain/cutplan/plan';
 import { profileFor } from '../domain/cutplan/profiles';
@@ -38,7 +42,7 @@ export type LayerAction =
   | { kind: 'smoothArea'; box: Box; strength: number } | { kind: 'move'; dx: number; dy: number } | { kind: 'remove' };
 
 /** the words that mean an action (merge, delete, flip…): what is worth asking the planner about */
-const ACTION_WORDS = /\b(merge|delete|remove|combine|join|duplicate|copy|copies|straighten|rotate|turn|flip|mirror|resize|enhance|sharpen|fill in|interpolate|group|pair|rename|recolou?r|engrave instead|again|same for|bring|send|undo|redo|smooth(en)?|simplify|split|weld|bridge|offset|align|distribute|hole)\b/i;
+const ACTION_WORDS = /\b(merge|delete|remove|combine|join|duplicate|copy|copies|straighten|rotate|turn|flip|mirror|resize|enhance|sharpen|fill in|interpolate|group|pair|rename|recolou?r|engrave instead|again|same for|bring|send|undo|redo|smooth(en)?|simplify|split|weld|bridge|offset|align|distribute|hole|fold|deshadow|polish)\b/i;
 /** more than one action in one ask ("merge layers 1 and 2 and then smooth it"): Spark plans it as one undo */
 const manyActions = (text: string) => /\b(and then|then|after that|afterwards)\b/i.test(text) || new Set((text.match(new RegExp(ACTION_WORDS.source, 'gi')) ?? []).map((v) => v.toLowerCase())).size >= 2;
 /** the Cut layout a sentence asks for, if it plainly asks for one */
@@ -119,7 +123,8 @@ export class AppState {
     };
     // every edit lands in the craft's one history (design/14): native actions record themselves; the older edits
     // (mask corrections, splits, moves) are recorded right after they land
-    this.actions = new ActionState(this.craft, () => this.actionCtx(), this.narrator());
+    this.actions = new ActionState(this.craft, () => this.actionCtx(), this.narrator(), this.chainStore);
+    this.gallery = new GalleryState(this.actions, this.chainStore, this.craft);
     this.layers.onEdit = (label) => { if (this.engineOn) queueMicrotask(() => this.syncCraft(label)); };
     this.muse.onFinish = (t) => {
       const call = { model: t.model ?? agentJobs[t.job].model, action: t.summary, costUsd: t.costUsd ?? 0, ms: t.ms ?? 0, status: (t.status === 'failed' ? 'failed' : t.status === 'done' ? 'live' : 'placeholder') as 'live' | 'placeholder' | 'failed' };
@@ -135,6 +140,10 @@ export class AppState {
   // ── The craft (design/15) and its actions (design/14). Until every screen reads the craft (task L3), the craft is
   // kept in step with LayerFlowState both ways: read from it after analysis, written back after every action.
   readonly craft = new CraftState();
+  /** the user's saved chains, in the browser (memory in tests and SSR) */
+  readonly chainStore = new ChainStore(typeof globalThis.localStorage?.getItem === 'function' ? globalThis.localStorage : undefined);
+  /** the actions gallery (demos, chains, the chain builder) */
+  readonly gallery: GalleryState;
   private savedRev = -1;
   private lastCraftDoc: CraftDoc | null = null;
   readonly actions!: ActionState;
@@ -222,14 +231,17 @@ export class AppState {
     // what was asked with the photo ("remove the hook wires… on a single board") is done here, not just kept
     const asked = via === 'pass' ? this.layers.notes.map((x) => x.text).join(' · ') : '';
     const unhook = this.layers.separateItems && /\b(hooks?|ear ?wires?|findings|bails?)\b/i.test(asked) && /\b(remove|drop|take off|ignore|without|no|cut off|get rid of|just (keep|the))\b/i.test(asked);
+    // shade layers only join the pass when they are there (last: nothing after it can mis-target a merged row)
+    const shadows = shadePairs(this.craft.doc, parts.map((p) => p.part.id), DESHADOW_DEFAULTS).length > 0;
     const r = await this.actions.performAll([
       // wire bits (hooks, cords) only hang off separate items; a one-piece picture's outline is left as traced
       { action: 'tidy', refs: [{ all: true }], opts: this.layers.separateItems ? {} : { thinMm: 0 } },
       ...(unhook ? [{ action: 'unhook' as ActionId, refs: [{ all: true as const }], opts: {} }] : []),
       { action: 'repeat-pattern', refs: [{ all: true }], opts: {} },
       ...(this.layers.separateItems ? [{ action: 'symmetrize' as ActionId, refs: [{ all: true as const }], opts: {} }] : []),
-      ...parts.map((p) => ({ action: 'smooth' as ActionId, refs: [{ n: p.n }], opts: { strength: 4, passes: 2 } }))
-    ], via, `Cleaned up ${parts.length} layer${parts.length === 1 ? '' : 's'}: specks and wire bits off${unhook ? ', hooks removed (holes kept)' : ''}, repeated holes evened out${this.layers.separateItems ? ', symmetric items made exact' : ''}, outlines smoothed`);
+      ...parts.map((p) => ({ action: 'smooth' as ActionId, refs: [{ n: p.n }], opts: { strength: 4, passes: 2 } })),
+      ...(shadows ? [{ action: 'deshadow' as ActionId, refs: [{ all: true as const }], opts: {} }] : [])
+    ], via, `Cleaned up ${parts.length} layer${parts.length === 1 ? '' : 's'}: specks and wire bits off${unhook ? ', hooks removed (holes kept)' : ''}, repeated holes evened out${this.layers.separateItems ? ', symmetric items made exact' : ''}, outlines smoothed${shadows ? ', shadows folded into their layers' : ''}`);
     if (r.ok) this.writeBack();
     const layout = asked ? layoutSaid(asked) : null;
     if (r.ok && layout && this.cutLayouts.some((o) => o.value === layout)) this.setCutLayout(layout);
@@ -247,7 +259,7 @@ export class AppState {
       ...(this.photo && f.imageBrief && f.imageBrief.arrangement !== 'multiple-items' ? [{ id: 'restack', hint: 'Rebuild a one-piece picture to the layer stack the user describes, back to front: each layer a colour (the same colour may come twice, e.g. a white backer and white petals), optionally a solid sheet; with outline every layer keeps the outer border.', options: 'layers: [{name, colour (a colour word), solid?}] back to front (2–8); outline: true|false (default true)' }] : [])
     ];
     if (rows.length) stages.push({ id: 'clean-up', hint: 'The whole clean-up pass on every layer: specks, pin-holes and wire bits (hooks, cords) off, repeated holes evened out, near-symmetric items made exact, outlines smoothed.', options: '' });
-    const tools = [...stages, ...(rows.length ? toolList() : [])];
+    const tools = [...stages, ...(rows.length ? [...toolList(), ...compositeList()] : [])];
     if (!tools.length) return false;
     const a = await this.muse.planActions(craft, { text, layers: rows.map((r) => ({ n: r.n, name: r.name, item: r.item.name, role: r.role, shows: Math.round(r.shows) })), selected: [this.layers.selected.n].filter((n) => n > 0), actions: tools }).catch(() => null);
     if (!a) return false;
@@ -275,7 +287,7 @@ export class AppState {
         }
       }
       // a rebuilt breakdown runs its passes itself (upright, hidden edges, clean-up): not twice
-      const after = edits.filter((x) => !['straighten', 'interpolate', 'smooth', 'tidy', 'repeat-pattern', 'symmetrize', 'clean-up'].includes(x.action) || !stage.some((y) => y.action !== 'clean-up'));
+      const after = edits.filter((x) => !['straighten', 'interpolate', 'smooth', 'tidy', 'repeat-pattern', 'symmetrize', 'deshadow', 'polish', 'clean-up'].includes(x.action) || !stage.some((y) => y.action !== 'clean-up'));
       if (!after.length || !rowsOf(this.craft.doc).length) return true;
       edits.splice(0, edits.length, ...after);
     }
@@ -1040,11 +1052,14 @@ export class AppState {
       // selected layer by name, and the next step last
       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a lookup built per read, not reactive state
       const said = new Set(this.flow.conversation.log.filter((e) => e.role === 'user').map((e) => e.text.trim().toLowerCase()));
-      // tidy-ups the stack itself needs: layers nothing of shows, several engravings that could be one
+      // tidy-ups the stack itself needs: layers nothing of shows, several engravings that could be one,
+      // a shade layer that is only its neighbour's shadow
+      const shadowed = f.layers.length >= 2 && (() => { const ids = rowsOf(this.craft.doc).filter((r) => !r.op).map((r) => r.part.id); return shadePairs(this.craft.doc, ids, DESHADOW_DEFAULTS).length > 0; })();
       const tidy = [
         ...(f.layers.some((l) => Math.round(l.visiblePct) <= 0 && (l.n > 1 || f.separateItems || l.role)) ? ['Remove the empty layers'] : []),
         // separate items: only when an item has more than one engraving (each item keeps its own sheet)
-        ...((f.separateItems ? f.items.some((i) => i.layers.filter((l) => l.role === 'engrave').length > 1) : f.layers.filter((l) => l.role === 'engrave').length > 1) ? ['Merge all the engravings into one layer'] : [])
+        ...((f.separateItems ? f.items.some((i) => i.layers.filter((l) => l.role === 'engrave').length > 1) : f.layers.filter((l) => l.role === 'engrave').length > 1) ? ['Merge all the engravings into one layer'] : []),
+        ...(shadowed ? ['Fold all the shadows into their layers'] : [])
       ].filter((x) => !said.has(x.toLowerCase()));
       if (f.separateItems) {
         const fix = this.hiddenItems().map((n) => `Complete the hidden edges of the ${n}`).filter((x) => !said.has(x.toLowerCase()));
@@ -1052,6 +1067,7 @@ export class AppState {
       }
       const sel = f.selected, front = f.layers[sel.n];
       const ideas: (string | ChatAction)[] = [
+        ...(shadowed ? ['Fold all the shadows into their layers'] : []),
         ...(f.removeBackdrop ? [] : ['Remove the wall and shadows']),
         sel.n === 1 ? `Make ${sel.name} one solid outline` : `Keep the fine details in ${sel.name}`,
         ...(front ? [`Merge ${sel.name} with ${front.name}`] : []),
