@@ -725,6 +725,7 @@ export class AppState {
     const f = this.layers; if (!f.separateItems) return [];
     // the item's outline only (its own see-through holes are not something a neighbour hid); each item once
     // (two bitten layers of one item suggested it twice — duplicate keys crashed the chat)
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a one-off de-duplication, not reactive state
     return [...new Set(f.layers.filter((l) => l.role !== 'engrave' && hiddenShare(f.regionForLayer(l)?.paths ?? []) > 0.12).map((l) => l.itemName ?? l.name))];
   }
   /** Add the craft's sheets (all, in cutting order, or some layers) to the cut queue — said in the chat. */
@@ -1046,6 +1047,7 @@ export class AppState {
   /** Suggestion chips for the composer: from the actual regions/layers when we have them, else the step's defaults. */
   get suggestions(): (string | ChatAction)[] {
     // the chat keys suggestions by label: the same words twice crash it, so each label goes out once
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a lookup built per read, not reactive state
     const seen = new Set<string>(), out: (string | ChatAction)[] = [];
     for (const s of this.suggest()) { const k = (typeof s === 'string' ? s : s.label).toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(s); } }
     return out;
