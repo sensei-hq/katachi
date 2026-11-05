@@ -75,4 +75,33 @@ describe('layer edits from the chat, with undo', () => {
     expect(app.undoLast()).toBe(true);
     expect(names(app)[3]).toBe('Right earring · cut');
   });
+  it('a hidden item is suggested once even when two of its layers are bitten (turtle: duplicate keys crashed the chat)', () => {
+    const app = new AppState(new ProjectStore(new MemoryStorage()));
+    app.startCraft('flat');
+    const bite: [number, number][] = [[0, 0], [100, 0], [100, 100], [60, 100], [60, 30], [40, 30], [40, 100], [0, 100]];
+    const square: [number, number][] = [[0, 0], [100, 0], [100, 100], [0, 100]];
+    const L = (name: string, itemName: string): Layer => ({ n: 0, name, shapes: ['sky'], colour: '#C89B6A', visiblePct: 20, hiddenPct: 0, material: '3 mm ply', itemName, role: 'cut' });
+    app.layers.applyLayers([L('Dolphin top · cut', 'Dolphin'), L('Dolphin base · cut', 'Dolphin'), L('Turtle · cut', 'Turtle')]);
+    app.layers.applyRegions([
+      { id: 'r1', name: 'Dolphin top', pct: 20, note: '', tone: 'ink', keep: true, paths: [bite] },
+      { id: 'r2', name: 'Dolphin base', pct: 20, note: '', tone: 'ink', keep: true, paths: [bite] },
+      { id: 'r3', name: 'Turtle', pct: 20, note: '', tone: 'ink', keep: true, paths: [square] }
+    ] as never);
+    app.page = '/make/layers'; app.currentStep = 'layers';
+    expect(app.hiddenItems()).toEqual(['Dolphin']);
+    const labels = app.suggestions.map((s) => (typeof s === 'string' ? s : s.label));
+    expect(labels.filter((l) => l.startsWith('Complete the hidden edges'))).toEqual(['Complete the hidden edges of the Dolphin']);
+    expect(new Set(labels.map((l) => l.toLowerCase())).size).toBe(labels.length);
+  });
+  it('same-named kept regions suggest dropping once (the chat keys suggestions by label)', () => {
+    const app = new AppState(new ProjectStore(new MemoryStorage()));
+    app.startCraft('flat');
+    app.layers.applyRegions([
+      { id: 'r1', name: 'Blob', pct: 20, note: '', tone: 'ink', keep: true },
+      { id: 'r2', name: 'Blob', pct: 15, note: '', tone: 'ink', keep: true }
+    ] as never);
+    app.page = '/make/layers'; app.currentStep = 'segment';
+    const labels = app.suggestions.map((s) => (typeof s === 'string' ? s : s.label));
+    expect(labels.filter((l) => l.startsWith('Drop the'))).toEqual(['Drop the Blob']);
+  });
 });

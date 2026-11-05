@@ -723,8 +723,9 @@ export class AppState {
   /** separate items that a neighbour covered in the photo (their outline has bites taken out of it) */
   hiddenItems(): string[] {
     const f = this.layers; if (!f.separateItems) return [];
-    // the item's outline only (its own see-through holes are not something a neighbour hid)
-    return f.layers.filter((l) => l.role !== 'engrave' && hiddenShare(f.regionForLayer(l)?.paths ?? []) > 0.12).map((l) => l.itemName ?? l.name);
+    // the item's outline only (its own see-through holes are not something a neighbour hid); each item once
+    // (two bitten layers of one item suggested it twice — duplicate keys crashed the chat)
+    return [...new Set(f.layers.filter((l) => l.role !== 'engrave' && hiddenShare(f.regionForLayer(l)?.paths ?? []) > 0.12).map((l) => l.itemName ?? l.name))];
   }
   /** Add the craft's sheets (all, in cutting order, or some layers) to the cut queue — said in the chat. */
   queueSheets(only?: number[]) {
@@ -1044,6 +1045,12 @@ export class AppState {
   }
   /** Suggestion chips for the composer: from the actual regions/layers when we have them, else the step's defaults. */
   get suggestions(): (string | ChatAction)[] {
+    // the chat keys suggestions by label: the same words twice crash it, so each label goes out once
+    const seen = new Set<string>(), out: (string | ChatAction)[] = [];
+    for (const s of this.suggest()) { const k = (typeof s === 'string' ? s : s.label).toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(s); } }
+    return out;
+  }
+  private suggest(): (string | ChatAction)[] {
     const f = this.layers;
     if (this.currentStep === 'segment' && f.regions.length) return [...f.kept.slice(0, 2).map((r) => `Drop the ${r.name}`), ...f.regions.filter((r) => !r.on).slice(0, 1).map((r) => `Keep the ${r.name}`), 'Separate into layers'];
     if (this.currentStep === 'layers' && this.flow.conversation.busy) return [];
